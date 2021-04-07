@@ -73,7 +73,7 @@ impl Renderer {
                 // The SVG coordinate system has the origin in the upper left, while the image's
                 // origin is the lower left, so we have to swap them. The row index is otherwise
                 // unused, so shadowing it is simplest.
-                let row = row_count - row;
+                let row = row_count - row - 1;
                 let grid_cell = Rectangle::new()
                     // Color implements UpperHex and outputs "#HHHHHH" for the color (like
                     // colorous::Color, but without LowerHex).
