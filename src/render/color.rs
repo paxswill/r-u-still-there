@@ -21,13 +21,13 @@ impl From<colorous::Color> for Color {
 
 impl fmt::LowerHex for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "#{:x}{:x}{:x}", self.red(), self.green(), self.blue())
+        write!(f, "#{:02x}{:02x}{:02x}", self.red(), self.green(), self.blue())
     }
 }
 
 impl fmt::UpperHex for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "#{:X}{:X}{:X}", self.red(), self.green(), self.blue())
+        write!(f, "#{:02X}{:02X}{:02X}", self.red(), self.green(), self.blue())
     }
 }
 
