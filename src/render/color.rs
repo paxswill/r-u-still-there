@@ -1,4 +1,3 @@
-use colorous;
 use std::cmp::Ordering;
 use std::convert::From;
 use std::fmt;
@@ -33,9 +32,17 @@ impl fmt::UpperHex for Color {
 }
 
 impl Color {
-    const BLACK: Self = Self { red: u8::MIN, green: u8::MIN, blue: u8::MIN };
+    const BLACK: Self = Self {
+        red: u8::MIN,
+        green: u8::MIN,
+        blue: u8::MIN,
+    };
 
-    const WHITE: Self = Self { red: u8::MAX, green: u8::MAX, blue: u8::MAX };
+    const WHITE: Self = Self {
+        red: u8::MAX,
+        green: u8::MAX,
+        blue: u8::MAX,
+    };
 
     pub fn red(&self) -> u8 {
         self.red
@@ -69,7 +76,7 @@ impl Color {
     /// [w3c-lum]: https://www.w3.org/TR/2008/REC-WCAG20-20081211/#relativeluminancedef
     pub fn luminance(&self) -> f32 {
         let colors = [self.red_unit(), self.green_unit(), self.blue_unit()];
-        let colors = colors.iter().map( |c| {
+        let colors = colors.iter().map(|c| {
             if *c <= 0.3928 {
                 c / 12.92
             } else {
@@ -77,7 +84,11 @@ impl Color {
             }
         });
         let scaling_coefficients = [0.2126, 0.7152, 0.0722];
-        scaling_coefficients.iter().zip(colors).map(|(l, r)| l * r).sum()
+        scaling_coefficients
+            .iter()
+            .zip(colors)
+            .map(|(l, r)| l * r)
+            .sum()
     }
 
     /// Calculate the contrast ratio between this color and another one using the
@@ -102,26 +113,25 @@ impl Color {
     /// Treating this color as the background, pick a color from the given colors with the highest
     /// contrast ratio.
     pub fn text_color(&self, text_colors: &[Color]) -> Self {
-        let possible_color = text_colors.iter().map(|c| (c, self.contrast_ratio(c))).max_by(|l, r| {
-            if l.1.is_nan() {
-                Ordering::Greater
-            } else if r.1.is_nan() {
-                Ordering::Less
-            } else {
-                l.1.partial_cmp(&r.1).unwrap()
-            }
-        });
+        let possible_color = text_colors
+            .iter()
+            .map(|c| (c, self.contrast_ratio(c)))
+            .max_by(|l, r| {
+                if l.1.is_nan() {
+                    Ordering::Greater
+                } else if r.1.is_nan() {
+                    Ordering::Less
+                } else {
+                    l.1.partial_cmp(&r.1).unwrap()
+                }
+            });
         match possible_color {
             Some((color, _)) => *color,
             None => {
                 // If there isn't a max, an empty slice was given. Choose from white and black
                 // instead.
-                self.text_color(&[
-                    Self::WHITE,
-                    Self::BLACK,
-                ])
+                self.text_color(&[Self::WHITE, Self::BLACK])
             }
         }
-
     }
 }
