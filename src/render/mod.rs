@@ -99,6 +99,17 @@ impl Renderer {
             })
             // There isn't a `Document.add_all` method, so this is the next best thing.
             .fold(Document::new(), |doc, element| doc.add(element))
+            .set("width", image.len_of(Axis(1)) * self.grid_size)
+            .set("height", row_count * self.grid_size)
+            .set(
+                "viewBox",
+                (
+                    0,
+                    0,
+                    row_count * self.grid_size,
+                    image.len_of(Axis(1)) * self.grid_size,
+                ),
+            )
     }
 }
 
