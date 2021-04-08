@@ -1,4 +1,4 @@
-use ndarray::{Array2, Axis};
+use ndarray::{Array2, Axis, Zip};
 use svg::node::element::Text as TextElement;
 use svg::node::element::{Group, Rectangle};
 use svg::node::Text as TextNode;
@@ -61,7 +61,7 @@ impl Renderer {
         pixmap
     }
 
-    pub fn render_svg(&self, image: &Array2<f32>) -> Document {
+    fn color_map(&self, image: &Array2<f32>) -> Box<dyn Fn(&f32) -> color::Color> {
         let scale_min = match self.scale_min {
             Limit::Static(n) => n,
             Limit::Dynamic => {
@@ -83,57 +83,68 @@ impl Renderer {
             }
         };
         let scale_range = scale_max - scale_min;
-        let color_map = |temperature: &f32| -> color::Color {
+        // Clone the gradient so that it can be owned by the closure
+        let gradient = self.gradient.clone();
+        Box::new(move |temperature: &f32| -> color::Color {
             color::Color::from(
-                self.gradient
-                    .eval_continuous(((temperature - scale_min) / scale_range) as f64),
+                gradient.eval_continuous(((temperature - scale_min) / scale_range) as f64),
             )
-        };
-        let row_count = image.len_of(Axis(0));
-        image
-            .indexed_iter()
-            .map(|((row, col), temperature)| {
-                let grid_color = color_map(temperature);
-                let text_color = grid_color.text_color(&[]);
-                // The SVG coordinate system has the origin in the upper left, while the image's
-                // origin is the lower left, so we have to swap them. The row index is otherwise
-                // unused, so shadowing it is simplest.
-                let row = row_count - row - 1;
-                let grid_cell = Rectangle::new()
-                    // Color implements UpperHex and outputs "#HHHHHH" for the color (like
-                    // colorous::Color).
-                    .set("fill", format!("{:X}", grid_color))
-                    .set("width", self.grid_size)
-                    .set("height", self.grid_size)
-                    .set("x", col * self.grid_size)
-                    .set("y", row * self.grid_size);
-                let group = Group::new().add(grid_cell);
-                if self.show_values {
-                    group.add(
-                        TextElement::new()
-                            .set("fill", format!("{:X}", text_color))
-                            .set("text-anchor", "middle")
-                            .set("dominant-baseline", "middle")
-                            .set("x", col * self.grid_size + (self.grid_size / 2))
-                            .set("y", row * self.grid_size + (self.grid_size / 2))
-                            .add(TextNode::new(format!("{:.2}", temperature))),
-                    )
-                } else {
-                    group
-                }
+        })
+    }
+
+    fn render_svg_cell(
+        &self,
+        row_count: usize,
+    ) -> Box<dyn Fn((usize, usize), &f32, &color::Color) -> Group> {
+        // Clone some values to be captured by the closure
+        let grid_size = self.grid_size;
+        let show_values = self.show_values;
+        Box::new(move |(row, col), temperature, grid_color| {
+            let text_color = grid_color.text_color(&[]);
+            // The SVG coordinate system has the origin in the upper left, while the image's
+            // origin is the lower left, so we have to swap them. The row index is otherwise
+            // unused, so shadowing it is simplest.
+            let row = row_count - row - 1;
+            let grid_cell = Rectangle::new()
+                // Color implements UpperHex and outputs "#HHHHHH" for the color (like
+                // colorous::Color).
+                .set("fill", format!("{:X}", grid_color))
+                .set("width", grid_size)
+                .set("height", grid_size)
+                .set("x", col * grid_size)
+                .set("y", row * grid_size);
+            let group = Group::new().add(grid_cell);
+            if show_values {
+                group.add(
+                    TextElement::new()
+                        .set("fill", format!("{:X}", text_color))
+                        .set("text-anchor", "middle")
+                        .set("dominant-baseline", "middle")
+                        .set("x", col * grid_size + (grid_size / 2))
+                        .set("y", row * grid_size + (grid_size / 2))
+                        .add(TextNode::new(format!("{:.2}", temperature))),
+                )
+            } else {
+                group
+            }
+        })
+    }
+
+    pub fn render_svg(&self, image: &Array2<f32>) -> Document {
+        let (row_count, col_count) = image.dim();
+        let svg_cell_func = self.render_svg_cell(row_count);
+        // TODO: investigate parallelizing this
+        let grid_colors = Zip::from(image).map_collect(self.color_map(image));
+        Zip::indexed(image)
+            .and(&grid_colors)
+            .fold(Document::new(), |doc, index, temperature, grid_color| {
+                doc.add(svg_cell_func(index, temperature, grid_color))
             })
-            // There isn't a `Document.add_all` method, so this is the next best thing.
-            .fold(Document::new(), |doc, element| doc.add(element))
             .set("width", image.len_of(Axis(1)) * self.grid_size)
             .set("height", row_count * self.grid_size)
             .set(
                 "viewBox",
-                (
-                    0,
-                    0,
-                    row_count * self.grid_size,
-                    image.len_of(Axis(1)) * self.grid_size,
-                ),
+                (0, 0, row_count * self.grid_size, col_count * self.grid_size),
             )
     }
 }
