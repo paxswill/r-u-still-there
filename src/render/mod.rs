@@ -82,10 +82,11 @@ impl Renderer {
                     .unwrap())
             }
         };
+        let scale_range = scale_max - scale_min;
         let color_map = |temperature: &f32| -> color::Color {
             color::Color::from(
                 self.gradient
-                    .eval_continuous(((temperature - scale_min) / scale_max) as f64),
+                    .eval_continuous(((temperature - scale_min) / scale_range) as f64),
             )
         };
         let row_count = image.len_of(Axis(0));
@@ -100,7 +101,7 @@ impl Renderer {
                 let row = row_count - row - 1;
                 let grid_cell = Rectangle::new()
                     // Color implements UpperHex and outputs "#HHHHHH" for the color (like
-                    // colorous::Color, but without LowerHex).
+                    // colorous::Color).
                     .set("fill", format!("{:X}", grid_color))
                     .set("width", self.grid_size)
                     .set("height", self.grid_size)
