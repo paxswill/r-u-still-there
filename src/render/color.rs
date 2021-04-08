@@ -2,7 +2,10 @@ use std::cmp::Ordering;
 use std::convert::From;
 use std::fmt;
 
-#[derive(Clone, Copy, Debug)]
+/// A type for colors specifically for finding corresponding colors that have good contrast.
+/// This type uses the WCAG 2.0 definitions of "relative luminance" and "contrast ratio". These
+/// definitions are not very good, but they're good enough for our purposes.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Color {
     red: u8,
     green: u8,
@@ -21,13 +24,25 @@ impl From<colorous::Color> for Color {
 
 impl fmt::LowerHex for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "#{:02x}{:02x}{:02x}", self.red(), self.green(), self.blue())
+        write!(
+            f,
+            "#{:02x}{:02x}{:02x}",
+            self.red(),
+            self.green(),
+            self.blue()
+        )
     }
 }
 
 impl fmt::UpperHex for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "#{:02X}{:02X}{:02X}", self.red(), self.green(), self.blue())
+        write!(
+            f,
+            "#{:02X}{:02X}{:02X}",
+            self.red(),
+            self.green(),
+            self.blue()
+        )
     }
 }
 
@@ -43,6 +58,10 @@ impl Color {
         green: u8::MAX,
         blue: u8::MAX,
     };
+
+    pub fn new(red: u8, green: u8, blue: u8) -> Self {
+        Self { red, green, blue }
+    }
 
     pub fn red(&self) -> u8 {
         self.red
@@ -77,7 +96,9 @@ impl Color {
     pub fn luminance(&self) -> f32 {
         let colors = [self.red_unit(), self.green_unit(), self.blue_unit()];
         let colors = colors.iter().map(|c| {
-            if *c <= 0.3928 {
+            // NOTE: 0.03928 is an error from a draft sRGB spec from the W3C. 0.04045 is the
+            // correct value.
+            if *c <= 0.04045 {
                 c / 12.92
             } else {
                 ((c + 0.055) / 1.055).powf(2.4)
@@ -133,5 +154,154 @@ impl Color {
                 self.text_color(&[Self::WHITE, Self::BLACK])
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod color_test {
+    use super::Color;
+    use float_cmp::{approx_eq, F32Margin};
+
+    #[test]
+    fn black() {
+        let black = Color::BLACK;
+        assert_eq!(black.red(), 0);
+        assert_eq!(black.green(), 0);
+        assert_eq!(black.blue(), 0);
+    }
+
+    #[test]
+    fn white() {
+        let white = Color::WHITE;
+        assert_eq!(white.red(), u8::MAX);
+        assert_eq!(white.green(), u8::MAX);
+        assert_eq!(white.blue(), u8::MAX);
+    }
+
+    #[test]
+    fn new_order() {
+        let c = Color::new(25, 125, 225);
+        assert_eq!(c.red(), 25);
+        assert_eq!(c.green(), 125);
+        assert_eq!(c.blue(), 225);
+    }
+
+    #[test]
+    fn unit() {
+        let c = Color::new(51, 170, 255);
+        assert!(approx_eq!(f32, c.red_unit(), 0.2, F32Margin::default()));
+        assert!(approx_eq!(
+            f32,
+            c.green_unit(),
+            2.0 / 3.0,
+            F32Margin::default()
+        ));
+        assert!(approx_eq!(f32, c.blue_unit(), 1.0, F32Margin::default()));
+    }
+
+    #[test]
+    fn luminance() {
+        assert!(approx_eq!(
+            f32,
+            Color::BLACK.luminance(),
+            0.0,
+            F32Margin::default()
+        ));
+        assert!(approx_eq!(
+            f32,
+            Color::WHITE.luminance(),
+            1.0,
+            F32Margin::default()
+        ));
+    }
+
+    mod contrast_ratio {
+        use super::Color;
+        use float_cmp::{approx_eq, F32Margin};
+
+        const WHITE: Color = Color::WHITE;
+        const BLACK: Color = Color::BLACK;
+        const RED: Color = Color {
+            red: u8::MAX,
+            green: 0,
+            blue: 0,
+        };
+        const GREEN: Color = Color {
+            red: 0,
+            green: u8::MAX,
+            blue: 0,
+        };
+        const BLUE: Color = Color {
+            red: 0,
+            green: 0,
+            blue: u8::MAX,
+        };
+
+        #[test]
+        fn limits() {
+            // The definition of constrast ratio we're using ranges from 1 to 21
+            assert!(approx_eq!(
+                f32,
+                WHITE.contrast_ratio(&BLACK),
+                21.0,
+                F32Margin::default()
+            ));
+            assert_eq!(WHITE.contrast_ratio(&WHITE), 1.0);
+            assert_eq!(BLACK.contrast_ratio(&BLACK), 1.0);
+        }
+
+        #[test]
+        fn webaim_definitions() {
+            // The following values are referenced from https://webaim.org/articles/contrast/
+            assert!(approx_eq!(
+                f32,
+                RED.contrast_ratio(&WHITE),
+                4.0,
+                epsilon = 0.01
+            ));
+            assert!(approx_eq!(
+                f32,
+                BLUE.contrast_ratio(&WHITE),
+                8.6,
+                epsilon = 0.01
+            ));
+            // Not using the example for green as their values are rounded (while they
+            // mention not to round later on in that document with the example we're using here).
+            let light_gray = Color::new(0x77, 0x77, 0x77);
+            assert!(approx_eq!(
+                f32,
+                light_gray.contrast_ratio(&WHITE),
+                4.47,
+                epsilon = 0.01
+            ));
+        }
+
+        /// Check that the order doesn't matter (more accurately, that the light value is chosen
+        /// properly).
+        #[test]
+        fn symmetric() {
+            assert_eq!(RED.contrast_ratio(&WHITE), WHITE.contrast_ratio(&RED));
+            assert_eq!(GREEN.contrast_ratio(&WHITE), WHITE.contrast_ratio(&GREEN));
+            assert_eq!(BLUE.contrast_ratio(&WHITE), WHITE.contrast_ratio(&BLUE));
+            assert_eq!(BLACK.contrast_ratio(&WHITE), WHITE.contrast_ratio(&BLACK));
+        }
+    }
+
+    #[test]
+    fn text_default() {
+        let yellow = Color::new(0xFF, 0xFF, 0x47);
+        assert_eq!(yellow.text_color(&[]), Color::BLACK);
+        let purple = Color::new(0x77, 0, 0xFF);
+        assert_eq!(purple.text_color(&[]), Color::WHITE);
+    }
+
+    #[test]
+    fn text_given() {
+        let yellow = Color::new(0xFF, 0xFF, 0x47);
+        let purple = Color::new(0x77, 0, 0xFF);
+        let cyan = Color::new(0, 0xFF, 0xFF);
+        let dark_orange = Color::new(0x8F, 0x4E, 0x11);
+        assert_eq!(purple.text_color(&[purple, yellow, dark_orange]), yellow);
+        assert_eq!(yellow.text_color(&[dark_orange, cyan, yellow]), dark_orange);
     }
 }

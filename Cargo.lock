@@ -200,6 +200,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "75224bec9bfe1a65e2d34132933f2de7fe79900c96a0174307554244ece8150e"
 
 [[package]]
+name = "float-cmp"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1267f4ac4f343772758f7b1bdcbe767c218bbab93bb432acbf5162bbf85a6c4"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "fontdb"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -704,7 +713,7 @@ version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fb0dce2fee79ac40c21dafba48565ff7a5fa275e23ffe9ce047a40c9574ba34e"
 dependencies = [
- "float-cmp",
+ "float-cmp 0.5.3",
  "rgb",
 ]
 
@@ -714,7 +723,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c536faaff1a10837cfe373142583f6e27d81e96beba339147e77b67c9f260ff"
 dependencies = [
- "float-cmp",
+ "float-cmp 0.5.3",
  "siphasher",
 ]
 
@@ -750,12 +759,16 @@ name = "thermal-occupancy"
 version = "0.1.0"
 dependencies = [
  "colorous",
+ "float-cmp 0.8.0",
  "image",
+ "lazy_static",
  "linux-embedded-hal",
  "ndarray",
  "resvg",
  "svg",
  "thermal-camera",
+ "tiny-skia",
+ "usvg",
 ]
 
 [[package]]
