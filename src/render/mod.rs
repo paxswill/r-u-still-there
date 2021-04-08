@@ -3,8 +3,23 @@ use svg::node::element::Text as TextElement;
 use svg::node::element::{Group, Rectangle};
 use svg::node::Text as TextNode;
 use svg::Document;
+use tiny_skia::Pixmap;
+use usvg::{FitTo, Tree};
 
 mod color;
+
+lazy_static! {
+    /// A basic SVG options structure configured to use the bundled DejaVu Sans font.
+    static ref SVG_OPTS: usvg::Options = {
+        let mut opts = usvg::Options::default();
+        // Add the super stripped down DejaVu Sans (it only has the characters needed to render
+        // numbers).
+        opts.fontdb.load_font_data(include_bytes!("DejaVuSans-Numbers.ttf").to_vec());
+        //opts.fontdb.set_sans_serif_family("DejaVu Sans");
+        opts.font_family = "DejaVu Sans".to_string();
+        opts
+    };
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum Limit {
@@ -35,6 +50,15 @@ impl Renderer {
             // TODO: implement serde stuff so this can be configurable
             gradient: colorous::TURBO,
         }
+    }
+
+    pub fn render_buffer(&self, image: &Array2<f32>) -> Pixmap {
+        let svg = self.render_svg(image);
+        let tree = Tree::from_data(format!("{}", svg).as_bytes(), &SVG_OPTS).unwrap();
+        let size = tree.svg_node().size.to_screen_size();
+        let mut pixmap = Pixmap::new(size.width(), size.height()).unwrap();
+        resvg::render(&tree, FitTo::Original, pixmap.as_mut()).unwrap();
+        pixmap
     }
 
     pub fn render_svg(&self, image: &Array2<f32>) -> Document {
