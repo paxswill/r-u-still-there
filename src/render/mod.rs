@@ -71,7 +71,7 @@ mod font_tests {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Limit {
     /// Set the maximum (or minimum) to the largest (or smallest) value in the current image.
     Dynamic,
@@ -80,28 +80,57 @@ pub enum Limit {
     Static(f32),
 }
 
+/// Control how the temperature of each pixel is displayed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TemperatureDisplay {
+    /// Don't show the temperature.
+    Disabled,
+
+    /// Display the temperature in Celsius.
+    Celsius,
+
+    /// Display the temperature in fahrenheit.
+    Fahrenheit,
+}
+
+impl Default for TemperatureDisplay {
+    fn default() -> Self {
+        Self::Disabled
+    }
+}
+
 #[derive(Debug)]
 pub struct Renderer {
     scale_min: Limit,
     scale_max: Limit,
-    show_values: bool,
+    display_temperature: TemperatureDisplay,
     grid_size: usize,
     gradient: colorous::Gradient,
 }
 
 impl Renderer {
-    pub fn new(scale_min: Limit, scale_max: Limit, show_values: bool, grid_size: usize) -> Self {
+    /// Creates a new `Renderer`. If [Static][Limit::Static] limits are being used for both values
+    /// and are in reverse order (i.e. the minimum is larger than the maximum) the color scale will
+    /// be reversed. There is not a way to specify this behavior for [Dynamic][Limit::Dynmanic]
+    /// limits.
+    pub fn new(
+        scale_min: Limit,
+        scale_max: Limit,
+        display_temperature: TemperatureDisplay,
+        grid_size: usize,
+        gradient: colorous::Gradient,
+    ) -> Self {
         Renderer {
             scale_min,
             scale_max,
-            show_values,
+            display_temperature,
             grid_size,
-            // Completely static for now.
             // TODO: implement serde stuff so this can be configurable
-            gradient: colorous::TURBO,
+            gradient,
         }
     }
 
+    /// Render an image to a pixel buffer.
     pub fn render_buffer(&self, image: &Array2<f32>) -> Pixmap {
         let svg = self.render_svg(image);
         let tree = Tree::from_data(format!("{}", svg).as_bytes(), &SVG_OPTS).unwrap();
@@ -142,13 +171,17 @@ impl Renderer {
         })
     }
 
+    /// Create a closure that renders a single value to an SVG group element. The clusre takes a
+    /// tuple of the values row and column, the temperature to render, and the color to use for the
+    /// background. The size of the grid cell and how to display temperatures is cloned from the
+    /// [Renderer] state when this method is called.
     fn render_svg_cell(
         &self,
         row_count: usize,
     ) -> Box<dyn Fn((usize, usize), &f32, &color::Color) -> Group> {
         // Clone some values to be captured by the closure
         let grid_size = self.grid_size;
-        let show_values = self.show_values;
+        let display_temperature = self.display_temperature;
         Box::new(move |(row, col), temperature, grid_color| {
             let text_color = grid_color.text_color(&[]);
             // The SVG coordinate system has the origin in the upper left, while the image's
@@ -164,18 +197,25 @@ impl Renderer {
                 .set("x", col * grid_size)
                 .set("y", row * grid_size);
             let group = Group::new().add(grid_cell);
-            if show_values {
+            if display_temperature == TemperatureDisplay::Disabled {
+                group
+            } else {
+                let mapped_temperature = match display_temperature {
+                    TemperatureDisplay::Celsius => *temperature,
+                    TemperatureDisplay::Fahrenheit => *temperature * 1.8 + 32.0,
+                    TemperatureDisplay::Disabled => unreachable!(),
+                };
                 group.add(
                     TextElement::new()
                         .set("fill", format!("{:X}", text_color))
                         .set("text-anchor", "middle")
+                        // resvg doesn't support dominant-baseline yet, so it gets rendered
+                        // incorrectly for the time being.
                         .set("dominant-baseline", "middle")
                         .set("x", col * grid_size + (grid_size / 2))
                         .set("y", row * grid_size + (grid_size / 2))
-                        .add(TextNode::new(format!("{:.2}", temperature))),
+                        .add(TextNode::new(format!("{:.2}", mapped_temperature))),
                 )
-            } else {
-                group
             }
         })
     }
@@ -201,6 +241,12 @@ impl Renderer {
 
 impl Default for Renderer {
     fn default() -> Self {
-        Self::new(Limit::Dynamic, Limit::Dynamic, true, 50)
+        Self::new(
+            Limit::Dynamic,
+            Limit::Dynamic,
+            TemperatureDisplay::default(),
+            50,
+            colorous::TURBO,
+        )
     }
 }
