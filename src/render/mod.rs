@@ -250,3 +250,97 @@ impl Default for Renderer {
         )
     }
 }
+
+#[cfg(test)]
+mod color_map_tests {
+    use super::{color, Limit, Renderer, TemperatureDisplay};
+    use ndarray::{arr2, Array2};
+
+    lazy_static! {
+        // Ensure values outside of the static limits (0 and 100) are tested.
+        static ref TEST_IMAGE: Array2<f32> = arr2(&[[-25.0, 0.0, 25.0, 50.0, 75.0, 150.0]]);
+    }
+
+    #[test]
+    fn both_static() {
+        // range is from 0 to 100
+        test_limits(
+            Limit::Static(0.0),
+            Limit::Static(100.0),
+            [0.0, 0.0, 0.25, 0.5, 0.75, 1.0],
+        );
+    }
+
+    #[test]
+    fn upper_dynamic() {
+        // range is from 0 to 150
+        test_limits(
+            Limit::Static(0.0),
+            Limit::Dynamic,
+            [0.0, 0.0, (1.0 / 6.0), (1.0 / 3.0), 0.5, 1.0],
+        );
+    }
+
+    #[test]
+    fn lower_dynamic() {
+        test_limits(
+            // Range is from -25 to 100
+            Limit::Dynamic,
+            Limit::Static(100.0),
+            [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
+        );
+    }
+
+    #[test]
+    fn both_dynamic() {
+        test_limits(
+            // Range is from -25 to 150
+            Limit::Dynamic,
+            Limit::Dynamic,
+            // Most of these values are irrational
+            [
+                0.0,
+                25.0 / 175.0,
+                50.0 / 175.0,
+                75.0 / 175.0,
+                100.0 / 175.0,
+                1.0
+            ],
+        );
+    }
+
+    #[test]
+    fn reversed_static() {
+        // range is from 0 to 100
+        test_limits(
+            Limit::Static(100.0),
+            Limit::Static(0.0),
+            [1.0, 1.0, 0.75, 0.5, 0.25, 0.0],
+        );
+    }
+
+    // Putting this below the actual usage of the tests to make it easier to visually reference the
+    // test values.
+    fn test_limits(lower_limit: Limit, upper_limit: Limit, expected: [f64; 6]) {
+        let renderer = Renderer::new(
+            lower_limit,
+            upper_limit,
+            TemperatureDisplay::Disabled,
+            10,
+            colorous::GREYS,
+        );
+        // Ensure values outside of the static limits (0 and 100) are tested.
+        let map_func = renderer.color_map(&TEST_IMAGE);
+        for (pixel, expected) in TEST_IMAGE.iter().zip(&expected) {
+            let mapped = map_func(pixel);
+            let expected_color = color::Color::from(colorous::GREYS.eval_continuous(*expected));
+            assert_eq!(
+                mapped,
+                color::Color::from(expected_color),
+                "mapped {:?} to {:?}, but expected {:?} (from {:?})",
+                pixel, mapped, expected_color, expected
+            );
+        }
+    }
+
+}
