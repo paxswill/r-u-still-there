@@ -15,10 +15,60 @@ lazy_static! {
         // Add the super stripped down DejaVu Sans (it only has the characters needed to render
         // numbers).
         opts.fontdb.load_font_data(include_bytes!("DejaVuSans-Numbers.ttf").to_vec());
-        //opts.fontdb.set_sans_serif_family("DejaVu Sans");
         opts.font_family = "DejaVu Sans".to_string();
         opts
     };
+}
+
+#[cfg(test)]
+mod font_tests {
+    use super::SVG_OPTS;
+    use fontdb::Source;
+    use std::fs;
+    use std::sync::Arc;
+    use ttf_parser::Face;
+
+    #[test]
+    fn embedded_font_loaded() {
+        let db = &SVG_OPTS.fontdb;
+        assert_eq!(db.len(), 1);
+        let font = db.faces().iter().next().unwrap();
+        assert_eq!(font.family, "DejaVu Sans".to_string());
+        assert_eq!(font.style, fontdb::Style::Normal);
+        assert_eq!(font.weight, fontdb::Weight::NORMAL);
+        assert!(!font.monospaced);
+    }
+
+    #[test]
+    fn embedded_font_characters() {
+        let font_data = {
+            let db = &SVG_OPTS.fontdb;
+            let font = db.faces().iter().next().unwrap();
+            let source = Arc::clone(&font.source);
+            match *source {
+                Source::Binary(ref bin) => bin.to_owned(),
+                Source::File(ref path) => fs::read(path).unwrap(),
+            }
+        };
+        // There better only be one face in the font data.
+        let font = Face::from_slice(&font_data, 0);
+        assert!(font.is_ok());
+        let font = font.unwrap();
+        // Leaving the exotic spaces and other localized separators out for now.
+        let required_characters = "01223456789-+. ";
+        for c in required_characters.chars() {
+            assert!(font.glyph_index(c).is_some());
+        }
+        let discarded_characters = "abcdefghijklmnopqrstuvwxyz";
+        for c in discarded_characters.chars() {
+            assert!(!font.glyph_index(c).is_some());
+        }
+    }
+
+    #[test]
+    fn default_family() {
+        assert_eq!(SVG_OPTS.font_family, "DejaVu Sans");
+    }
 }
 
 #[derive(Clone, Copy, Debug)]

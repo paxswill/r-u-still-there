@@ -23,3 +23,5 @@ branch = "main"
 
 [dev-dependencies]
 float-cmp = "0.8.0"
+fontdb = "0.5.1"
+ttf-parser = "0.12.0"
