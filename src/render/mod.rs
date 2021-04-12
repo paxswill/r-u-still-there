@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use ndarray::{Array2, Axis, Zip};
 use svg::node::element::Text as TextElement;
 use svg::node::element::{Group, Rectangle};
@@ -5,6 +6,12 @@ use svg::node::Text as TextNode;
 use svg::Document;
 use tiny_skia::Pixmap;
 use usvg::{FitTo, Tree};
+
+#[cfg(feature = "mozjpeg")]
+use mozjpeg::{Compress,ColorSpace};
+
+#[cfg(feature = "image")]
+use image::codecs::jpeg::JpegEncoder;
 
 mod color;
 
@@ -138,6 +145,45 @@ impl Renderer {
         let mut pixmap = Pixmap::new(size.width(), size.height()).unwrap();
         resvg::render(&tree, FitTo::Original, pixmap.as_mut()).unwrap();
         pixmap
+    }
+
+    #[cfg(feature = "mozjpeg")]
+    pub fn render_jpeg(&self, image: &Array2<f32>) -> Bytes {
+        let pixel_buf = self.render_buffer(image);
+        // To make it simpler to use renderers within closures, we're creating a fresh encoder each
+        // time this method is called. A little less efficient, but much easier to use.
+        let mut jpeg_encoder = Compress::new(ColorSpace::JCS_EXT_RGBA);
+        jpeg_encoder.set_color_space(ColorSpace::JCS_RGB);
+        // Gotta go fast.
+        // Long version: in debug builds the most the time is spent in SVG rendering. In
+        // optimized release builds though, JPEG encoding using the 'image' crate was taking
+        // up the most time. Using mozjpeg/libjpeg-turbo will hopefully drop the CPU usage a
+        // bit (and make it possible to do 10 FPS on BeagleBones/RasPi Zeros).
+        jpeg_encoder.set_fastest_defaults();
+        jpeg_encoder.set_quality(75.0);
+        jpeg_encoder.set_mem_dest();
+        jpeg_encoder.set_size(pixel_buf.width() as usize, pixel_buf.height() as usize);
+        jpeg_encoder.start_compress();
+        // Hope write_scanlines can process everything in one go.
+        assert!(jpeg_encoder.write_scanlines(&pixel_buf.data()));
+        jpeg_encoder.finish_compress();
+        Bytes::from(jpeg_encoder.data_to_vec().unwrap())
+    }
+
+    #[cfg(all(feature = "image", not(feature = "mozjpeg")))]
+    pub fn render_jpeg(&self, image: &Array2<f32>) -> Bytes {
+        let pixel_buf = self.render_buffer(image);
+        let mut jpeg_buf = BytesMut::new().writer();
+        let mut encoder = JpegEncoder::new(&mut jpeg_buf);
+        encoder
+            .encode(
+                pixel_buf.data(),
+                pixel_buf.width(),
+                pixel_buf.height(),
+                image::ColorType::Rgba8,
+            )
+            .unwrap();
+        jpeg_buf.into_inner().freeze()
     }
 
     fn color_map(&self, image: &Array2<f32>) -> Box<dyn Fn(&f32) -> color::Color> {

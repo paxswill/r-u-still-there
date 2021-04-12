@@ -8,7 +8,6 @@ edition = "2018"
 
 [dependencies]
 colorous = "1.0.3"
-image = "0.23.14"
 lazy_static = "1.4.0"
 resvg = "0.14.0"
 svg = "0.9.1"
@@ -16,10 +15,21 @@ tiny-skia = "0.5.0"
 usvg = "0.14.0"
 ndarray = "0.15.1"
 linux-embedded-hal = "=0.4.0-alpha.0"
+bytes = "1.0.1"
+mozjpeg = { version = "0.8.24", optional = true }
 
 [dependencies.thermal-camera]
 git = "https://git.sr.ht/~paxswill/rust-thermal-camera"
 branch = "main"
+
+[dependencies.image]
+features = ["jpeg"]
+version = "0.23.14"
+optional = true
+
+[features]
+default = ["mjpeg", "mozjpeg"]
+mjpeg = []
 
 [dev-dependencies]
 float-cmp = "0.8.0"
