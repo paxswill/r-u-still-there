@@ -20,6 +20,7 @@ use crate::stream::VideoStream;
 type WriteChannel = watch::Sender<Bytes>;
 type ReadChannel = watch::Receiver<Bytes>;
 
+// SPDX-License-Identifier: GPL-3.0-or-later
 #[derive(Clone, Debug)]
 pub struct MjpegStream {
     boundary: String,

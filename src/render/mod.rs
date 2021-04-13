@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 use ndarray::{Array2, Axis, Zip};
 use svg::node::element::Text as TextElement;
 use svg::node::element::{Group, Rectangle};

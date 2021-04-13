@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 use futures::stream::{Map, Stream, StreamExt};
 use ndarray::Array2;
 use thermal_camera::ThermalCamera;

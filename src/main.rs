@@ -7,6 +7,7 @@ use warp::Filter;
 
 use std::path::Path;
 
+// SPDX-License-Identifier: GPL-3.0-or-later
 #[macro_use]
 extern crate lazy_static;
 
