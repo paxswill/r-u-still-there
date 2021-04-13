@@ -50,7 +50,7 @@ impl MjpegStream {
     }
 }
 
-type FrameError = watch::error::SendError<Bytes>;
+pub type FrameError = watch::error::SendError<Bytes>;
 
 impl VideoStream<FrameError> for MjpegStream {
     fn send_frame(&mut self, buf: &dyn ImageBuffer) -> Result<(), FrameError> {

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use futures::stream::{Map, Stream, StreamExt};
+use futures::stream::{Map, StreamExt};
 use ndarray::Array2;
 use thermal_camera::ThermalCamera;
 use tokio::time::{self, Duration};
