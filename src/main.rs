@@ -18,6 +18,7 @@ mod render;
 mod stream;
 
 use crate::stream::VideoStream;
+use crate::render::Renderer as _;
 
 #[tokio::main]
 async fn main() {
@@ -41,7 +42,7 @@ async fn main() {
         camera::camera_stream(grideye::GridEye::new(bus, addr), Duration::from_millis(100));
 
     // Rendering "filter"
-    let renderer = render::Renderer::new(
+    let renderer = render::SvgRenderer::new(
         render::Limit::Static(15.0),
         render::Limit::Static(30.0),
         render::TemperatureDisplay::Celsius,

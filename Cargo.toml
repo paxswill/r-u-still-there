@@ -13,11 +13,12 @@ futures = "0.3.13"
 http = "0.2.4"
 lazy_static = "1.4.0"
 linux-embedded-hal = "=0.4.0-alpha.0"
+mozjpeg = { version = "0.8.24", optional = true }
 ndarray = "0.15.1"
-resvg = "0.14.0"
-svg = "0.9.1"
-tiny-skia = "0.5.0"
-usvg = "0.14.0"
+resvg = { version = "0.14.0", optional = true }
+svg = { version = "0.9.1", optional = true }
+tiny-skia = { version = "0.5.0", optional = true }
+usvg = { version = "0.14.0", optional = true }
 
 [dependencies.hyper]
 features = ["stream"]
@@ -28,10 +29,6 @@ version = "0.14"
 features = ["jpeg"]
 optional = true
 version = "0.23.14"
-
-[dependencies.mozjpeg]
-optional = true
-version = "0.8.24"
 
 [dependencies.thermal-camera]
 branch = "main"
@@ -50,8 +47,9 @@ default-features = false
 version = "0.3.1"
 
 [features]
-default = ["mjpeg", "mozjpeg", "image"]
-mjpeg = ["hyper", "tokio/sync", "tokio-stream/sync"]
+default = ["mjpeg", "mozjpeg", "image/jpeg", "render_svg"]
+mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
+render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
 
 [dev-dependencies]
 float-cmp = "0.8.0"
