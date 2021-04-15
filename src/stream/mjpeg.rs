@@ -1,8 +1,8 @@
 use bytes::{Buf, Bytes};
 use futures::stream::StreamExt;
 use hyper::Body;
-use tokio::sync::watch;
-use tokio_stream::wrappers::WatchStream;
+use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
 
 #[cfg(feature = "mozjpeg")]
 use mozjpeg::{ColorSpace, Compress};
@@ -12,35 +12,38 @@ use bytes::{BufMut, BytesMut};
 #[cfg(feature = "image")]
 use image::{codecs::jpeg::JpegEncoder, ColorType};
 
-use std::sync::{Arc, Mutex};
-
 use crate::image_buffer::ImageBuffer;
 use crate::stream::VideoStream;
 
-type WriteChannel = watch::Sender<Bytes>;
-type ReadChannel = watch::Receiver<Bytes>;
+type WriteChannel = broadcast::Sender<Bytes>;
 
 // SPDX-License-Identifier: GPL-3.0-or-later
 #[derive(Clone, Debug)]
 pub struct MjpegStream {
     boundary: String,
-    rx_handle: ReadChannel,
-    tx_handle: Arc<Mutex<WriteChannel>>,
+    sender: WriteChannel,
 }
 
 impl MjpegStream {
     pub fn new() -> Self {
-        let (tx, rx) = watch::channel(Bytes::default());
+        let (sender, _) = broadcast::channel(1);
         Self {
             // TODO: randomize boundary
             boundary: "mjpeg_rs_boundary".to_string(),
-            rx_handle: rx,
-            tx_handle: Arc::new(Mutex::new(tx)),
+            sender,
         }
     }
 
     pub fn body(&self) -> Body {
-        let jpeg_stream = WatchStream::new(self.rx_handle.clone());
+        // The only kind of error BroadcastStream can send is when a receiver is lagged. In that
+        // case just continue reading as the next recv() will work.
+        let jpeg_stream = BroadcastStream::new(self.sender.subscribe())
+            .filter_map(|result| async move {
+                match result {
+                    Ok(jpeg) => Some(jpeg),
+                    Err(_) => None,
+                }
+            });
         let result_stream = jpeg_stream.map(Result::<Bytes, hyper::http::Error>::Ok);
         Body::wrap_stream(result_stream)
     }
@@ -50,10 +53,15 @@ impl MjpegStream {
     }
 }
 
-pub type FrameError = watch::error::SendError<Bytes>;
+pub type FrameError = broadcast::error::SendError<Bytes>;
 
 impl VideoStream<FrameError> for MjpegStream {
-    fn send_frame(&mut self, buf: &dyn ImageBuffer) -> Result<(), FrameError> {
+    fn send_frame(&mut self, buf: &dyn ImageBuffer) -> Result<usize, FrameError> {
+        // Only encode the frame to a jpeg if there's a receiver
+        if self.sender.receiver_count() == 0 {
+            // Not an error, just nobody listening.
+            return Ok(0);
+        }
         let jpeg_buf = if cfg!(feature = "mozjpeg") {
             encode_jpeg_mozjpeg(buf)
         } else if cfg!(feature = "image") {
@@ -68,7 +76,7 @@ impl VideoStream<FrameError> for MjpegStream {
         // TODO: this is doing some extra copies.
         let total_length = header.len() + jpeg_buf.len();
         let owned = header.chain(jpeg_buf).copy_to_bytes(total_length);
-        self.tx_handle.lock().unwrap().send(owned)
+        self.sender.send(owned)
     }
 }
 
