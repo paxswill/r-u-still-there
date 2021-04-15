@@ -6,38 +6,48 @@ name = "thermal-occupancy"
 repository = "https://git.sr.ht/~paxswill/thermal-occupancy"
 version = "0.1.0"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
+bytes = "1.0.1"
 colorous = "1.0.3"
+futures = "0.3.13"
+http = "0.2.4"
 lazy_static = "1.4.0"
+linux-embedded-hal = "=0.4.0-alpha.0"
+ndarray = "0.15.1"
 resvg = "0.14.0"
 svg = "0.9.1"
 tiny-skia = "0.5.0"
 usvg = "0.14.0"
-ndarray = "0.15.1"
-linux-embedded-hal = "=0.4.0-alpha.0"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
-tokio-stream = { version = "0.1.5", features = ["time"] }
-http = "0.2.4"
-warp = "0.3.1"
-futures = "0.3.13"
-bytes = "1.0.1"
-mozjpeg = { version = "0.8.24", optional = true }
-
-[dependencies.thermal-camera]
-git = "https://git.sr.ht/~paxswill/rust-thermal-camera"
-branch = "main"
-
-[dependencies.image]
-features = ["jpeg"]
-version = "0.23.14"
-optional = true
 
 [dependencies.hyper]
 features = ["stream"]
-version = "0.14"
 optional = true
+version = "0.14"
+
+[dependencies.image]
+features = ["jpeg"]
+optional = true
+version = "0.23.14"
+
+[dependencies.mozjpeg]
+optional = true
+version = "0.8.24"
+
+[dependencies.thermal-camera]
+branch = "main"
+git = "https://git.sr.ht/~paxswill/rust-thermal-camera"
+
+[dependencies.tokio]
+features = ["macros", "rt-multi-thread", "time"]
+version = "1"
+
+[dependencies.tokio-stream]
+features = ["time"]
+version = "0.1.5"
+
+[dependencies.warp]
+default-features = false
+version = "0.3.1"
 
 [features]
 default = ["mjpeg", "mozjpeg", "image"]
