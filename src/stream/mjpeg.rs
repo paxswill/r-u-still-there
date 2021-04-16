@@ -37,8 +37,8 @@ impl MjpegStream {
     pub fn body(&self) -> Body {
         // The only kind of error BroadcastStream can send is when a receiver is lagged. In that
         // case just continue reading as the next recv() will work.
-        let jpeg_stream = BroadcastStream::new(self.sender.subscribe())
-            .filter_map(|result| async move {
+        let jpeg_stream =
+            BroadcastStream::new(self.sender.subscribe()).filter_map(|result| async move {
                 match result {
                     Ok(jpeg) => Some(jpeg),
                     Err(_) => None,

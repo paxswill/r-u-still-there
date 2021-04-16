@@ -1,5 +1,5 @@
-use futures::stream::StreamExt;
 use futures::sink;
+use futures::stream::StreamExt;
 use http::Response;
 use linux_embedded_hal::I2cdev;
 use thermal_camera::grideye;
@@ -17,8 +17,8 @@ mod image_buffer;
 mod render;
 mod stream;
 
-use crate::stream::VideoStream;
 use crate::render::Renderer as _;
+use crate::stream::VideoStream;
 
 #[tokio::main]
 async fn main() {
@@ -54,12 +54,13 @@ async fn main() {
         frame_stream.map(move |temperatures| renderer.render_buffer(&temperatures));
 
     // Stream them out via MJPEG
-    let mjpeg_sink = sink::unfold(mjpeg, |mut mjpeg, frame: Box<dyn image_buffer::ImageBuffer>| {
-        async move {
+    let mjpeg_sink = sink::unfold(
+        mjpeg,
+        |mut mjpeg, frame: Box<dyn image_buffer::ImageBuffer>| async move {
             mjpeg.send_frame(frame.as_ref())?;
             Ok::<_, stream::mjpeg::FrameError>(mjpeg)
-        }
-    });
+        },
+    );
     // StreamExt::forward needs a TryStream, which we get by wrapping rendered frames in a
     // Result::Ok.
     let video_future = rendered_frames.map(Ok).forward(mjpeg_sink);

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 use ndarray::Array2;
 
 use crate::image_buffer::ImageBuffer;

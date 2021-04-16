@@ -8,7 +8,7 @@ use usvg::{FitTo, Tree};
 
 use crate::image_buffer::ImageBuffer;
 
-use super::{color, font, Renderer as RendererTrait, Limit, TemperatureDisplay};
+use super::{color, font, Limit, Renderer as RendererTrait, TemperatureDisplay};
 
 lazy_static! {
     /// A basic SVG options structure configured to use the bundled DejaVu Sans font.
@@ -143,7 +143,6 @@ impl RendererTrait for Renderer {
         resvg::render(&tree, FitTo::Original, (*pixmap).as_mut()).unwrap();
         pixmap
     }
-
 }
 
 impl Renderer {
@@ -229,8 +228,8 @@ impl Default for Renderer {
 
 #[cfg(test)]
 mod color_map_tests {
-    use crate::render::Renderer as _;
     use super::{color, Limit, Renderer, TemperatureDisplay};
+    use crate::render::Renderer as _;
     use ndarray::{arr2, Array2};
 
     lazy_static! {
