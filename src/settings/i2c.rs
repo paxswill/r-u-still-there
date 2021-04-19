@@ -1,5 +1,7 @@
-use i2cdev::linux::LinuxI2CError;
+// SPDX-License-Identifier: GPL-3.0-or-later
 use linux_embedded_hal::I2cdev;
+
+use i2cdev::linux::LinuxI2CError;
 use serde::Deserialize;
 
 use std::convert::TryFrom;

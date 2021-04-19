@@ -3,8 +3,9 @@ use serde::de::{self, Deserialize, Deserializer, MapAccess, Visitor};
 use serde_repr::Deserialize_repr;
 
 use std::fmt;
+use std::time::Duration;
 
-use super::i2c::{Bus, I2cSettings};
+use super::i2c::I2cSettings;
 
 // This enum is purely used to restrict the acceptable values for rotation
 #[derive(Deserialize_repr, PartialEq, Debug)]
@@ -24,9 +25,9 @@ impl Default for Rotation {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CameraOptions {
-    rotation: u16,
-    mirror: bool,
-    frame_rate: Option<u8>,
+    pub rotation: u16,
+    pub mirror: bool,
+    pub frame_rate: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -128,20 +129,47 @@ impl<'de> Deserialize<'de> for CameraSettings<'de> {
                 // Fields with defaults
                 let rotation: Rotation = rotation.unwrap_or(Rotation::default());
                 let mirror = mirror.unwrap_or(false);
-                // True options skipped (frame_rate)
+                // Minimal check of frame_rate. Variants are expected to set frame_rate to an
+                // actual value themselves below.
+                // This can be simplified if the `option_result_contains` API gets standardized.
+                if frame_rate.is_some() {
+                    let frame_rate = frame_rate.clone().unwrap();
+                    if frame_rate == 0 {
+                        return Err(serde::de::Error::invalid_value(
+                            serde::de::Unexpected::Unsigned(0),
+                            &"a frame rate greater than 0",
+                        ));
+                    }
+                }
                 let i2c = I2cSettings::<'de> { bus, address };
                 let options = CameraOptions {
                     rotation: rotation as u16,
                     mirror,
-                    frame_rate,
+                    frame_rate: frame_rate.clone().unwrap_or(1),
                 };
                 match kind {
-                    "grideye" => Ok(CameraSettings::GridEye { i2c, options }),
+                    "grideye" => {
+                        // The GridEYE only supports up to 10 FPS
+                        let frame_rate = match frame_rate {
+                            None => Ok(10),
+                            Some(n @ 1..=10) => Ok(n),
+                            Some(n) => Err(de::Error::invalid_value(
+                                de::Unexpected::Unsigned(n as u64),
+                                &"a frame rate between 1 and 10",
+                            )),
+                        }?;
+                        // No base update syntax for enums :(
+                        let options = CameraOptions {
+                            rotation: options.rotation,
+                            mirror: options.mirror,
+                            frame_rate,
+                        };
+                        Ok(CameraSettings::GridEye { i2c, options })
+                    }
                     _ => Err(de::Error::unknown_variant(kind, CAMERA_KINDS)),
                 }
             }
         }
-
         // Just a "hint" that this is a struct when it's actually deserializing an enum.
         deserializer.deserialize_struct("CameraSettings", CAMERA_FIELDS, CameraVisitor)
     }
@@ -151,7 +179,24 @@ impl<'de> Deserialize<'de> for CameraSettings<'de> {
 mod de_tests {
     // I'm not sure I need to include both TOML and JSON test cases, but v0v
     // Also missing pytest's parameterized tests here.
-    use super::{Bus, CameraOptions, CameraSettings, I2cSettings};
+    use super::{CameraOptions, CameraSettings};
+    use crate::settings::i2c::{Bus, I2cSettings};
+
+    #[test]
+    fn error_0_frame_rate() {
+        let source = r#"
+        kind = "grideye"
+        bus = 1
+        address = 30
+        frame_rate = 0
+        "#;
+        let parsed: Result<CameraSettings, _> = toml::from_str(source);
+        assert!(
+            parsed.is_err(),
+            "Accepted invalid frame_rate value:\n{}",
+            source
+        );
+    }
 
     #[test]
     fn error_invalid_rotation() {
@@ -243,7 +288,7 @@ mod de_tests {
             options: CameraOptions {
                 rotation: 0,
                 mirror: false,
-                frame_rate: None,
+                frame_rate: 10,
             },
         };
         assert_eq!(parsed, expected);
@@ -268,7 +313,7 @@ mod de_tests {
             options: CameraOptions {
                 rotation: 0,
                 mirror: false,
-                frame_rate: None,
+                frame_rate: 10,
             },
         };
         assert_eq!(parsed, expected);
@@ -295,7 +340,7 @@ mod de_tests {
             options: CameraOptions {
                 rotation: 180,
                 mirror: true,
-                frame_rate: Some(7),
+                frame_rate: 7,
             },
         };
         assert_eq!(parsed, expected);
@@ -322,7 +367,7 @@ mod de_tests {
             options: CameraOptions {
                 rotation: 180,
                 mirror: true,
-                frame_rate: Some(7),
+                frame_rate: 7,
             },
         };
         assert_eq!(parsed, expected);
@@ -350,7 +395,7 @@ mod de_tests {
             options: CameraOptions {
                 rotation: 180,
                 mirror: true,
-                frame_rate: Some(7),
+                frame_rate: 7,
             },
         };
         assert_eq!(parsed, expected);
@@ -378,9 +423,100 @@ mod de_tests {
             options: CameraOptions {
                 rotation: 180,
                 mirror: true,
-                frame_rate: Some(7),
+                frame_rate: 7,
             },
         };
         assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn grideye_min_frame_rate() {
+        let source = r#"
+        kind = "grideye"
+        bus = 1
+        address = 30
+        frame_rate = 1
+        "#;
+        let parsed: Result<CameraSettings, _> = toml::from_str(source);
+        assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
+        let parsed = parsed.unwrap();
+        let expected = CameraSettings::GridEye {
+            i2c: I2cSettings {
+                bus: Bus::Number(1),
+                address: 30,
+            },
+            options: CameraOptions {
+                rotation: 0,
+                mirror: false,
+                frame_rate: 1,
+            },
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn grideye_max_frame_rate() {
+        let source = r#"
+        kind = "grideye"
+        bus = 1
+        address = 30
+        frame_rate = 10
+        "#;
+        let parsed: Result<CameraSettings, _> = toml::from_str(source);
+        assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
+        let parsed = parsed.unwrap();
+        let expected = CameraSettings::GridEye {
+            i2c: I2cSettings {
+                bus: Bus::Number(1),
+                address: 30,
+            },
+            options: CameraOptions {
+                rotation: 0,
+                mirror: false,
+                frame_rate: 10,
+            },
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    #[test]
+    fn error_grideye_over_frame_rate() {
+        let source = r#"
+        kind = "grideye"
+        bus = 1
+        address = 30
+        frame_rate = 11
+        "#;
+        let parsed: Result<CameraSettings, _> = toml::from_str(source);
+        assert!(
+            parsed.is_err(),
+            "Accepted frame_rate greater than 10:\n{}",
+            source
+        );
+    }
+}
+
+impl From<CameraOptions> for Duration {
+    fn from(options: CameraOptions) -> Duration {
+        Duration::from_millis(1000 / options.frame_rate as u64)
+    }
+}
+
+impl<'a> From<CameraSettings<'a>> for I2cSettings<'a> {
+    fn from(settings: CameraSettings) -> I2cSettings {
+        match settings {
+            CameraSettings::GridEye { i2c, options: _ } => i2c,
+        }
+    }
+}
+
+impl From<CameraSettings<'_>> for CameraOptions {
+    fn from(settings: CameraSettings) -> CameraOptions {
+        match settings {
+            CameraSettings::GridEye {
+                i2c: _,
+                options: common_options,
+            } => common_options,
+        }
     }
 }

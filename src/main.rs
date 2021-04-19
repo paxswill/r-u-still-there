@@ -6,6 +6,8 @@ use thermal_camera::grideye;
 use tokio::time::Duration;
 use warp::Filter;
 
+use std::convert::TryFrom;
+use std::fs;
 use std::path::Path;
 
 // SPDX-License-Identifier: GPL-3.0-or-later
@@ -15,13 +17,19 @@ extern crate lazy_static;
 mod camera;
 mod image_buffer;
 mod render;
+mod settings;
 mod stream;
 
 use crate::render::Renderer as _;
+use crate::settings::{CameraOptions, CameraSettings, I2cSettings};
 use crate::stream::VideoStream;
 
 #[tokio::main]
 async fn main() {
+    // Static config location (and relative!) for now
+    let config_data = fs::read(Path::new("./config.toml")).unwrap();
+    let config: CameraSettings = toml::from_slice(&config_data).unwrap();
+
     // MJPEG "sink"
     let mjpeg = stream::mjpeg::MjpegStream::new();
     let mjpeg_output = mjpeg.clone();
@@ -33,13 +41,28 @@ async fn main() {
     });
 
     // Temperature grid "source"
-    let addr = grideye::Address::Secondary;
-    // i2c-1 for Raspberry Pi, i2c-2 for Beaglebones.
-    let bus_path = Path::new("/dev/i2c-1");
-    //let bus_path = Path::new("/dev/i2c-2");
-    let bus = I2cdev::new(bus_path).unwrap();
-    let frame_stream =
-        camera::camera_stream(grideye::GridEye::new(bus, addr), Duration::from_millis(100));
+    let camera_config = &config;
+    let common_options = CameraOptions::from(config);
+    let i2c_config = I2cSettings::from(config);
+    let bus = I2cdev::try_from(i2c_config).unwrap();
+    let addr = grideye::Address::try_from(i2c_config.address).unwrap();
+    // TODO: Move this into a TryFrom implementation or something on CameraSettings
+    let camera_device = match camera_config {
+        CameraSettings::GridEye {
+            i2c: _,
+            options: common_options,
+        } => {
+            let mut cam = grideye::GridEye::new(bus, addr);
+            cam.set_frame_rate(match common_options.frame_rate {
+                2..=10 => grideye::FrameRateValue::Fps10,
+                1 => grideye::FrameRateValue::Fps1,
+                _ => unreachable!(),
+            })
+            .unwrap();
+            cam
+        }
+    };
+    let frame_stream = camera::camera_stream(camera_device, Duration::from(common_options));
 
     // Rendering "filter"
     let renderer = render::SvgRenderer::new(
