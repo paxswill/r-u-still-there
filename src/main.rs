@@ -56,6 +56,7 @@ async fn main() {
             cam.set_frame_rate(match common_options.frame_rate {
                 2..=10 => grideye::FrameRateValue::Fps10,
                 1 => grideye::FrameRateValue::Fps1,
+                // The config deserializing validates the given frame rate against the camera type.
                 _ => unreachable!(),
             })
             .unwrap();

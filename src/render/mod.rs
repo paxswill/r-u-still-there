@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use ndarray::Array2;
+use serde::Deserialize;
 
 use crate::image_buffer::ImageBuffer;
 
@@ -12,7 +13,7 @@ mod svg;
 #[cfg(feature = "render_svg")]
 pub use self::svg::Renderer as SvgRenderer;
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 pub enum Limit {
     /// Set the maximum (or minimum) to the largest (or smallest) value in the current image.
     Dynamic,

@@ -3,12 +3,16 @@ use serde::Deserialize;
 
 mod camera;
 mod i2c;
+mod stream;
 
 pub use camera::{CameraOptions, CameraSettings};
 pub use i2c::I2cSettings;
+pub use stream::{StreamSettings, StreamKind};
 
-#[derive(Copy, Clone, Debug, Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct Settings<'a> {
     #[serde(borrow)]
     pub camera: CameraSettings<'a>,
+
+    pub streams: StreamSettings<'a>,
 }
