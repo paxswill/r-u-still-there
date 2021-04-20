@@ -21,14 +21,14 @@ mod settings;
 mod stream;
 
 use crate::render::Renderer as _;
-use crate::settings::{CameraOptions, CameraSettings, I2cSettings};
+use crate::settings::{Settings, CameraOptions, CameraSettings, I2cSettings};
 use crate::stream::VideoStream;
 
 #[tokio::main]
 async fn main() {
     // Static config location (and relative!) for now
     let config_data = fs::read(Path::new("./config.toml")).unwrap();
-    let config: CameraSettings = toml::from_slice(&config_data).unwrap();
+    let config: Settings = toml::from_slice(&config_data).unwrap();
 
     // MJPEG "sink"
     let mjpeg = stream::mjpeg::MjpegStream::new();
@@ -41,9 +41,9 @@ async fn main() {
     });
 
     // Temperature grid "source"
-    let camera_config = &config;
-    let common_options = CameraOptions::from(config);
-    let i2c_config = I2cSettings::from(config);
+    let camera_config = config.camera;
+    let common_options = CameraOptions::from(camera_config);
+    let i2c_config = I2cSettings::from(camera_config);
     let bus = I2cdev::try_from(i2c_config).unwrap();
     let addr = grideye::Address::try_from(i2c_config.address).unwrap();
     // TODO: Move this into a TryFrom implementation or something on CameraSettings
