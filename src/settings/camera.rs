@@ -45,7 +45,7 @@ const CAMERA_FIELDS: &'static [&'static str] =
 
 // Manually implementing Derserialize as there isn't a way to derive a flattened enum
 // implementation.
-impl<'de> Deserialize<'de> for CameraSettings<'de> {
+impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
