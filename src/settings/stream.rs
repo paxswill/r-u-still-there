@@ -7,7 +7,7 @@ use std::net;
 use crate::stream::{mjpeg::MjpegStream, VideoStream};
 
 fn default_address() -> net::IpAddr {
-    net::IpAddr::from([127u8, 0u8, 0u8, 1u8])
+    net::IpAddr::from([0u8, 0u8, 0u8, 0u8])
 }
 
 fn default_port() -> u16 {
