@@ -7,12 +7,12 @@ mod stream;
 
 pub use camera::{CameraOptions, CameraSettings};
 pub use i2c::I2cSettings;
-pub use stream::{StreamSettings, StreamKind};
+pub use stream::StreamSettings;
 
 #[derive(Debug, Deserialize)]
 pub struct Settings<'a> {
     #[serde(borrow)]
     pub camera: CameraSettings<'a>,
 
-    pub streams: StreamSettings<'a>,
+    pub streams: StreamSettings,
 }
