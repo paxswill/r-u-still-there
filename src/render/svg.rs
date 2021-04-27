@@ -133,15 +133,15 @@ impl RendererTrait for Renderer {
     }
 
     /// Render an image to a pixel buffer.
-    fn render_buffer(&self, image: &Array2<f32>) -> Box<dyn ImageBuffer> {
+    fn render_buffer(&self, image: &Array2<f32>) -> ImageBuffer {
         let svg = self.render_svg(image);
         let tree = Tree::from_data(format!("{}", svg).as_bytes(), &SVG_OPTS).unwrap();
         let size = tree.svg_node().size.to_screen_size();
         // Size isn't zero, so it can't be an error. If the size is overflowing, we should panic
         // anyways.
-        let mut pixmap = Box::new(Pixmap::new(size.width(), size.height()).unwrap());
-        resvg::render(&tree, FitTo::Original, (*pixmap).as_mut()).unwrap();
-        pixmap
+        let mut pixmap = Pixmap::new(size.width(), size.height()).unwrap();
+        resvg::render(&tree, FitTo::Original, (pixmap).as_mut()).unwrap();
+        ImageBuffer::from(pixmap)
     }
 }
 

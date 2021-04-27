@@ -64,7 +64,7 @@ pub trait Renderer: Default {
 
     fn set_gradient(&mut self, gradient: colorous::Gradient);
 
-    fn render_buffer(&self, image: &Array2<f32>) -> Box<dyn ImageBuffer>;
+    fn render_buffer(&self, image: &Array2<f32>) -> ImageBuffer;
 
     fn color_map(&self, image: &Array2<f32>) -> Box<dyn Fn(&f32) -> color::Color> {
         let scale_min = match self.scale_min() {

@@ -80,8 +80,8 @@ async fn main() {
     // Stream them out via MJPEG
     let mjpeg_sink = sink::unfold(
         mjpeg,
-        |mut mjpeg, frame: Box<dyn image_buffer::ImageBuffer>| async move {
-            mjpeg.send_frame(frame.as_ref())?;
+        |mut mjpeg, frame: image_buffer::ImageBuffer| async move {
+            mjpeg.send_frame(&frame)?;
             Ok::<_, stream::mjpeg::FrameError>(mjpeg)
         },
     );

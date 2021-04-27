@@ -56,7 +56,7 @@ impl MjpegStream {
 pub type FrameError = broadcast::error::SendError<Bytes>;
 
 impl VideoStream<FrameError> for MjpegStream {
-    fn send_frame(&mut self, buf: &dyn ImageBuffer) -> Result<usize, FrameError> {
+    fn send_frame(&mut self, buf: &ImageBuffer) -> Result<usize, FrameError> {
         // Only encode the frame to a jpeg if there's a receiver
         if self.sender.receiver_count() == 0 {
             // Not an error, just nobody listening.
@@ -81,7 +81,7 @@ impl VideoStream<FrameError> for MjpegStream {
 }
 
 #[cfg(feature = "mozjpeg")]
-fn encode_jpeg_mozjpeg(image: &dyn ImageBuffer) -> Bytes {
+fn encode_jpeg_mozjpeg(image: &ImageBuffer) -> Bytes {
     // To make it simpler to use renderers within closures, we're creating a fresh encoder each
     // time this method is called. A little less efficient, but much easier to use.
     let mut jpeg_encoder = Compress::new(ColorSpace::from(image.order()));
@@ -103,7 +103,7 @@ fn encode_jpeg_mozjpeg(image: &dyn ImageBuffer) -> Bytes {
 }
 
 #[cfg(feature = "image")]
-fn encode_jpeg_image(image: &dyn ImageBuffer) -> Bytes {
+fn encode_jpeg_image(image: &ImageBuffer) -> Bytes {
     let mut jpeg_buf = BytesMut::new().writer();
     let mut encoder = JpegEncoder::new(&mut jpeg_buf);
     encoder

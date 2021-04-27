@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use tiny_skia::Pixmap;
+use bytes::Bytes;
 
+#[derive(Copy, Clone, Debug)]
 pub enum ColorOrder {
     RGB,
     RGBA,
@@ -26,29 +27,41 @@ impl From<ColorOrder> for mozjpeg::ColorSpace {
     }
 }
 
-pub trait ImageBuffer {
-    fn height(&self) -> usize;
-    fn width(&self) -> usize;
-    fn data(&self) -> &[u8];
-    fn order(&self) -> ColorOrder;
+#[derive(Clone, Debug)]
+pub struct ImageBuffer {
+    data: Bytes,
+    height: usize,
+    width: usize,
+    order: ColorOrder,
 }
 
-impl ImageBuffer for Pixmap {
-    fn height(&self) -> usize {
-        self.height() as usize
+impl ImageBuffer {
+    pub fn data(&self) -> &[u8] {
+        &self.data
     }
 
-    fn width(&self) -> usize {
-        self.width() as usize
+    pub fn height(&self) -> usize {
+        self.height
     }
 
-    // Pixmap already has a data() method that satisfies this trait.
-    fn data(&self) -> &[u8] {
-        self.data()
+    pub fn width(&self) -> usize {
+        self.width
     }
 
-    fn order(&self) -> ColorOrder {
-        // Pixmap always stores its data as RGBA.
-        ColorOrder::RGBA
+    pub fn order(&self) -> ColorOrder {
+        self.order
+    }
+}
+
+#[cfg(feature = "render_svg")]
+impl From<tiny_skia::Pixmap> for ImageBuffer {
+    fn from(pixmap: tiny_skia::Pixmap) -> Self {
+        Self {
+            data: Bytes::copy_from_slice(pixmap.data()),
+            height: pixmap.height() as usize,
+            width: pixmap.width() as usize,
+            // tiny_skia::Pixmap always stores data as RGBA
+            order: ColorOrder::RGBA,
+        }
     }
 }
