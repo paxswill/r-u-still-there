@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 use futures::sink;
 use futures::stream::{Stream, StreamExt, TryStream};
 use http::Response;
@@ -11,7 +12,6 @@ use std::convert::TryFrom;
 use std::fs;
 use std::path::Path;
 
-// SPDX-License-Identifier: GPL-3.0-or-later
 #[macro_use]
 extern crate lazy_static;
 

@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
 use bytes::{Buf, Bytes};
 use futures::stream::StreamExt;
 use hyper::Body;
@@ -17,7 +18,6 @@ use crate::stream::VideoStream;
 
 type WriteChannel = broadcast::Sender<Bytes>;
 
-// SPDX-License-Identifier: GPL-3.0-or-later
 #[derive(Clone, Debug)]
 pub struct MjpegStream {
     boundary: String,
