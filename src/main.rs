@@ -1,7 +1,8 @@
 use futures::sink;
-use futures::stream::StreamExt;
+use futures::stream::{Stream, StreamExt, TryStream};
 use http::Response;
 use linux_embedded_hal::I2cdev;
+use ndarray::Array2;
 use thermal_camera::grideye;
 use tokio::time::Duration;
 use warp::Filter;
@@ -18,27 +19,26 @@ mod camera;
 mod image_buffer;
 mod render;
 mod settings;
+mod spmc;
 mod stream;
 
 use crate::render::Renderer as _;
 use crate::settings::{Settings, CameraOptions, CameraSettings, I2cSettings};
 use crate::stream::VideoStream;
 
+fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
+where
+    St: Stream<Item = T>,
+    //TSt: TryStream<Ok = T, Error = Infallible>
+{
+    in_stream.map(Result::<T, E>::Ok)
+}
+
 #[tokio::main]
 async fn main() {
     // Static config location (and relative!) for now
     let config_data = fs::read(Path::new("./config.toml")).unwrap();
     let config: Settings = toml::from_slice(&config_data).unwrap();
-
-    // MJPEG "sink"
-    let mjpeg = stream::mjpeg::MjpegStream::new();
-    let mjpeg_output = mjpeg.clone();
-    let mjpeg_route = warp::path("stream").map(move || {
-        Response::builder()
-            .status(200)
-            .header("Content-Type", mjpeg_output.content_type())
-            .body(mjpeg_output.body())
-    });
 
     // Temperature grid "source"
     let camera_config = config.camera;
@@ -64,6 +64,8 @@ async fn main() {
         }
     };
     let frame_stream = camera::camera_stream(camera_device, Duration::from(common_options));
+    let frame_multiplexer = spmc::Sender::<Array2<f32>>::default();
+    let frame_future = ok_stream(frame_stream).forward(frame_multiplexer.clone());
 
     // Rendering "filter"
     let renderer = render::SvgRenderer::new(
@@ -73,9 +75,21 @@ async fn main() {
         50,
         colorous::TURBO,
     );
+    let rendered_stream = frame_multiplexer
+        .stream()
+        .map(move |temperatures| renderer.render_buffer(&temperatures));
+    let rendered_multiplexer = spmc::Sender::default();
+    let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
 
-    let rendered_frames =
-        frame_stream.map(move |temperatures| renderer.render_buffer(&temperatures));
+    // MJPEG "sink"
+    let mjpeg = stream::mjpeg::MjpegStream::new();
+    let mjpeg_output = mjpeg.clone();
+    let mjpeg_route = warp::path("stream").map(move || {
+        Response::builder()
+            .status(200)
+            .header("Content-Type", mjpeg_output.content_type())
+            .body(mjpeg_output.body())
+    });
 
     // Stream them out via MJPEG
     let mjpeg_sink = sink::unfold(
@@ -85,14 +99,13 @@ async fn main() {
             Ok::<_, stream::mjpeg::FrameError>(mjpeg)
         },
     );
-    // StreamExt::forward needs a TryStream, which we get by wrapping rendered frames in a
-    // Result::Ok.
-    let video_future = rendered_frames.map(Ok).forward(mjpeg_sink);
+    let mjpeg_future = ok_stream(rendered_multiplexer.stream()).forward(mjpeg_sink);
 
     tokio::join!(
-        //tokio::spawn(warp::serve(mjpeg).bind(([127, 0, 0, 1], 9000))),
         tokio::spawn(warp::serve(mjpeg_route).bind(([0, 0, 0, 0], 9000))),
-        video_future
+        frame_future,
+        render_future,
+        mjpeg_future,
     )
     .0
     .unwrap();
