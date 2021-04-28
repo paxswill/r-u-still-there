@@ -38,10 +38,9 @@ pub enum CameraSettings<'a> {
     },
 }
 
-const CAMERA_KINDS: &'static [&'static str] = &["grideye"];
+const CAMERA_KINDS: &[&str] = &["grideye"];
 
-const CAMERA_FIELDS: &'static [&'static str] =
-    &["kind", "bus", "address", "rotation", "mirror", "frame_rate"];
+const CAMERA_FIELDS: &[&str] = &["kind", "bus", "address", "rotation", "mirror", "frame_rate"];
 
 // Manually implementing Derserialize as there isn't a way to derive a flattened enum
 // implementation.
@@ -127,7 +126,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                 let address = address.ok_or_else(|| de::Error::missing_field("address"))?;
                 let kind = kind.ok_or_else(|| de::Error::missing_field("kind"))?;
                 // Fields with defaults
-                let rotation: Rotation = rotation.unwrap_or(Rotation::default());
+                let rotation: Rotation = rotation.unwrap_or_default();
                 let mirror = mirror.unwrap_or(false);
                 // Minimal check of frame_rate. Variants are expected to set frame_rate to an
                 // actual value themselves below.
@@ -239,7 +238,7 @@ mod de_tests {
             "mirror = true",
             "frame_rate = 7",
         ];
-        let full = lines.join("\n").to_string();
+        let full = lines.join("\n");
         for line in &lines {
             let source = full.clone() + line;
             let parsed: Result<CameraSettings, _> = toml::from_str(&source);

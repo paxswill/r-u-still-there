@@ -89,7 +89,7 @@ pub trait Renderer: Default {
         };
         let scale_range = scale_max - scale_min;
         // Clone the gradient so that it can be owned by the closure
-        let gradient = self.gradient().clone();
+        let gradient = self.gradient();
         Box::new(move |temperature: &f32| -> color::Color {
             color::Color::from(
                 gradient.eval_continuous(((temperature - scale_min) / scale_range) as f64),

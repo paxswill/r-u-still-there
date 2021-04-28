@@ -2,6 +2,7 @@
 use bytes::Bytes;
 
 #[derive(Copy, Clone, Debug)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum ColorOrder {
     RGB,
     RGBA,

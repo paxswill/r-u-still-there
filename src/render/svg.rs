@@ -145,15 +145,14 @@ impl RendererTrait for Renderer {
     }
 }
 
+type CellRenderer = Box<dyn Fn((usize, usize), &f32, &color::Color) -> Group>;
+
 impl Renderer {
     /// Create a closure that renders a single value to an SVG group element. The clusre takes a
     /// tuple of the values row and column, the temperature to render, and the color to use for the
     /// background. The size of the grid cell and how to display temperatures is cloned from the
     /// [Renderer] state when this method is called.
-    fn render_svg_cell(
-        &self,
-        row_count: usize,
-    ) -> Box<dyn Fn((usize, usize), &f32, &color::Color) -> Group> {
+    fn render_svg_cell(&self, row_count: usize) -> CellRenderer {
         // Clone some values to be captured by the closure
         let grid_size = self.grid_size;
         let display_temperature = self.display_temperature;
@@ -311,13 +310,9 @@ mod color_map_tests {
             let mapped = map_func(pixel);
             let expected_color = color::Color::from(colorous::GREYS.eval_continuous(*expected));
             assert_eq!(
-                mapped,
-                color::Color::from(expected_color),
+                mapped, expected_color,
                 "mapped {:?} to {:?}, but expected {:?} (from {:?})",
-                pixel,
-                mapped,
-                expected_color,
-                expected
+                pixel, mapped, expected_color, expected
             );
         }
     }
