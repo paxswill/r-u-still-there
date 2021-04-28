@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use futures::future::{FutureExt, TryFutureExt};
-use futures::sink::{self, SinkExt};
+use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
 use linux_embedded_hal::I2cdev;
 use ndarray::Array2;
 use thermal_camera::grideye;
+use tokio::task::JoinError;
 use tokio::time::Duration;
 use warp::Filter;
 
 use std::convert::TryFrom;
 use std::fs;
 use std::path::Path;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 use std::vec::Vec;
 
 #[macro_use]
@@ -35,11 +37,31 @@ where
     in_stream.map(Result::<T, E>::Ok)
 }
 
+type InnerResult = Result<(), error::Error<bytes::Bytes>>;
+type TaskList = FuturesUnordered<Box<dyn Future<Output = InnerResult> + Unpin>>;
+
+fn flatten_join_result<E>(join_result: Result<Result<(), E>, JoinError>) -> InnerResult
+where
+    error::Error<bytes::Bytes>: From<E>,
+{
+    match join_result {
+        Ok(inner_result) => Ok(inner_result?),
+        Err(join_error) => {
+            if join_error.is_panic() {
+                join_error.into_panic();
+                unreachable!()
+            } else {
+                Err(error::Error::CancelledThread(join_error))
+            }
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct App {
     frame_source: Option<spmc::Sender<Array2<f32>>>,
     rendered_source: Option<spmc::Sender<image_buffer::ImageBuffer>>,
-    tasks: FuturesUnordered<tokio::task::JoinHandle<Result<(), error::Error<bytes::Bytes>>>>,
+    tasks: TaskList,
 }
 
 impl App {
@@ -71,7 +93,7 @@ impl App {
         let frame_multiplexer = spmc::Sender::default();
         let frame_future = ok_stream(frame_stream).forward(frame_multiplexer.clone());
         self.frame_source = Some(frame_multiplexer);
-        self.tasks.push(tokio::spawn(frame_future.err_into()));
+        self.tasks.push(Box::new(frame_future.err_into()));
     }
 
     // TODO: once the render config settings is set up, have this function take that as an
@@ -94,7 +116,9 @@ impl App {
         let rendered_multiplexer = spmc::Sender::default();
         let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
         self.rendered_source = Some(rendered_multiplexer);
-        self.tasks.push(tokio::spawn(render_future.err_into()));
+        self.tasks.push(Box::new(
+            tokio::spawn(render_future).map(flatten_join_result),
+        ));
         Ok(())
     }
 
@@ -131,25 +155,34 @@ impl App {
                 .ok_or("need to create renderer first")?
                 .stream();
             let mjpeg_future = ok_stream(rendered_stream).forward(mjpeg);
-            self.tasks
-                .push(tokio::spawn(mjpeg_future.err_into::<error::Error<_>>()));
+            self.tasks.push(Box::new(
+                tokio::spawn(mjpeg_future).map(flatten_join_result), //mjpeg_future.err_into()
+            ));
         }
         let combined_route = routes
             .into_iter()
             .reduce(|combined, next| combined.or(next).unify().boxed())
             // TODO: more error-ing
             .ok_or("problem creating streaming routes")?;
-        self.tasks.push(tokio::spawn(
-            warp::serve(combined_route).bind(settings).map(Ok),
-        ));
+        self.tasks
+            .push(Box::new(warp::serve(combined_route).bind(settings).map(Ok)));
         Ok(())
     }
+}
 
-    fn tasks(
-        &mut self,
-    ) -> &mut FuturesUnordered<tokio::task::JoinHandle<Result<(), error::Error<bytes::Bytes>>>>
-    {
-        &mut self.tasks
+impl Future for App {
+    type Output = ();
+
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            match self.tasks.poll_next_unpin(cx) {
+                Poll::Pending => return Poll::Pending,
+                Poll::Ready(option) => match option {
+                    None => return Poll::Ready(()),
+                    Some(_) => (),
+                },
+            }
+        }
     }
 }
 
@@ -169,10 +202,7 @@ async fn main() {
     let config_data = fs::read(Path::new("./config.toml")).unwrap();
     let config: Settings = toml::from_slice(&config_data).unwrap();
 
-    let mut app = App::from(config);
+    let app = App::from(config);
 
-    let mut ok_all = ok_stream(app.tasks());
-    let mut drain = sink::drain();
-
-    tokio::join!(drain.send_all(&mut ok_all)).0.unwrap();
+    app.await;
 }
