@@ -12,6 +12,7 @@ use warp::Filter;
 use std::convert::TryFrom;
 use std::fs;
 use std::path::Path;
+use std::vec::Vec;
 
 #[macro_use]
 extern crate lazy_static;
@@ -25,7 +26,7 @@ mod spmc;
 mod stream;
 
 use crate::render::Renderer as _;
-use crate::settings::{CameraOptions, CameraSettings, I2cSettings, Settings};
+use crate::settings::{CameraOptions, CameraSettings, I2cSettings, Settings, StreamSettings};
 use crate::stream::VideoStream;
 
 fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
@@ -98,36 +99,58 @@ impl App {
         Ok(())
     }
 
-    fn create_streams(&mut self) -> Result<(), &str> {
-        // MJPEG "sink"
-        let mjpeg = stream::mjpeg::MjpegStream::new();
-        let mjpeg_output = mjpeg.clone();
-        let mjpeg_route = warp::path("mjpeg").and(warp::path::end()).map(move || {
-            Response::builder()
-                .status(200)
-                .header("Content-Type", mjpeg_output.content_type())
-                .body(mjpeg_output.body())
-        });
+    fn create_streams(&mut self, settings: StreamSettings) -> Result<(), &str> {
+        // Bail out if there aren't any stream sources enabled
+        // For now there's just MJPEG, but HLS is planned for the future.
+        if !settings.mjpeg {
+            // It's OK, there was just nothing to do.
+            return Ok(());
+        }
 
-        // Stream them out via MJPEG
-        let mjpeg_sink = sink::unfold(
-            mjpeg,
-            |mut mjpeg, frame: image_buffer::ImageBuffer| async move {
-                mjpeg.send_frame(&frame)?;
-                Ok::<_, stream::mjpeg::FrameError>(mjpeg)
-            },
-        );
-        let rendered_stream = self
-            .rendered_source
-            .as_ref()
-            // TODO: also Error here
-            .ok_or("need to create renderer first")?
-            .stream();
-        let mjpeg_future = ok_stream(rendered_stream).forward(mjpeg_sink);
-        self.tasks
-            .push(tokio::spawn(mjpeg_future.err_into::<error::Error<_>>()));
+        let mut routes = Vec::new();
+
+        if settings.mjpeg {
+            // MJPEG "sink"
+            let mjpeg = stream::mjpeg::MjpegStream::new();
+            let mjpeg_output = mjpeg.clone();
+            let mjpeg_route = warp::path("mjpeg")
+                .and(warp::path::end())
+                .map(move || {
+                    Response::builder()
+                        .status(200)
+                        .header("Content-Type", mjpeg_output.content_type())
+                        .body(mjpeg_output.body())
+                })
+                .boxed();
+            routes.push(mjpeg_route);
+
+            // Stream out rendered frames via MJPEG
+            let mjpeg_sink = sink::unfold(
+                mjpeg,
+                |mut mjpeg, frame: image_buffer::ImageBuffer| async move {
+                    mjpeg.send_frame(&frame)?;
+                    Ok::<_, stream::mjpeg::FrameError>(mjpeg)
+                },
+            );
+            let rendered_stream = self
+                .rendered_source
+                .as_ref()
+                // TODO: also Error here
+                .ok_or("need to create renderer first")?
+                .stream();
+            let mjpeg_future = ok_stream(rendered_stream).forward(mjpeg_sink);
+            self.tasks
+                .push(tokio::spawn(mjpeg_future.err_into::<error::Error<_>>()));
+        }
+        let combined_route = routes
+            .into_iter()
+            .reduce(|combined, next| combined.or(next).unify().boxed())
+            // TODO: more error-ing
+            .ok_or("problem creating streaming routes")?;
         self.tasks.push(tokio::spawn(
-            warp::serve(mjpeg_route).bind(([0, 0, 0, 0], 9000)).map(Ok),
+            warp::serve(combined_route)
+                .bind(settings)
+                .map(Ok),
         ));
         Ok(())
     }
@@ -145,7 +168,7 @@ impl<'a> From<Settings<'a>> for App {
         let mut app = Self::default();
         app.create_camera(config.camera);
         app.create_renderer().unwrap();
-        app.create_streams().unwrap();
+        app.create_streams(config.streams).unwrap();
         app
     }
 }
