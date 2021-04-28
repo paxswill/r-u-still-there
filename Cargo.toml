@@ -8,7 +8,7 @@ version = "0.1.0"
 
 [dependencies]
 bytes = "1.0.1"
-colorous = "1.0.3"
+colorous = "1.0.5"
 futures = "0.3.13"
 http = "0.2.4"
 i2cdev = "0.4.4"

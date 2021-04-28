@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use futures::sink;
-use futures::stream::{Stream, StreamExt, TryStream};
+use futures::future::{FutureExt, TryFutureExt};
+use futures::sink::{self, SinkExt};
+use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
 use linux_embedded_hal::I2cdev;
-use ndarray::Array2;
 use thermal_camera::grideye;
 use tokio::time::Duration;
 use warp::Filter;
@@ -16,6 +16,7 @@ use std::path::Path;
 extern crate lazy_static;
 
 mod camera;
+mod error;
 mod image_buffer;
 mod render;
 mod settings;
@@ -23,19 +24,20 @@ mod spmc;
 mod stream;
 
 use crate::render::Renderer as _;
-use crate::settings::{Settings, CameraOptions, CameraSettings, I2cSettings};
+use crate::settings::{CameraOptions, CameraSettings, I2cSettings, Settings};
 use crate::stream::VideoStream;
 
 fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
 where
     St: Stream<Item = T>,
-    //TSt: TryStream<Ok = T, Error = Infallible>
 {
     in_stream.map(Result::<T, E>::Ok)
 }
 
 #[tokio::main]
 async fn main() {
+    let all_futures =
+        FuturesUnordered::<tokio::task::JoinHandle<Result<_, error::Error<_>>>>::new();
     // Static config location (and relative!) for now
     let config_data = fs::read(Path::new("./config.toml")).unwrap();
     let config: Settings = toml::from_slice(&config_data).unwrap();
@@ -64,8 +66,9 @@ async fn main() {
         }
     };
     let frame_stream = camera::camera_stream(camera_device, Duration::from(common_options));
-    let frame_multiplexer = spmc::Sender::<Array2<f32>>::default();
+    let frame_multiplexer = spmc::Sender::default();
     let frame_future = ok_stream(frame_stream).forward(frame_multiplexer.clone());
+    all_futures.push(tokio::spawn(frame_future.err_into::<error::Error<_>>()));
 
     // Rendering "filter"
     let renderer = render::SvgRenderer::new(
@@ -80,6 +83,7 @@ async fn main() {
         .map(move |temperatures| renderer.render_buffer(&temperatures));
     let rendered_multiplexer = spmc::Sender::default();
     let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
+    all_futures.push(tokio::spawn(render_future.err_into::<error::Error<_>>()));
 
     // MJPEG "sink"
     let mjpeg = stream::mjpeg::MjpegStream::new();
@@ -100,13 +104,14 @@ async fn main() {
         },
     );
     let mjpeg_future = ok_stream(rendered_multiplexer.stream()).forward(mjpeg_sink);
+    all_futures.push(tokio::spawn(mjpeg_future.err_into::<error::Error<_>>()));
 
-    tokio::join!(
-        tokio::spawn(warp::serve(mjpeg_route).bind(([0, 0, 0, 0], 9000))),
-        frame_future,
-        render_future,
-        mjpeg_future,
-    )
-    .0
-    .unwrap();
+    all_futures.push(tokio::spawn(
+        warp::serve(mjpeg_route).bind(([0, 0, 0, 0], 9000)).map(Ok),
+    ));
+
+    let mut ok_all = ok_stream(all_futures);
+    let mut drain = sink::drain();
+
+    tokio::join!(drain.send_all(&mut ok_all)).0.unwrap();
 }
