@@ -27,7 +27,6 @@ mod stream;
 
 use crate::render::Renderer as _;
 use crate::settings::{CameraOptions, CameraSettings, I2cSettings, Settings, StreamSettings};
-use crate::stream::VideoStream;
 
 fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
 where
@@ -110,7 +109,7 @@ impl App {
         let mut routes = Vec::new();
 
         if settings.mjpeg {
-            // MJPEG "sink"
+            // MJPEG sink
             let mjpeg = stream::mjpeg::MjpegStream::new();
             let mjpeg_output = mjpeg.clone();
             let mjpeg_route = warp::path("mjpeg")
@@ -125,20 +124,13 @@ impl App {
             routes.push(mjpeg_route);
 
             // Stream out rendered frames via MJPEG
-            let mjpeg_sink = sink::unfold(
-                mjpeg,
-                |mut mjpeg, frame: image_buffer::ImageBuffer| async move {
-                    mjpeg.send_frame(&frame)?;
-                    Ok::<_, stream::mjpeg::FrameError>(mjpeg)
-                },
-            );
             let rendered_stream = self
                 .rendered_source
                 .as_ref()
                 // TODO: also Error here
                 .ok_or("need to create renderer first")?
                 .stream();
-            let mjpeg_future = ok_stream(rendered_stream).forward(mjpeg_sink);
+            let mjpeg_future = ok_stream(rendered_stream).forward(mjpeg);
             self.tasks
                 .push(tokio::spawn(mjpeg_future.err_into::<error::Error<_>>()));
         }
@@ -148,9 +140,7 @@ impl App {
             // TODO: more error-ing
             .ok_or("problem creating streaming routes")?;
         self.tasks.push(tokio::spawn(
-            warp::serve(combined_route)
-                .bind(settings)
-                .map(Ok),
+            warp::serve(combined_route).bind(settings).map(Ok),
         ));
         Ok(())
     }

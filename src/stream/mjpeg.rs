@@ -1,9 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use bytes::{Buf, Bytes};
+use futures::sink::{Sink, SinkExt};
 use futures::stream::StreamExt;
 use hyper::Body;
-use tokio::sync::broadcast;
-use tokio_stream::wrappers::BroadcastStream;
 
 #[cfg(feature = "mozjpeg")]
 use mozjpeg::{ColorSpace, Compress};
@@ -13,37 +12,32 @@ use bytes::{BufMut, BytesMut};
 #[cfg(feature = "image")]
 use image::{codecs::jpeg::JpegEncoder, ColorType};
 
-use crate::image_buffer::ImageBuffer;
-use crate::stream::VideoStream;
+use std::convert::Infallible;
+use std::pin::Pin;
+use std::task::{Context, Poll};
 
-type WriteChannel = broadcast::Sender<Bytes>;
+use crate::image_buffer::ImageBuffer;
+use crate::spmc::Sender;
 
 #[derive(Clone, Debug)]
 pub struct MjpegStream {
     boundary: String,
-    sender: WriteChannel,
+    sender: Sender<Bytes>,
 }
 
 impl MjpegStream {
     pub fn new() -> Self {
-        let (sender, _) = broadcast::channel(1);
         Self {
             // TODO: randomize boundary
             boundary: "mjpeg_rs_boundary".to_string(),
-            sender,
+            sender: Sender::default(),
         }
     }
 
     pub fn body(&self) -> Body {
         // The only kind of error BroadcastStream can send is when a receiver is lagged. In that
         // case just continue reading as the next recv() will work.
-        let jpeg_stream =
-            BroadcastStream::new(self.sender.subscribe()).filter_map(|result| async move {
-                match result {
-                    Ok(jpeg) => Some(jpeg),
-                    Err(_) => None,
-                }
-            });
+        let jpeg_stream = self.sender.stream();
         let result_stream = jpeg_stream.map(Result::<Bytes, hyper::http::Error>::Ok);
         Body::wrap_stream(result_stream)
     }
@@ -53,19 +47,18 @@ impl MjpegStream {
     }
 }
 
-pub type FrameError = broadcast::error::SendError<Bytes>;
+impl Sink<ImageBuffer> for MjpegStream {
+    type Error = Infallible;
 
-impl VideoStream<FrameError> for MjpegStream {
-    fn send_frame(&mut self, buf: &ImageBuffer) -> Result<usize, FrameError> {
-        // Only encode the frame to a jpeg if there's a receiver
-        if self.sender.receiver_count() == 0 {
-            // Not an error, just nobody listening.
-            return Ok(0);
-        }
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.sender.poll_ready_unpin(cx)
+    }
+
+    fn start_send(mut self: Pin<&mut Self>, buf: ImageBuffer) -> Result<(), Self::Error> {
         let jpeg_buf = if cfg!(feature = "mozjpeg") {
-            encode_jpeg_mozjpeg(buf)
+            encode_jpeg_mozjpeg(&buf)
         } else if cfg!(feature = "image") {
-            encode_jpeg_image(buf)
+            encode_jpeg_image(&buf)
         } else {
             panic!("mjpeg feature enabled, but no jpeg encoders enabled")
         };
@@ -76,7 +69,15 @@ impl VideoStream<FrameError> for MjpegStream {
         // TODO: this is doing some extra copies.
         let total_length = header.len() + jpeg_buf.len();
         let owned = header.chain(jpeg_buf).copy_to_bytes(total_length);
-        self.sender.send(owned)
+        self.sender.start_send_unpin(owned)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.sender.poll_flush_unpin(cx)
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.sender.poll_close_unpin(cx)
     }
 }
 
