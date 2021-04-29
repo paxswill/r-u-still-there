@@ -28,7 +28,9 @@ mod spmc;
 mod stream;
 
 use crate::render::Renderer as _;
-use crate::settings::{CameraOptions, CameraSettings, I2cSettings, Settings, StreamSettings};
+use crate::settings::{
+    CameraOptions, CameraSettings, I2cSettings, RenderSettings, Settings, StreamSettings,
+};
 
 fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
 where
@@ -98,13 +100,13 @@ impl App {
 
     // TODO: once the render config settings is set up, have this function take that as an
     // argument. For now it just creates the hardcoded values.
-    fn create_renderer(&mut self) -> Result<(), &str> {
+    fn create_renderer(&mut self, settings: RenderSettings) -> Result<(), &str> {
         let renderer = render::SvgRenderer::new(
-            render::Limit::Static(15.0),
-            render::Limit::Static(30.0),
-            render::TemperatureDisplay::Celsius,
-            50,
-            colorous::TURBO,
+            settings.lower_limit,
+            settings.upper_limit,
+            render::TemperatureDisplay::from(settings.units),
+            settings.grid_size,
+            settings.colors,
         );
         let rendered_stream = self
             .frame_source
@@ -190,7 +192,7 @@ impl<'a> From<Settings<'a>> for App {
     fn from(config: Settings<'a>) -> Self {
         let mut app = Self::default();
         app.create_camera(config.camera);
-        app.create_renderer().unwrap();
+        app.create_renderer(config.render).unwrap();
         app.create_streams(config.streams).unwrap();
         app
     }

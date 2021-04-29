@@ -14,12 +14,19 @@ mod svg;
 pub use self::svg::Renderer as SvgRenderer;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum Limit {
     /// Set the maximum (or minimum) to the largest (or smallest) value in the current image.
     Dynamic,
 
     /// Set the maximum (or minimum) to the given value.
     Static(f32),
+}
+
+impl Default for Limit {
+    fn default() -> Self {
+        Self::Dynamic
+    }
 }
 
 /// Control how the temperature of each pixel is displayed.
