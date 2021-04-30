@@ -86,8 +86,6 @@ impl Pipeline {
         self.tasks.push(Box::new(frame_future.err_into()));
     }
 
-    // TODO: once the render config settings is set up, have this function take that as an
-    // argument. For now it just creates the hardcoded values.
     fn create_renderer(&mut self, settings: RenderSettings) -> Result<(), &str> {
         let renderer = render::SvgRenderer::new(
             settings.lower_limit,
