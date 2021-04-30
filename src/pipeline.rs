@@ -111,18 +111,21 @@ impl Pipeline {
     }
 
     fn create_streams(&mut self, settings: StreamSettings) -> Result<(), &str> {
-        // Bail out if there aren't any stream sources enabled
+        // Bail out if there aren't any stream sources enabled.
         // For now there's just MJPEG, but HLS is planned for the future.
         if !settings.mjpeg {
-            // It's OK, there was just nothing to do.
+            // It's Ok, there was just nothing to do.
             return Ok(());
         }
-
         let mut routes = Vec::new();
-
         if settings.mjpeg {
             // MJPEG sink
-            let mjpeg = stream::mjpeg::MjpegStream::new();
+            let render_source = self
+                .rendered_source
+                .as_ref()
+                // TODO: also Error here
+                .ok_or("need to create renderer first")?;
+            let mjpeg = stream::mjpeg::MjpegStream::new(render_source);
             let mjpeg_output = mjpeg.clone();
             let mjpeg_route = warp::path("mjpeg")
                 .and(warp::path::end())
@@ -136,16 +139,7 @@ impl Pipeline {
             routes.push(mjpeg_route);
 
             // Stream out rendered frames via MJPEG
-            let rendered_stream = self
-                .rendered_source
-                .as_ref()
-                // TODO: also Error here
-                .ok_or("need to create renderer first")?
-                .stream();
-            let mjpeg_future = ok_stream(rendered_stream).forward(mjpeg);
-            self.tasks.push(Box::new(
-                tokio::spawn(mjpeg_future).map(flatten_join_result), //mjpeg_future.err_into()
-            ));
+            self.tasks.push(Box::new(tokio::spawn(mjpeg).err_into()));
         }
         let combined_route = routes
             .into_iter()
