@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use ndarray::{Array2, Axis, Zip};
+use image::Pixel;
 use svg::node::element::{Group, Rectangle, Text as TextElement};
 use svg::node::Text as TextNode;
 use svg::Document;
-use tiny_skia::Pixmap;
+use tiny_skia::PixmapMut;
 use usvg::{FitTo, Tree};
 
-use crate::image_buffer::ImageBuffer;
+use crate::image_buffer::{ImageBuffer, ThermalImage};
 
 use super::{color, font, Limit, Renderer as RendererTrait, TemperatureDisplay};
 
@@ -99,7 +99,6 @@ impl RendererTrait for Renderer {
             scale_max,
             display_temperature,
             grid_size,
-            // TODO: implement serde stuff so this can be configurable
             gradient,
         }
     }
@@ -133,83 +132,113 @@ impl RendererTrait for Renderer {
     }
 
     /// Render an image to a pixel buffer.
-    fn render_buffer(&self, image: &Array2<f32>) -> ImageBuffer {
-        let svg = self.render_svg(image);
-        let tree = Tree::from_data(format!("{}", svg).as_bytes(), &SVG_OPTS).unwrap();
-        let size = tree.svg_node().size.to_screen_size();
-        // Size isn't zero, so it can't be an error. If the size is overflowing, we should panic
-        // anyways.
-        let mut pixmap = Pixmap::new(size.width(), size.height()).unwrap();
-        resvg::render(&tree, FitTo::Original, (pixmap).as_mut()).unwrap();
+    fn render_buffer(&self, image: &ThermalImage) -> ImageBuffer {
+        // Map the thermal image to an actual RGB image. We're converting to RGBA at the same time
+        // as that's what resvg wants.
+        let map_func = self.color_map(image);
+        let mut temperature_colors = image::RgbaImage::new(image.width(), image.height());
+        for (source, dest) in image.pixels().zip(temperature_colors.pixels_mut()) {
+            *dest = image::Rgb::from(map_func(&source.0[0]).as_array()).to_rgba();
+        }
+        // Flip in-place to compensate for grid-eye counting from the bottom up
+        image::imageops::flip_vertical_in_place(&mut temperature_colors);
+        // Embiggen
+        // TODO: This is slow for larger grid sizes. Gotta go fast.
+        let grid_size = self.grid_size() as u32;
+        let mut rgba_image = image::imageops::resize(
+            &temperature_colors,
+            image.width() * grid_size,
+            image.height() * grid_size,
+            image::imageops::Nearest,
+        );
+        let full_width = rgba_image.width();
+        let full_height = rgba_image.height();
+        let mut pixmap = PixmapMut::from_bytes(
+            rgba_image.as_flat_samples_mut().as_mut_slice(),
+            full_width,
+            full_height,
+        )
+        .unwrap()
+        .to_owned();
+        if self.display_temperature() != TemperatureDisplay::Disabled {
+            let svg = self.render_text(image, &temperature_colors);
+            let tree = Tree::from_data(format!("{}", svg).as_bytes(), &SVG_OPTS).unwrap();
+            // Just render on top of the existing data. The generated SVG is just text on a
+            // transparent background.
+            resvg::render(&tree, FitTo::Original, (pixmap).as_mut()).unwrap();
+        }
+        // TODO: Investigate skipping the ImageBuffer -> Pixmap -> ImageBuffer process as the
+        // ImageBuffer-ification process continues.
         ImageBuffer::from(pixmap)
     }
 }
 
-type CellRenderer = Box<dyn Fn((usize, usize), &f32, &color::Color) -> Group>;
+type ThermalPixel = image::Luma<f32>;
 
 impl Renderer {
-    /// Create a closure that renders a single value to an SVG group element. The clusre takes a
-    /// tuple of the values row and column, the temperature to render, and the color to use for the
-    /// background. The size of the grid cell and how to display temperatures is cloned from the
-    /// [Renderer] state when this method is called.
-    fn render_svg_cell(&self, row_count: usize) -> CellRenderer {
-        // Clone some values to be captured by the closure
-        let grid_size = self.grid_size;
+    fn create_svg_fragment(
+        &self,
+        row: u32,
+        col: u32,
+        temperature_pixel: &ThermalPixel,
+        color_pixel: &image::Rgba<u8>,
+    ) -> Group {
+        let grid_size = self.grid_size as u32;
         let display_temperature = self.display_temperature;
-        Box::new(move |(row, col), temperature, grid_color| {
-            let text_color = grid_color.text_color(&[]);
-            // The SVG coordinate system has the origin in the upper left, while the image's
-            // origin is the lower left, so we have to swap them. The row index is otherwise
-            // unused, so shadowing it is simplest.
-            let row = row_count - row - 1;
-            let grid_cell = Rectangle::new()
-                // Color implements UpperHex and outputs "#HHHHHH" for the color (like
-                // colorous::Color).
-                .set("fill", format!("{:X}", grid_color))
-                .set("width", grid_size)
-                .set("height", grid_size)
-                .set("x", col * grid_size)
-                .set("y", row * grid_size);
-            let group = Group::new().add(grid_cell);
-            if display_temperature == TemperatureDisplay::Disabled {
-                group
-            } else {
-                let mapped_temperature = match display_temperature {
-                    TemperatureDisplay::Celsius => *temperature,
-                    TemperatureDisplay::Fahrenheit => *temperature * 1.8 + 32.0,
-                    TemperatureDisplay::Disabled => unreachable!(),
-                };
-                group.add(
-                    TextElement::new()
-                        .set("fill", format!("{:X}", text_color))
-                        .set("text-anchor", "middle")
-                        // resvg doesn't support dominant-baseline yet, so it gets rendered
-                        // incorrectly for the time being.
-                        .set("dominant-baseline", "middle")
-                        .set("x", col * grid_size + (grid_size / 2))
-                        .set("y", row * grid_size + (grid_size / 2))
-                        .add(TextNode::new(format!("{:.2}", mapped_temperature))),
-                )
-            }
-        })
+        let text_color = color::Color::from(color_pixel).text_color(&[]);
+        let grid_cell = Rectangle::new()
+            .set("fill", "none")
+            .set("width", grid_size)
+            .set("height", grid_size)
+            .set("x", col * grid_size)
+            .set("y", row * grid_size);
+        let group = Group::new().add(grid_cell);
+        if display_temperature == TemperatureDisplay::Disabled {
+            group
+        } else {
+            // unwrap the actual temperature from the Luma pixel
+            let temperature = temperature_pixel.0[0];
+            let mapped_temperature = match display_temperature {
+                TemperatureDisplay::Celsius => temperature,
+                TemperatureDisplay::Fahrenheit => temperature * 1.8 + 32.0,
+                TemperatureDisplay::Disabled => unreachable!(),
+            };
+            group.add(
+                TextElement::new()
+                    .set("fill", format!("{:X}", text_color))
+                    .set("text-anchor", "middle")
+                    // resvg doesn't support dominant-baseline yet, so it gets rendered
+                    // incorrectly for the time being.
+                    .set("dominant-baseline", "middle")
+                    .set("x", col * grid_size + (grid_size / 2))
+                    .set("y", row * grid_size + (grid_size / 2))
+                    .add(TextNode::new(format!("{:.2}", mapped_temperature))),
+            )
+        }
     }
 
-    pub fn render_svg(&self, image: &Array2<f32>) -> Document {
-        let (row_count, col_count) = image.dim();
-        let svg_cell_func = self.render_svg_cell(row_count);
-        // TODO: investigate parallelizing this
-        let grid_colors = Zip::from(image).map_collect(self.color_map(image));
-        Zip::indexed(image)
-            .and(&grid_colors)
-            .fold(Document::new(), |doc, index, temperature, grid_color| {
-                doc.add(svg_cell_func(index, temperature, grid_color))
-            })
-            .set("width", image.len_of(Axis(1)) * self.grid_size)
-            .set("height", row_count * self.grid_size)
-            .set(
-                "viewBox",
-                (0, 0, row_count * self.grid_size, col_count * self.grid_size),
-            )
+    pub fn render_text(
+        &self,
+        temperatures: &ThermalImage,
+        temperature_colors: &image::RgbaImage,
+    ) -> Document {
+        let grid_size = self.grid_size as u32;
+        // `temperatures` and `temperature_colors` are the same size, and each pixel of
+        // `temperature_colors` is the color of the background in that grid square.
+        // So the process becomes:
+        //   * Zip up the temperature values (from `temperatures`) and background colors (from
+        //     `temperature_colors`) with the location of each pixel (provided by
+        //     `enumerate_pixels`).
+        //   * Map each grouping of those to an SVG fragment.
+        //   * Append all of those fragments to a parent SVG document.
+        //   * Set a couple of attributes on the parent SVG document to get the size right.
+        temperatures
+            .enumerate_pixels()
+            .zip(temperature_colors.pixels())
+            .map(|((x, y, temp), color)| self.create_svg_fragment(x, y, temp, color))
+            .fold(Document::new(), |doc, group| doc.add(group))
+            .set("width", temperatures.width() * grid_size)
+            .set("height", temperatures.height() * grid_size)
     }
 }
 
@@ -228,12 +257,15 @@ impl Default for Renderer {
 #[cfg(test)]
 mod color_map_tests {
     use super::{color, Limit, Renderer, TemperatureDisplay};
+    use crate::image_buffer::ThermalImage;
     use crate::render::Renderer as _;
-    use ndarray::{arr2, Array2};
 
     lazy_static! {
         // Ensure values outside of the static limits (0 and 100) are tested.
-        static ref TEST_IMAGE: Array2<f32> = arr2(&[[-25.0, 0.0, 25.0, 50.0, 75.0, 150.0]]);
+        static ref TEST_IMAGE: ThermalImage = ThermalImage::from_vec(
+            6, 1,
+            vec![-25.0, 0.0, 25.0, 50.0, 75.0, 150.0]
+        ).unwrap();
     }
 
     #[test]

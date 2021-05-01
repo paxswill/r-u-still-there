@@ -23,6 +23,30 @@ impl From<colorous::Color> for Color {
     }
 }
 
+impl From<&image::Rgb<u8>> for Color {
+    fn from(pixel: &image::Rgb<u8>) -> Self {
+        Self::new(pixel[0], pixel[1], pixel[2])
+    }
+}
+
+impl From<&image::Rgba<u8>> for Color {
+    fn from(pixel: &image::Rgba<u8>) -> Self {
+        Self::new(pixel[0], pixel[1], pixel[2])
+    }
+}
+
+impl From<Color> for [u8; 3] {
+    fn from(color: Color) -> Self {
+        color.as_array()
+    }
+}
+
+impl From<Color> for (u8, u8, u8) {
+    fn from(color: Color) -> Self {
+        color.as_tuple()
+    }
+}
+
 impl fmt::LowerHex for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -155,6 +179,14 @@ impl Color {
                 self.text_color(&[Self::WHITE, Self::BLACK])
             }
         }
+    }
+
+    pub fn as_tuple(&self) -> (u8, u8, u8) {
+        (self.red(), self.green(), self.blue())
+    }
+
+    pub fn as_array(&self) -> [u8; 3] {
+        [self.red(), self.green(), self.blue()]
     }
 }
 

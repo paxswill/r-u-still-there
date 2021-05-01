@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use bytes::Bytes;
+use image::Luma;
+
+use std::vec::Vec;
+
+pub type ThermalImage = image::ImageBuffer<Luma<f32>, Vec<f32>>;
 
 #[derive(Copy, Clone, Debug)]
 #[allow(clippy::upper_case_acronyms)]

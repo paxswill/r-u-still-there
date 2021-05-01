@@ -2,8 +2,8 @@
 use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
+use image::flat::{FlatSamples, SampleLayout};
 use linux_embedded_hal::I2cdev;
-use ndarray::Array2;
 use thermal_camera::grideye;
 use tokio::task::JoinError;
 use tokio::time::Duration;
@@ -14,6 +14,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::vec::Vec;
 
+use crate::image_buffer::ThermalImage;
 use crate::render::Renderer as _;
 use crate::settings::{
     CameraOptions, CameraSettings, I2cSettings, RenderSettings, Settings, StreamSettings,
@@ -49,7 +50,7 @@ where
 
 #[derive(Debug, Default)]
 pub struct Pipeline {
-    frame_source: Option<spmc::Sender<Array2<f32>>>,
+    frame_source: Option<spmc::Sender<ThermalImage>>,
     rendered_source: Option<spmc::Sender<image_buffer::ImageBuffer>>,
     tasks: TaskList,
 }
@@ -79,7 +80,29 @@ impl Pipeline {
                 cam
             }
         };
-        let frame_stream = camera::camera_stream(camera_device, Duration::from(common_options));
+        let frame_stream = camera::camera_stream(camera_device, Duration::from(common_options))
+            .map(|array2| {
+                let (row_count, col_count) = array2.dim();
+                let height = row_count as u32;
+                let width = col_count as u32;
+                // Force the layout to row-major. If it's already in that order, this is a noop
+                // (and it *should* be in row-major order already).
+                let array2 = if array2.is_standard_layout() {
+                    array2
+                } else {
+                    array2.reversed_axes()
+                };
+                let layout = SampleLayout::row_major_packed(1, width, height);
+                let buffer_image = FlatSamples {
+                    samples: array2.into_raw_vec(),
+                    layout,
+                    color_hint: None,
+                };
+                // The provided ndarray is in standard layout, meaning all its data is contiguous.
+                // The preconditions for try_into_buffer should all be met, so panic if there's a
+                // problem.
+                buffer_image.try_into_buffer().unwrap()
+            });
         let frame_multiplexer = spmc::Sender::default();
         let frame_future = ok_stream(frame_stream).forward(frame_multiplexer.clone());
         self.frame_source = Some(frame_multiplexer);

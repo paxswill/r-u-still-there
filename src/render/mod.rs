@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use ndarray::Array2;
 use serde::Deserialize;
 
-use crate::image_buffer::ImageBuffer;
+use crate::image_buffer::{ImageBuffer, ThermalImage};
 
 pub mod color;
 pub mod font;
@@ -71,9 +70,9 @@ pub trait Renderer: Default {
 
     fn set_gradient(&mut self, gradient: colorous::Gradient);
 
-    fn render_buffer(&self, image: &Array2<f32>) -> ImageBuffer;
+    fn render_buffer(&self, image: &ThermalImage) -> ImageBuffer;
 
-    fn color_map(&self, image: &Array2<f32>) -> Box<dyn Fn(&f32) -> color::Color> {
+    fn color_map(&self, image: &ThermalImage) -> Box<dyn Fn(&f32) -> color::Color> {
         let scale_min = match self.scale_min() {
             Limit::Static(n) => n,
             Limit::Dynamic => {
