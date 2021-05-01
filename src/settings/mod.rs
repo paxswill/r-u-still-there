@@ -7,7 +7,7 @@ mod i2c;
 mod render;
 mod stream;
 
-pub use camera::{CameraSettings, CommonOptions};
+pub use camera::{CameraSettings, CommonOptions, Rotation};
 pub use i2c::I2cSettings;
 pub use render::RenderSettings;
 pub use stream::StreamSettings;

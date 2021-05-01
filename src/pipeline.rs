@@ -3,6 +3,7 @@ use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
 use image::flat::{FlatSamples, SampleLayout};
+use image::imageops;
 use linux_embedded_hal::I2cdev;
 use thermal_camera::{grideye, ThermalCamera};
 use tokio::task::JoinError;
@@ -18,7 +19,7 @@ use std::vec::Vec;
 use crate::image_buffer::{BytesImage, ThermalImage};
 use crate::render::Renderer as _;
 use crate::settings::{
-    CameraSettings, CommonOptions, I2cSettings, RenderSettings, Settings, StreamSettings,
+    CameraSettings, CommonOptions, I2cSettings, RenderSettings, Rotation, Settings, StreamSettings,
 };
 use crate::{error, render, spmc, stream};
 
@@ -85,7 +86,7 @@ impl Pipeline {
         let interval_stream = IntervalStream::new(interval);
         interval_stream
             .map(Box::new(move |_| camera_device.image().unwrap()))
-            .map(|array2| {
+            .map(move |array2| {
                 let (row_count, col_count) = array2.dim();
                 let height = row_count as u32;
                 let width = col_count as u32;
@@ -105,7 +106,26 @@ impl Pipeline {
                 // The provided ndarray is in standard layout, meaning all its data is contiguous.
                 // The preconditions for try_into_buffer should all be met, so panic if there's a
                 // problem.
-                buffer_image.try_into_buffer().unwrap()
+                let mut temperatures = buffer_image.try_into_buffer().unwrap();
+                // ThermalCamera has the origin in the lower left, while image has it in the upper // left. Flip the image vertically by default to compensate for this, but skip the
+                // flip if the use wants it flipped.
+                if !common_options.flip_vertical {
+                    imageops::flip_vertical_in_place(&mut temperatures);
+                }
+                // The rest of the basic image transformations
+                if common_options.flip_horizontal {
+                    imageops::flip_horizontal_in_place(&mut temperatures);
+                }
+                temperatures = match common_options.rotation {
+                    Rotation::Zero => temperatures,
+                    Rotation::Ninety => imageops::rotate90(&temperatures),
+                    Rotation::OneEighty => {
+                        imageops::rotate180_in_place(&mut temperatures);
+                        temperatures
+                    }
+                    Rotation::TwoSeventy => imageops::rotate270(&temperatures),
+                };
+                temperatures
             })
     }
 

@@ -8,7 +8,7 @@ use std::time::Duration;
 use super::i2c::I2cSettings;
 
 // This enum is purely used to restrict the acceptable values for rotation
-#[derive(Deserialize_repr, PartialEq, Debug)]
+#[derive(Clone, Copy, Deserialize_repr, PartialEq, Debug)]
 #[repr(u16)]
 pub enum Rotation {
     Zero = 0,
@@ -25,8 +25,9 @@ impl Default for Rotation {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CommonOptions {
-    pub rotation: u16,
-    pub mirror: bool,
+    pub rotation: Rotation,
+    pub flip_horizontal: bool,
+    pub flip_vertical: bool,
     pub frame_rate: u8,
 }
 
@@ -40,7 +41,15 @@ pub enum CameraSettings<'a> {
 
 const CAMERA_KINDS: &[&str] = &["grideye"];
 
-const CAMERA_FIELDS: &[&str] = &["kind", "bus", "address", "rotation", "mirror", "frame_rate"];
+const CAMERA_FIELDS: &[&str] = &[
+    "kind",
+    "bus",
+    "address",
+    "rotation",
+    "flip_horizontal",
+    "flip_vertical",
+    "frame_rate",
+];
 
 // Manually implementing Derserialize as there isn't a way to derive a flattened enum
 // implementation.
@@ -55,7 +64,8 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
             Bus,
             Address,
             Rotation,
-            Mirror,
+            FlipHorizontal,
+            FlipVertical,
             FrameRate,
             Kind,
             Unknown(&'a str),
@@ -77,7 +87,8 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                 let mut bus = None;
                 let mut address = None;
                 let mut rotation = None;
-                let mut mirror = None;
+                let mut flip_horizontal = None;
+                let mut flip_vertical = None;
                 let mut frame_rate = None;
                 let mut kind = None;
                 while let Some(key) = map.next_key()? {
@@ -100,11 +111,17 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                             }
                             rotation = Some(map.next_value()?);
                         }
-                        Field::Mirror => {
-                            if mirror.is_some() {
-                                return Err(de::Error::duplicate_field("mirror"));
+                        Field::FlipHorizontal => {
+                            if flip_horizontal.is_some() {
+                                return Err(de::Error::duplicate_field("flip_horizontal"));
                             }
-                            mirror = Some(map.next_value()?);
+                            flip_horizontal = Some(map.next_value()?);
+                        }
+                        Field::FlipVertical => {
+                            if flip_vertical.is_some() {
+                                return Err(de::Error::duplicate_field("flip_vertical"));
+                            }
+                            flip_vertical = Some(map.next_value()?);
                         }
                         Field::FrameRate => {
                             if frame_rate.is_some() {
@@ -127,7 +144,8 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                 let kind = kind.ok_or_else(|| de::Error::missing_field("kind"))?;
                 // Fields with defaults
                 let rotation: Rotation = rotation.unwrap_or_default();
-                let mirror = mirror.unwrap_or(false);
+                let flip_horizontal = flip_horizontal.unwrap_or(false);
+                let flip_vertical = flip_vertical.unwrap_or(false);
                 // Minimal check of frame_rate. Variants are expected to set frame_rate to an
                 // actual value themselves below.
                 // This can be simplified if the `option_result_contains` API gets standardized.
@@ -142,8 +160,9 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                 }
                 let i2c = I2cSettings::<'de> { bus, address };
                 let options = CommonOptions {
-                    rotation: rotation as u16,
-                    mirror,
+                    rotation,
+                    flip_horizontal,
+                    flip_vertical,
                     frame_rate: frame_rate.clone().unwrap_or(1),
                 };
                 match kind {
@@ -160,7 +179,8 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                         // No base update syntax for enums :(
                         let options = CommonOptions {
                             rotation: options.rotation,
-                            mirror: options.mirror,
+                            flip_horizontal: options.flip_horizontal,
+                            flip_vertical: options.flip_vertical,
                             frame_rate,
                         };
                         Ok(CameraSettings::GridEye { i2c, options })
@@ -178,7 +198,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
 mod de_tests {
     // I'm not sure I need to include both TOML and JSON test cases, but v0v
     // Also missing pytest's parameterized tests here.
-    use super::{CameraSettings, CommonOptions};
+    use super::{CameraSettings, CommonOptions, Rotation};
     use crate::settings::i2c::{Bus, I2cSettings};
 
     #[test]
@@ -235,7 +255,8 @@ mod de_tests {
             "bus = 1",
             "address = 30",
             "rotation = 180",
-            "mirror = true",
+            "flip_horizontal = true",
+            "flip_vertical = true",
             "frame_rate = 7",
         ];
         let full = lines.join("\n");
@@ -285,8 +306,9 @@ mod de_tests {
                 address: 30,
             },
             options: CommonOptions {
-                rotation: 0,
-                mirror: false,
+                rotation: Rotation::Zero,
+                flip_horizontal: false,
+                flip_vertical: false,
                 frame_rate: 10,
             },
         };
@@ -310,8 +332,9 @@ mod de_tests {
                 address: 30,
             },
             options: CommonOptions {
-                rotation: 0,
-                mirror: false,
+                rotation: Rotation::Zero,
+                flip_horizontal: false,
+                flip_vertical: false,
                 frame_rate: 10,
             },
         };
@@ -325,7 +348,8 @@ mod de_tests {
         bus = 1
         address = 30
         rotation = 180
-        mirror = true
+        flip_horizontal = true
+        flip_vertical = true
         frame_rate = 7
         "#;
         let parsed = toml::from_str(source);
@@ -337,8 +361,9 @@ mod de_tests {
                 address: 30,
             },
             options: CommonOptions {
-                rotation: 180,
-                mirror: true,
+                rotation: Rotation::OneEighty,
+                flip_horizontal: true,
+                flip_vertical: true,
                 frame_rate: 7,
             },
         };
@@ -352,7 +377,8 @@ mod de_tests {
         bus = "1"
         address = 30
         rotation = 180
-        mirror = true
+        flip_horizontal = true
+        flip_vertical = true
         frame_rate = 7
         "#;
         let parsed = toml::from_str(source);
@@ -364,8 +390,9 @@ mod de_tests {
                 address: 30,
             },
             options: CommonOptions {
-                rotation: 180,
-                mirror: true,
+                rotation: Rotation::OneEighty,
+                flip_horizontal: true,
+                flip_vertical: true,
                 frame_rate: 7,
             },
         };
@@ -380,7 +407,8 @@ mod de_tests {
             "bus": 1,
             "address": 30,
             "rotation": 180,
-            "mirror": true,
+            "flip_horizontal": true,
+            "flip_vertical": true,
             "frame_rate": 7
         }"#;
         let parsed = serde_json::from_str(source);
@@ -392,8 +420,9 @@ mod de_tests {
                 address: 30,
             },
             options: CommonOptions {
-                rotation: 180,
-                mirror: true,
+                rotation: Rotation::OneEighty,
+                flip_horizontal: true,
+                flip_vertical: true,
                 frame_rate: 7,
             },
         };
@@ -408,7 +437,8 @@ mod de_tests {
             "bus": "1",
             "address": 30,
             "rotation": 180,
-            "mirror": true,
+            "flip_horizontal": true,
+            "flip_vertical": true,
             "frame_rate": 7
         }"#;
         let parsed = serde_json::from_str(source);
@@ -420,8 +450,9 @@ mod de_tests {
                 address: 30,
             },
             options: CommonOptions {
-                rotation: 180,
-                mirror: true,
+                rotation: Rotation::OneEighty,
+                flip_horizontal: true,
+                flip_vertical: true,
                 frame_rate: 7,
             },
         };
@@ -445,8 +476,9 @@ mod de_tests {
                 address: 30,
             },
             options: CommonOptions {
-                rotation: 0,
-                mirror: false,
+                rotation: Rotation::Zero,
+                flip_horizontal: false,
+                flip_vertical: false,
                 frame_rate: 1,
             },
         };
@@ -470,8 +502,9 @@ mod de_tests {
                 address: 30,
             },
             options: CommonOptions {
-                rotation: 0,
-                mirror: false,
+                rotation: Rotation::Zero,
+                flip_horizontal: false,
+                flip_vertical: false,
                 frame_rate: 10,
             },
         };

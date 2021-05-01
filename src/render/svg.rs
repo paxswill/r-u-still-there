@@ -141,8 +141,6 @@ impl RendererTrait for Renderer {
         for (source, dest) in image.pixels().zip(temperature_colors.pixels_mut()) {
             *dest = image::Rgb::from(map_func(&source.0[0]).as_array()).to_rgba();
         }
-        // Flip in-place to compensate for grid-eye counting from the bottom up
-        image::imageops::flip_vertical_in_place(&mut temperature_colors);
         let mut rgba_image = self.enlarge_color_image(&temperature_colors);
         let full_width = rgba_image.width();
         let full_height = rgba_image.height();
