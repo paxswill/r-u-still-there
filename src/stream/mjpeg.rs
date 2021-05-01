@@ -8,9 +8,7 @@ use hyper::Body;
 #[cfg(feature = "mozjpeg")]
 use mozjpeg::{ColorSpace, Compress};
 
-#[cfg(feature = "image")]
 use bytes::{BufMut, BytesMut};
-#[cfg(feature = "image")]
 use image::{codecs::jpeg::JpegEncoder, ColorType};
 
 use std::convert::Infallible;
@@ -60,10 +58,8 @@ impl MjpegStream {
     fn send_image(&mut self, buf: ImageBuffer) -> Result<(), Infallible> {
         let jpeg_buf = if cfg!(feature = "mozjpeg") {
             encode_jpeg_mozjpeg(&buf)
-        } else if cfg!(feature = "image") {
-            encode_jpeg_image(&buf)
         } else {
-            panic!("mjpeg feature enabled, but no jpeg encoders enabled")
+            encode_jpeg_image(&buf)
         };
         let header = Bytes::from(format!(
             "\r\n--{}\r\nContent-Type: image/jpeg\r\n\r\n",
@@ -152,7 +148,6 @@ fn encode_jpeg_mozjpeg(image: &ImageBuffer) -> Bytes {
     Bytes::from(jpeg_encoder.data_to_vec().unwrap())
 }
 
-#[cfg(feature = "image")]
 fn encode_jpeg_image(image: &ImageBuffer) -> Bytes {
     let mut jpeg_buf = BytesMut::new().writer();
     let mut encoder = JpegEncoder::new(&mut jpeg_buf);

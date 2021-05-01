@@ -8,7 +8,6 @@ pub enum ColorOrder {
     RGBA,
 }
 
-#[cfg(feature = "image")]
 impl From<ColorOrder> for image::ColorType {
     fn from(value: ColorOrder) -> image::ColorType {
         match value {

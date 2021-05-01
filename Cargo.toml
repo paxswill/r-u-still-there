@@ -32,7 +32,7 @@ version = "0.14"
 
 [dependencies.image]
 features = ["jpeg"]
-optional = true
+default-features = false
 version = "0.23.14"
 
 [dependencies.thermal-camera]
@@ -52,7 +52,7 @@ default-features = false
 version = "0.3.1"
 
 [features]
-default = ["mjpeg", "mozjpeg", "image/jpeg", "render_svg"]
+default = ["mjpeg", "mozjpeg", "render_svg"]
 mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
 render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
 
