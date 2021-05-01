@@ -143,15 +143,7 @@ impl RendererTrait for Renderer {
         }
         // Flip in-place to compensate for grid-eye counting from the bottom up
         image::imageops::flip_vertical_in_place(&mut temperature_colors);
-        // Embiggen
-        // TODO: This is slow for larger grid sizes. Gotta go fast(er).
-        let grid_size = self.grid_size() as u32;
-        let mut rgba_image = image::imageops::resize(
-            &temperature_colors,
-            image.width() * grid_size,
-            image.height() * grid_size,
-            image::imageops::Nearest,
-        );
+        let mut rgba_image = self.enlarge_color_image(&temperature_colors);
         let full_width = rgba_image.width();
         let full_height = rgba_image.height();
         let buf = if self.display_temperature() != TemperatureDisplay::Disabled {
@@ -178,6 +170,41 @@ impl RendererTrait for Renderer {
 type ThermalPixel = image::Luma<f32>;
 
 impl Renderer {
+    /// This is a fast way to enlarge a grid of individual pixels. Each input pixel will be
+    /// enlarged to a `grid_size` square.
+    ///
+    /// The current implementation builds a series of mono-color image views (using
+    /// [image::flat::FlatSamples::with_monocolor]), then drawing these grid squares on to the
+    /// final image using [image::imageops::replace]. Alternative implementations that were tested
+    /// include:
+    ///
+    /// * [image::imageops::resize] with [nearest neighbor][image::imageops::FilterType::Nearest]
+    ///   filtering. This seems to increase runtime exponentially; with a 30 pixel grid size, a
+    ///   BeagleBone Black/Green could (barely) keep up with a 10 FPS GridEYE image, but at 50
+    ///   pixels would lag to roughly 2 FPS.
+    /// * Duplicating individual pixels using `flat_map`, `repeat` and `take`, then `collect`ing
+    ///   everything into a vector. This was faster than `resize`, but still not fast enough.
+    /// * As above, but pre-allocating the vector. No significant change.
+    ///
+    /// With this implementation, a BeagleBone Black/Green can server up an MJPEG stream with 50
+    /// pixel grid squares at 10 FPS while keeping CPU usage below 50%.
+    fn enlarge_color_image<I, P>(&self, colors: &I) -> image::ImageBuffer<P, Vec<P::Subpixel>>
+    where
+        I: image::GenericImageView<Pixel = P>,
+        P: Pixel + 'static,
+        P::Subpixel: 'static,
+    {
+        let grid_size = self.grid_size() as u32;
+        let mut full_image =
+            image::ImageBuffer::new(colors.width() * grid_size, colors.height() * grid_size);
+        for (x, y, pixel) in colors.pixels() {
+            let tile = image::flat::FlatSamples::with_monocolor(&pixel, grid_size, grid_size);
+            let tile_view = tile.as_view().unwrap();
+            image::imageops::replace(&mut full_image, &tile_view, x * grid_size, y * grid_size);
+        }
+        full_image
+    }
+
     fn create_svg_fragment(
         &self,
         row: u32,
