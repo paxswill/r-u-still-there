@@ -24,7 +24,7 @@ impl Default for Rotation {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CameraOptions {
+pub struct CommonOptions {
     pub rotation: u16,
     pub mirror: bool,
     pub frame_rate: u8,
@@ -34,7 +34,7 @@ pub struct CameraOptions {
 pub enum CameraSettings<'a> {
     GridEye {
         i2c: I2cSettings<'a>,
-        options: CameraOptions,
+        options: CommonOptions,
     },
 }
 
@@ -141,7 +141,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                     }
                 }
                 let i2c = I2cSettings::<'de> { bus, address };
-                let options = CameraOptions {
+                let options = CommonOptions {
                     rotation: rotation as u16,
                     mirror,
                     frame_rate: frame_rate.clone().unwrap_or(1),
@@ -158,7 +158,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                             )),
                         }?;
                         // No base update syntax for enums :(
-                        let options = CameraOptions {
+                        let options = CommonOptions {
                             rotation: options.rotation,
                             mirror: options.mirror,
                             frame_rate,
@@ -178,7 +178,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
 mod de_tests {
     // I'm not sure I need to include both TOML and JSON test cases, but v0v
     // Also missing pytest's parameterized tests here.
-    use super::{CameraOptions, CameraSettings};
+    use super::{CameraSettings, CommonOptions};
     use crate::settings::i2c::{Bus, I2cSettings};
 
     #[test]
@@ -284,7 +284,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CameraOptions {
+            options: CommonOptions {
                 rotation: 0,
                 mirror: false,
                 frame_rate: 10,
@@ -309,7 +309,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CameraOptions {
+            options: CommonOptions {
                 rotation: 0,
                 mirror: false,
                 frame_rate: 10,
@@ -336,7 +336,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CameraOptions {
+            options: CommonOptions {
                 rotation: 180,
                 mirror: true,
                 frame_rate: 7,
@@ -363,7 +363,7 @@ mod de_tests {
                 bus: Bus::Path("1"),
                 address: 30,
             },
-            options: CameraOptions {
+            options: CommonOptions {
                 rotation: 180,
                 mirror: true,
                 frame_rate: 7,
@@ -391,7 +391,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CameraOptions {
+            options: CommonOptions {
                 rotation: 180,
                 mirror: true,
                 frame_rate: 7,
@@ -419,7 +419,7 @@ mod de_tests {
                 bus: Bus::Path("1"),
                 address: 30,
             },
-            options: CameraOptions {
+            options: CommonOptions {
                 rotation: 180,
                 mirror: true,
                 frame_rate: 7,
@@ -444,7 +444,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CameraOptions {
+            options: CommonOptions {
                 rotation: 0,
                 mirror: false,
                 frame_rate: 1,
@@ -469,7 +469,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CameraOptions {
+            options: CommonOptions {
                 rotation: 0,
                 mirror: false,
                 frame_rate: 10,
@@ -495,9 +495,9 @@ mod de_tests {
     }
 }
 
-impl From<CameraOptions> for Duration {
-    fn from(options: CameraOptions) -> Duration {
-        Duration::from_millis(1000 / options.frame_rate as u64)
+impl From<CommonOptions> for Duration {
+    fn from(options: CommonOptions) -> Self {
+        Self::from_millis(1000 / options.frame_rate as u64)
     }
 }
 
@@ -509,8 +509,8 @@ impl<'a> From<CameraSettings<'a>> for I2cSettings<'a> {
     }
 }
 
-impl From<CameraSettings<'_>> for CameraOptions {
-    fn from(settings: CameraSettings) -> CameraOptions {
+impl From<CameraSettings<'_>> for CommonOptions {
+    fn from(settings: CameraSettings) -> Self {
         match settings {
             CameraSettings::GridEye {
                 i2c: _,

@@ -5,7 +5,6 @@ use std::path::Path;
 #[macro_use]
 extern crate lazy_static;
 
-mod camera;
 mod error;
 mod image_buffer;
 mod pipeline;

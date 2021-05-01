@@ -4,9 +4,10 @@ use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
 use image::flat::{FlatSamples, SampleLayout};
 use linux_embedded_hal::I2cdev;
-use thermal_camera::grideye;
+use thermal_camera::{grideye, ThermalCamera};
 use tokio::task::JoinError;
-use tokio::time::Duration;
+use tokio::time::{self, Duration};
+use tokio_stream::wrappers::IntervalStream;
 use warp::Filter;
 
 use std::convert::TryFrom;
@@ -17,9 +18,9 @@ use std::vec::Vec;
 use crate::image_buffer::{BytesImage, ThermalImage};
 use crate::render::Renderer as _;
 use crate::settings::{
-    CameraOptions, CameraSettings, I2cSettings, RenderSettings, Settings, StreamSettings,
+    CameraSettings, CommonOptions, I2cSettings, RenderSettings, Settings, StreamSettings,
 };
-use crate::{camera, error, render, spmc, stream};
+use crate::{error, render, spmc, stream};
 
 fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
 where
@@ -56,15 +57,15 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    fn create_camera(&mut self, settings: CameraSettings) {
-        let common_options = CameraOptions::from(settings);
-        let i2c_config = I2cSettings::from(settings);
+    fn create_camera(settings: &CameraSettings) -> impl Stream<Item = ThermalImage> {
+        let common_options = CommonOptions::from(*settings);
+        let i2c_config = I2cSettings::from(*settings);
         // TODO: Add From<I2cError>
         let bus = I2cdev::try_from(i2c_config).unwrap();
         // TODO: Add From<I2cError>
         let addr = grideye::Address::try_from(i2c_config.address).unwrap();
         // TODO: Move this into a TryFrom implementation or something on CameraSettings
-        let camera_device = match settings {
+        let mut camera_device = match settings {
             CameraSettings::GridEye {
                 i2c: _,
                 options: common_options,
@@ -80,7 +81,10 @@ impl Pipeline {
                 cam
             }
         };
-        let frame_stream = camera::camera_stream(camera_device, Duration::from(common_options))
+        let interval = time::interval(Duration::from(common_options));
+        let interval_stream = IntervalStream::new(interval);
+        interval_stream
+            .map(Box::new(move |_| camera_device.image().unwrap()))
             .map(|array2| {
                 let (row_count, col_count) = array2.dim();
                 let height = row_count as u32;
@@ -102,7 +106,11 @@ impl Pipeline {
                 // The preconditions for try_into_buffer should all be met, so panic if there's a
                 // problem.
                 buffer_image.try_into_buffer().unwrap()
-            });
+            })
+    }
+
+    fn configure_camera(&mut self, settings: CameraSettings) {
+        let frame_stream = Self::create_camera(&settings);
         let frame_multiplexer = spmc::Sender::default();
         let frame_future = ok_stream(frame_stream).forward(frame_multiplexer.clone());
         self.frame_source = Some(frame_multiplexer);
@@ -194,7 +202,7 @@ impl Future for Pipeline {
 impl<'a> From<Settings<'a>> for Pipeline {
     fn from(config: Settings<'a>) -> Self {
         let mut app = Self::default();
-        app.create_camera(config.camera);
+        app.configure_camera(config.camera);
         app.create_renderer(config.render).unwrap();
         app.create_streams(config.streams).unwrap();
         app
