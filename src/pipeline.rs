@@ -14,12 +14,12 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::vec::Vec;
 
-use crate::image_buffer::ThermalImage;
+use crate::image_buffer::{BytesImage, ThermalImage};
 use crate::render::Renderer as _;
 use crate::settings::{
     CameraOptions, CameraSettings, I2cSettings, RenderSettings, Settings, StreamSettings,
 };
-use crate::{camera, error, image_buffer, render, spmc, stream};
+use crate::{camera, error, render, spmc, stream};
 
 fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
 where
@@ -51,7 +51,7 @@ where
 #[derive(Debug, Default)]
 pub struct Pipeline {
     frame_source: Option<spmc::Sender<ThermalImage>>,
-    rendered_source: Option<spmc::Sender<image_buffer::ImageBuffer>>,
+    rendered_source: Option<spmc::Sender<BytesImage>>,
     tasks: TaskList,
 }
 

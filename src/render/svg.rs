@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use bytes::Bytes;
 use image::Pixel;
 use svg::node::element::{Group, Rectangle, Text as TextElement};
 use svg::node::Text as TextNode;
@@ -6,7 +7,7 @@ use svg::Document;
 use tiny_skia::PixmapMut;
 use usvg::{FitTo, Tree};
 
-use crate::image_buffer::{ImageBuffer, ThermalImage};
+use crate::image_buffer::{BytesImage, ThermalImage};
 
 use super::{color, font, Limit, Renderer as RendererTrait, TemperatureDisplay};
 
@@ -132,7 +133,7 @@ impl RendererTrait for Renderer {
     }
 
     /// Render an image to a pixel buffer.
-    fn render_buffer(&self, image: &ThermalImage) -> ImageBuffer {
+    fn render_buffer(&self, image: &ThermalImage) -> BytesImage {
         // Map the thermal image to an actual RGB image. We're converting to RGBA at the same time
         // as that's what resvg wants.
         let map_func = self.color_map(image);
@@ -143,7 +144,7 @@ impl RendererTrait for Renderer {
         // Flip in-place to compensate for grid-eye counting from the bottom up
         image::imageops::flip_vertical_in_place(&mut temperature_colors);
         // Embiggen
-        // TODO: This is slow for larger grid sizes. Gotta go fast.
+        // TODO: This is slow for larger grid sizes. Gotta go fast(er).
         let grid_size = self.grid_size() as u32;
         let mut rgba_image = image::imageops::resize(
             &temperature_colors,
@@ -153,23 +154,24 @@ impl RendererTrait for Renderer {
         );
         let full_width = rgba_image.width();
         let full_height = rgba_image.height();
-        let mut pixmap = PixmapMut::from_bytes(
-            rgba_image.as_flat_samples_mut().as_mut_slice(),
-            full_width,
-            full_height,
-        )
-        .unwrap()
-        .to_owned();
-        if self.display_temperature() != TemperatureDisplay::Disabled {
+        let buf = if self.display_temperature() != TemperatureDisplay::Disabled {
+            let mut pixmap = PixmapMut::from_bytes(
+                rgba_image.as_flat_samples_mut().as_mut_slice(),
+                full_width,
+                full_height,
+            )
+            .unwrap()
+            .to_owned();
             let svg = self.render_text(image, &temperature_colors);
             let tree = Tree::from_data(format!("{}", svg).as_bytes(), &SVG_OPTS).unwrap();
             // Just render on top of the existing data. The generated SVG is just text on a
             // transparent background.
             resvg::render(&tree, FitTo::Original, (pixmap).as_mut()).unwrap();
-        }
-        // TODO: Investigate skipping the ImageBuffer -> Pixmap -> ImageBuffer process as the
-        // ImageBuffer-ification process continues.
-        ImageBuffer::from(pixmap)
+            Bytes::from(pixmap.take())
+        } else {
+            Bytes::from(rgba_image.into_raw())
+        };
+        BytesImage::from_raw(full_width, full_height, buf).unwrap()
     }
 }
 

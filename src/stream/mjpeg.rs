@@ -9,30 +9,30 @@ use hyper::Body;
 use mozjpeg::{ColorSpace, Compress};
 
 use bytes::{BufMut, BytesMut};
-use image::{codecs::jpeg::JpegEncoder, ColorType};
+use image::codecs::jpeg::JpegEncoder;
 
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use crate::image_buffer::ImageBuffer;
+use crate::image_buffer::BytesImage;
 use crate::spmc::Sender;
 
-type StreamBox = Box<dyn Stream<Item = ImageBuffer> + Send + Sync + Unpin>;
+type StreamBox = Box<dyn Stream<Item = BytesImage> + Send + Sync + Unpin>;
 type OptionalStreamBox = Arc<Mutex<Option<StreamBox>>>;
 
 #[derive(Clone)]
 pub struct MjpegStream {
     boundary: String,
     sender: Sender<Bytes>,
-    render_source: Sender<ImageBuffer>,
+    render_source: Sender<BytesImage>,
     render_stream: OptionalStreamBox,
-    temp_image: Option<ImageBuffer>,
+    temp_image: Option<BytesImage>,
 }
 
 impl MjpegStream {
-    pub fn new(render_source: &Sender<ImageBuffer>) -> Self {
+    pub fn new(render_source: &Sender<BytesImage>) -> Self {
         Self {
             // TODO: randomize boundary
             boundary: "mjpeg_rs_boundary".to_string(),
@@ -55,7 +55,7 @@ impl MjpegStream {
         format!("multipart/x-mixed-replace; boundary={}", self.boundary)
     }
 
-    fn send_image(&mut self, buf: ImageBuffer) -> Result<(), Infallible> {
+    fn send_image(&mut self, buf: BytesImage) -> Result<(), Infallible> {
         let jpeg_buf = if cfg!(feature = "mozjpeg") {
             encode_jpeg_mozjpeg(&buf)
         } else {
@@ -106,14 +106,14 @@ impl Future for MjpegStream {
     }
 }
 
-impl Sink<ImageBuffer> for MjpegStream {
+impl Sink<BytesImage> for MjpegStream {
     type Error = Infallible;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.sender.poll_ready_unpin(cx)
     }
 
-    fn start_send(mut self: Pin<&mut Self>, buf: ImageBuffer) -> Result<(), Self::Error> {
+    fn start_send(mut self: Pin<&mut Self>, buf: BytesImage) -> Result<(), Self::Error> {
         self.send_image(buf)
     }
 
@@ -127,10 +127,11 @@ impl Sink<ImageBuffer> for MjpegStream {
 }
 
 #[cfg(feature = "mozjpeg")]
-fn encode_jpeg_mozjpeg(image: &ImageBuffer) -> Bytes {
+fn encode_jpeg_mozjpeg(image: &BytesImage) -> Bytes {
     // To make it simpler to use renderers within closures, we're creating a fresh encoder each
     // time this method is called. A little less efficient, but much easier to use.
-    let mut jpeg_encoder = Compress::new(ColorSpace::from(image.order()));
+    // BytesImage is defined to be RGBA.
+    let mut jpeg_encoder = Compress::new(ColorSpace::JCS_EXT_RGBA);
     jpeg_encoder.set_color_space(ColorSpace::JCS_RGB);
     // Gotta go fast.
     // Long version: in debug builds the most time is spent in SVG rendering. In
@@ -140,24 +141,17 @@ fn encode_jpeg_mozjpeg(image: &ImageBuffer) -> Bytes {
     jpeg_encoder.set_fastest_defaults();
     jpeg_encoder.set_quality(75.0);
     jpeg_encoder.set_mem_dest();
-    jpeg_encoder.set_size(image.width(), image.height());
+    jpeg_encoder.set_size(image.width() as usize, image.height() as usize);
     jpeg_encoder.start_compress();
     // Hope write_scanlines can process everything in one go.
-    assert!(jpeg_encoder.write_scanlines(image.data()));
+    assert!(jpeg_encoder.write_scanlines(image));
     jpeg_encoder.finish_compress();
     Bytes::from(jpeg_encoder.data_to_vec().unwrap())
 }
 
-fn encode_jpeg_image(image: &ImageBuffer) -> Bytes {
+fn encode_jpeg_image(image: &BytesImage) -> Bytes {
     let mut jpeg_buf = BytesMut::new().writer();
     let mut encoder = JpegEncoder::new(&mut jpeg_buf);
-    encoder
-        .encode(
-            image.data(),
-            image.width() as u32,
-            image.height() as u32,
-            ColorType::from(image.order()),
-        )
-        .unwrap();
+    encoder.encode_image(image).unwrap();
     jpeg_buf.into_inner().freeze()
 }
