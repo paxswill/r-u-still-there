@@ -52,6 +52,8 @@ default-features = false
 version = "0.3.1"
 
 [features]
+# Use mozjpeg by default. mozjpeg is the difference 10 FPS taking <50% CPU on a
+# Beaglebone and lagging because the CPU is pegged.
 default = ["mjpeg", "mozjpeg", "render_svg"]
 mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
 render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
