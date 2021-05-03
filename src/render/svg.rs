@@ -262,7 +262,7 @@ impl Renderer {
         temperatures
             .enumerate_pixels()
             .zip(temperature_colors.pixels())
-            .map(|((x, y, temp), color)| self.create_svg_fragment(x, y, temp, color))
+            .map(|((x, y, temp), color)| self.create_svg_fragment(y, x, temp, color))
             .fold(Document::new(), |doc, group| doc.add(group))
             .set("width", temperatures.width() * grid_size)
             .set("height", temperatures.height() * grid_size)
