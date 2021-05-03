@@ -7,6 +7,7 @@ extern crate lazy_static;
 
 mod error;
 mod image_buffer;
+mod moving_average;
 mod pipeline;
 mod render;
 mod settings;
