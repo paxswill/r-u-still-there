@@ -56,11 +56,7 @@ impl MjpegStream {
     }
 
     fn send_image(&mut self, buf: BytesImage) -> Result<(), Infallible> {
-        let jpeg_buf = if cfg!(feature = "mozjpeg") {
-            encode_jpeg_mozjpeg(&buf)
-        } else {
-            encode_jpeg_image(&buf)
-        };
+        let jpeg_buf = encode_jpeg(&buf);
         let header = Bytes::from(format!(
             "\r\n--{}\r\nContent-Type: image/jpeg\r\n\r\n",
             self.boundary
@@ -154,4 +150,19 @@ fn encode_jpeg_image(image: &BytesImage) -> Bytes {
     let mut encoder = JpegEncoder::new(&mut jpeg_buf);
     encoder.encode_image(image).unwrap();
     jpeg_buf.into_inner().freeze()
+}
+
+
+#[cfg(not(feature = "mozjpeg"))]
+fn encode_jpeg(image: &BytesImage) -> Bytes {
+    encode_jpeg_image(image)
+}
+
+#[cfg(feature = "mozjpeg")]
+fn encode_jpeg(image: &BytesImage) -> Bytes {
+    if cfg!(feature = "mozjpeg") {
+        encode_jpeg_mozjpeg(image)
+    } else {
+        encode_jpeg_image(image)
+    }
 }
