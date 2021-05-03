@@ -5,7 +5,7 @@ use http::Response;
 use image::flat::{FlatSamples, SampleLayout};
 use image::imageops;
 use linux_embedded_hal::I2cdev;
-use thermal_camera::{grideye, ThermalCamera};
+use thermal_camera::{grideye, Error as CameraError, ThermalCamera};
 use tokio::task::JoinError;
 use tokio::time::{self, Duration};
 use tokio_stream::wrappers::IntervalStream;
@@ -13,6 +13,7 @@ use warp::Filter;
 
 use std::convert::TryFrom;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 use std::vec::Vec;
 
@@ -50,23 +51,24 @@ where
     }
 }
 
-#[derive(Debug, Default)]
-pub struct Pipeline {
+pub struct Pipeline<E> {
+    camera: Arc<Mutex<dyn ThermalCamera<Error = E> + Send + Sync>>,
     frame_source: Option<spmc::Sender<ThermalImage>>,
     rendered_source: Option<spmc::Sender<BytesImage>>,
     tasks: TaskList,
 }
 
-impl Pipeline {
-    fn create_camera(settings: &CameraSettings) -> impl Stream<Item = ThermalImage> {
-        let common_options = CommonOptions::from(*settings);
+impl Pipeline<CameraError<I2cdev>> {
+    fn create_camera(
+        settings: &CameraSettings,
+    ) -> Arc<Mutex<dyn ThermalCamera<Error = CameraError<I2cdev>> + Send + Sync>> {
         let i2c_config = I2cSettings::from(*settings);
         // TODO: Add From<I2cError>
         let bus = I2cdev::try_from(i2c_config).unwrap();
         // TODO: Add From<I2cError>
         let addr = grideye::Address::try_from(i2c_config.address).unwrap();
         // TODO: Move this into a TryFrom implementation or something on CameraSettings
-        let mut camera_device = match settings {
+        Arc::new(Mutex::new(match settings {
             CameraSettings::GridEye {
                 i2c: _,
                 options: common_options,
@@ -81,11 +83,18 @@ impl Pipeline {
                 .unwrap();
                 cam
             }
-        };
+        }))
+    }
+
+    fn wrap_camera_stream(
+        camera: &Arc<Mutex<dyn ThermalCamera<Error = CameraError<I2cdev>> + Send + Sync>>,
+        common_options: CommonOptions,
+    ) -> impl Stream<Item = ThermalImage> {
         let interval = time::interval(Duration::from(common_options));
         let interval_stream = IntervalStream::new(interval);
+        let camera = Arc::clone(camera);
         interval_stream
-            .map(Box::new(move |_| camera_device.image().unwrap()))
+            .map(move |_| camera.lock().unwrap().image().unwrap())
             .map(move |array2| {
                 let (row_count, col_count) = array2.dim();
                 let height = row_count as u32;
@@ -127,10 +136,11 @@ impl Pipeline {
                 };
                 temperatures
             })
+            .boxed()
     }
 
     fn configure_camera(&mut self, settings: CameraSettings) {
-        let frame_stream = Self::create_camera(&settings);
+        let frame_stream = Self::wrap_camera_stream(&self.camera, CommonOptions::from(settings));
         let frame_multiplexer = spmc::Sender::default();
         let frame_future = ok_stream(frame_stream).forward(frame_multiplexer.clone());
         self.frame_source = Some(frame_multiplexer);
@@ -203,7 +213,7 @@ impl Pipeline {
     }
 }
 
-impl Future for Pipeline {
+impl<E> Future for Pipeline<E> {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -219,9 +229,15 @@ impl Future for Pipeline {
     }
 }
 
-impl<'a> From<Settings<'a>> for Pipeline {
+impl<'a> From<Settings<'a>> for Pipeline<CameraError<I2cdev>> {
     fn from(config: Settings<'a>) -> Self {
-        let mut app = Self::default();
+        let camera = Self::create_camera(&config.camera);
+        let mut app = Self {
+            camera,
+            frame_source: None,
+            rendered_source: None,
+            tasks: TaskList::default(),
+        };
         app.configure_camera(config.camera);
         app.create_renderer(config.render).unwrap();
         app.create_streams(config.streams).unwrap();
