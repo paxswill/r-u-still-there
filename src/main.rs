@@ -8,14 +8,18 @@ extern crate lazy_static;
 mod error;
 mod image_buffer;
 mod moving_average;
+mod occupancy;
 mod pipeline;
+mod pubsub;
 mod render;
 mod settings;
 mod spmc;
 mod stream;
+mod temporary_permit;
 
 use crate::pipeline::Pipeline;
 use crate::settings::Settings;
+pub use crate::pubsub::spmc;
 
 #[tokio::main]
 async fn main() {

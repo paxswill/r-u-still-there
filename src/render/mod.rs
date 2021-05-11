@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use futures::sink::Sink;
+use futures::stream::Stream;
 use serde::Deserialize;
+use tokio::sync::Semaphore;
+
+use std::sync::Arc;
 
 use crate::image_buffer::{BytesImage, ThermalImage};
 
@@ -47,15 +52,9 @@ impl Default for TemperatureDisplay {
     }
 }
 
-pub trait Renderer: Default {
-    fn new(
-        scale_min: Limit,
-        scale_max: Limit,
-        display_temperature: TemperatureDisplay,
-        grid_size: usize,
-        gradient: colorous::Gradient,
-    ) -> Self;
-
+pub trait Renderer<E>:
+    Sink<ThermalImage, Error = E> + Stream<Item = Result<BytesImage, E>>
+{
     fn scale_min(&self) -> Limit;
 
     fn scale_max(&self) -> Limit;
@@ -71,6 +70,8 @@ pub trait Renderer: Default {
     fn set_gradient(&mut self, gradient: colorous::Gradient);
 
     fn render_buffer(&self, image: &ThermalImage) -> BytesImage;
+
+    fn semaphore(&self) -> Arc<Semaphore>;
 
     fn color_map(&self, image: &ThermalImage) -> Box<dyn Fn(&f32) -> color::Color> {
         let scale_min = match self.scale_min() {

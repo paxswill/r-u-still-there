@@ -1,11 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use bytes::Bytes;
+use futures::{ready, Future, Sink, Stream};
 use image::Pixel;
 use svg::node::element::{Group, Rectangle, Text as TextElement};
 use svg::node::Text as TextNode;
 use svg::Document;
 use tiny_skia::PixmapMut;
+use tokio::sync::Semaphore;
+use tokio::task::{spawn_blocking, JoinError, JoinHandle};
+use tokio_util::sync::PollSemaphore;
 use usvg::{FitTo, Tree};
+
+use std::pin::Pin;
+use std::sync::{Arc, Mutex};
+use std::task::{Context, Poll, Waker};
 
 use crate::image_buffer::{BytesImage, ThermalImage};
 
@@ -74,36 +82,19 @@ mod font_tests {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Renderer {
     scale_min: Limit,
     scale_max: Limit,
     display_temperature: TemperatureDisplay,
     grid_size: usize,
     gradient: colorous::Gradient,
+    semaphore: PollSemaphore,
+    current_task: Arc<Mutex<Option<JoinHandle<BytesImage>>>>,
+    wakers: Arc<Mutex<Vec<Waker>>>,
 }
 
-impl RendererTrait for Renderer {
-    /// Creates a new `Renderer`. If [Static][Limit::Static] limits are being used for both values
-    /// and are in reverse order (i.e. the minimum is larger than the maximum) the color scale will
-    /// be reversed. There is not a way to specify this behavior for [Dynamic][Limit::Dynmanic]
-    /// limits.
-    fn new(
-        scale_min: Limit,
-        scale_max: Limit,
-        display_temperature: TemperatureDisplay,
-        grid_size: usize,
-        gradient: colorous::Gradient,
-    ) -> Self {
-        Renderer {
-            scale_min,
-            scale_max,
-            display_temperature,
-            grid_size,
-            gradient,
-        }
-    }
-
+impl RendererTrait<JoinError> for Renderer {
     fn scale_min(&self) -> Limit {
         self.scale_min
     }
@@ -163,11 +154,38 @@ impl RendererTrait for Renderer {
         };
         BytesImage::from_raw(full_width, full_height, buf).unwrap()
     }
+
+    fn semaphore(&self) -> Arc<Semaphore> {
+        return self.semaphore.clone_inner();
+    }
 }
 
 type ThermalPixel = image::Luma<f32>;
 
 impl Renderer {
+    /// Creates a new `Renderer`. If [Static][Limit::Static] limits are being used for both values
+    /// and are in reverse order (i.e. the minimum is larger than the maximum) the color scale will
+    /// be reversed. There is not a way to specify this behavior for [Dynamic][Limit::Dynmanic]
+    /// limits.
+    pub fn new(
+        scale_min: Limit,
+        scale_max: Limit,
+        display_temperature: TemperatureDisplay,
+        grid_size: usize,
+        gradient: colorous::Gradient,
+    ) -> Self {
+        Renderer {
+            scale_min,
+            scale_max,
+            display_temperature,
+            grid_size,
+            gradient,
+            semaphore: PollSemaphore::new(Arc::new(Semaphore::new(0))),
+            current_task: Arc::new(Mutex::new(None)),
+            wakers: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
     /// This is a fast way to enlarge a grid of individual pixels. Each input pixel will be
     /// enlarged to a `grid_size` square.
     ///
@@ -269,15 +287,66 @@ impl Renderer {
     }
 }
 
-impl Default for Renderer {
-    fn default() -> Self {
-        Self::new(
-            Limit::Dynamic,
-            Limit::Dynamic,
-            TemperatureDisplay::default(),
-            50,
-            colorous::TURBO,
-        )
+impl Sink<ThermalImage> for Renderer {
+    type Error = JoinError;
+
+    fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        // We're only ready if there are active clients, which is signified by there being
+        // available permits in the semaphore.
+        let _ = ready!(self.semaphore.poll_acquire(cx));
+        // If there's a task currently running, wait for it.
+        if let Some(task) = *self.current_task.lock().unwrap() {
+            let task = Pin::new(&mut task);
+            Poll::Ready(ready!(task.poll(cx)).map(|_| ()))
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn start_send(self: Pin<&mut Self>, buf: ThermalImage) -> Result<(), Self::Error> {
+        let this = self.clone();
+        let task = spawn_blocking(|| {
+            let rendered = this.render_buffer(&buf);
+            let wakers = this.wakers.lock().unwrap();
+            for waker in (*wakers).drain(..) {
+                waker.wake();
+            }
+            rendered
+        });
+        *self.current_task.lock().unwrap() = Some(task);
+        Ok(())
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        if let Some(task) = *self.current_task.lock().unwrap() {
+            let task = Pin::new(&mut task);
+            Poll::Ready(ready!(task.poll(cx)).map(|_| ()))
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        if let Some(task) = *self.current_task.lock().unwrap() {
+            let task = Pin::new(&mut task);
+            Poll::Ready(ready!(task.poll(cx)).map(|_| ()))
+        } else {
+            Poll::Ready(Ok(()))
+        }
+    }
+}
+
+impl Stream for Renderer {
+    type Item = Result<BytesImage, JoinError>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        if let Some(task) = *self.current_task.lock().unwrap() {
+            let task = Pin::new(&mut task);
+            Poll::Ready(Some(ready!(task.poll(cx))))
+        } else {
+            self.wakers.lock().unwrap().push(cx.waker().clone());
+            Poll::Pending
+        }
     }
 }
 

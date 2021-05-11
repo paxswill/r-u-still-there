@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
+use futures::sink::Sink;
 use http::Response;
 use image::flat::{FlatSamples, SampleLayout};
 use image::imageops;
@@ -8,6 +9,7 @@ use linux_embedded_hal::I2cdev;
 use thermal_camera::{grideye, Error as CameraError, ThermalCamera};
 use tokio::task::JoinError;
 use tokio::time::{self, Duration};
+use tokio::sync::Semaphore;
 use tokio_stream::wrappers::IntervalStream;
 use warp::Filter;
 
@@ -18,7 +20,7 @@ use std::task::{Context, Poll};
 use std::vec::Vec;
 
 use crate::image_buffer::{BytesImage, ThermalImage};
-use crate::render::Renderer as _;
+use crate::render::Renderer;
 use crate::settings::{
     CameraSettings, CommonOptions, I2cSettings, RenderSettings, Rotation, Settings, StreamSettings,
 };
@@ -32,7 +34,9 @@ where
 }
 
 type InnerResult = Result<(), error::Error<bytes::Bytes>>;
-type TaskList = FuturesUnordered<Box<dyn Future<Output = InnerResult> + Unpin>>;
+type Task = Box<dyn Future<Output = InnerResult> + Unpin>;
+type TaskList = FuturesUnordered<Task>;
+type CameraBox = Arc<Mutex<dyn ThermalCamera<Error = CameraError<I2cdev>> + Send + Sync>>;
 
 fn flatten_join_result<E>(join_result: Result<Result<(), E>, JoinError>) -> InnerResult
 where
@@ -53,15 +57,14 @@ where
 
 pub struct Pipeline<E> {
     camera: Arc<Mutex<dyn ThermalCamera<Error = E> + Send + Sync>>,
-    frame_source: Option<spmc::Sender<ThermalImage>>,
-    rendered_source: Option<spmc::Sender<BytesImage>>,
+    frame_source: spmc::Sender<ThermalImage>,
+    render_semaphore: Arc<Semaphore>,
+    render_source: spmc::Sender<BytesImage>,
     tasks: TaskList,
 }
 
 impl Pipeline<CameraError<I2cdev>> {
-    fn create_camera(
-        settings: &CameraSettings,
-    ) -> Arc<Mutex<dyn ThermalCamera<Error = CameraError<I2cdev>> + Send + Sync>> {
+    fn create_camera(settings: &CameraSettings) -> CameraBox {
         let i2c_config = I2cSettings::from(*settings);
         // TODO: Add From<I2cError>
         let bus = I2cdev::try_from(i2c_config).unwrap();
@@ -107,6 +110,7 @@ impl Pipeline<CameraError<I2cdev>> {
                     array2.reversed_axes()
                 };
                 let layout = SampleLayout::row_major_packed(1, width, height);
+
                 let buffer_image = FlatSamples {
                     samples: array2.into_raw_vec(),
                     layout,
@@ -139,15 +143,21 @@ impl Pipeline<CameraError<I2cdev>> {
             .boxed()
     }
 
-    fn configure_camera(&mut self, settings: CameraSettings) {
-        let frame_stream = Self::wrap_camera_stream(&self.camera, CommonOptions::from(settings));
+    fn configure_camera(
+        camera: &CameraBox,
+        settings: CameraSettings,
+    ) -> (spmc::Sender<ThermalImage>, Task) {
+        let frame_stream = Self::wrap_camera_stream(camera, CommonOptions::from(settings));
         let frame_multiplexer = spmc::Sender::default();
         let frame_future = ok_stream(frame_stream).forward(frame_multiplexer.clone());
-        self.frame_source = Some(frame_multiplexer);
-        self.tasks.push(Box::new(frame_future.err_into()));
+        (frame_multiplexer, Box::new(frame_future.err_into()))
     }
 
-    fn create_renderer(&mut self, settings: RenderSettings) -> Result<(), &str> {
+    fn create_renderer(
+        frame_source: &spmc::Sender<ThermalImage>,
+        settings: RenderSettings,
+        task_list: &mut TaskList,
+    ) -> (Arc<Semaphore>, spmc::Sender<BytesImage>) {
         let renderer = render::SvgRenderer::new(
             settings.lower_limit,
             settings.upper_limit,
@@ -155,38 +165,28 @@ impl Pipeline<CameraError<I2cdev>> {
             settings.grid_size,
             settings.colors,
         );
-        let rendered_stream = self
-            .frame_source
-            .as_ref()
-            // TODO: use a real Error here
-            .ok_or("need to create a frame stream first")?
-            .stream()
-            .map(move |temperatures| renderer.render_buffer(&temperatures));
-        let rendered_multiplexer = spmc::Sender::default();
-        let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
-        self.rendered_source = Some(rendered_multiplexer);
-        self.tasks.push(Box::new(
-            tokio::spawn(render_future).map(flatten_join_result),
+        let render_semaphore = renderer.semaphore();
+        task_list.push(Box::new(
+            ok_stream(frame_source.stream())
+            .forward(&mut renderer.clone())
+            .map_err(|e| e.into())
         ));
-        Ok(())
+        let render_bus = spmc::Sender::default();
+        task_list.push(Box::new(
+            renderer.forward(render_bus.clone())
+        ));
+
+        
+            //.map(|result| result.map_err(|e| e.into()))
+            ;
+        (render_semaphore, render_bus)
     }
 
-    fn create_streams(&mut self, settings: StreamSettings) -> Result<(), &str> {
-        // Bail out if there aren't any stream sources enabled.
-        // For now there's just MJPEG, but HLS is planned for the future.
-        if !settings.mjpeg {
-            // It's Ok, there was just nothing to do.
-            return Ok(());
-        }
+    fn create_streams(&mut self, settings: StreamSettings) {
         let mut routes = Vec::new();
         if settings.mjpeg {
             // MJPEG sink
-            let render_source = self
-                .rendered_source
-                .as_ref()
-                // TODO: also Error here
-                .ok_or("need to create renderer first")?;
-            let mjpeg = stream::mjpeg::MjpegStream::new(render_source);
+            let mjpeg = stream::mjpeg::MjpegStream::new(&self.renderer.semaphore());
             let mjpeg_output = mjpeg.clone();
             let mjpeg_route = warp::path("mjpeg")
                 .and(warp::path::end())
@@ -198,18 +198,21 @@ impl Pipeline<CameraError<I2cdev>> {
                 })
                 .boxed();
             routes.push(mjpeg_route);
-
-            // Stream out rendered frames via MJPEG
+            let mjpeg_task = self.renderer.clone()
             self.tasks.push(Box::new(tokio::spawn(mjpeg).err_into()));
         }
         let combined_route = routes
             .into_iter()
-            .reduce(|combined, next| combined.or(next).unify().boxed())
-            // TODO: more error-ing
-            .ok_or("problem creating streaming routes")?;
-        self.tasks
-            .push(Box::new(warp::serve(combined_route).bind(settings).map(Ok)));
-        Ok(())
+            // `.unify().boxed()` keeps the types consistent as routes are combined together.
+            .reduce(|combined, next| combined.or(next).unify().boxed());
+        // If there are no streams enabled, combined_route will be None, and we don't need to add
+        // anything to the task list.
+        if let Some(route) = combined_route {
+            // StreamSettings can be converted into a socket address to bind to.
+            // Wrap it all in Ok() to keep the Future type consitent
+            self.tasks
+                .push(Box::new(warp::serve(route).bind(settings).map(Ok)));
+        }
     }
 }
 
@@ -231,16 +234,19 @@ impl<E> Future for Pipeline<E> {
 
 impl<'a> From<Settings<'a>> for Pipeline<CameraError<I2cdev>> {
     fn from(config: Settings<'a>) -> Self {
+        let tasks = TaskList::default();
         let camera = Self::create_camera(&config.camera);
+        let (frame_source, frame_task) = Self::configure_camera(&camera, config.camera);
+        tasks.push(frame_task);
+        let (render_source, render_task) = Self::create_renderer(&frame_source, config.render);
+        tasks.push(render_task);
         let mut app = Self {
             camera,
-            frame_source: None,
-            rendered_source: None,
-            tasks: TaskList::default(),
+            frame_source,
+            render_source,
+            tasks,
         };
-        app.configure_camera(config.camera);
-        app.create_renderer(config.render).unwrap();
-        app.create_streams(config.streams).unwrap();
+        app.create_streams(config.streams);
         app
     }
 }

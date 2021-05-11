@@ -1,54 +1,58 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use bytes::{Buf, Bytes};
+use async_trait::async_trait;
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+use futures::ready;
 use futures::sink::{Sink, SinkExt};
-use futures::stream::{Stream, StreamExt};
-use futures::{ready, Future};
-use hyper::Body;
+use futures::stream::StreamExt;
+use hyper::body::{Body, HttpBody};
+use image::codecs::jpeg::JpegEncoder;
+use tokio::sync::Semaphore;
+use tokio_util::sync::PollSemaphore;
 
 #[cfg(feature = "mozjpeg")]
 use mozjpeg::{ColorSpace, Compress};
 
-use bytes::{BufMut, BytesMut};
-use image::codecs::jpeg::JpegEncoder;
-
 use std::convert::Infallible;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use super::permit_body::PermitBody;
 use crate::image_buffer::BytesImage;
 use crate::spmc::Sender;
+use crate::pubsub;
 
-type StreamBox = Box<dyn Stream<Item = BytesImage> + Send + Sync + Unpin>;
-type OptionalStreamBox = Arc<Mutex<Option<StreamBox>>>;
-
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MjpegStream {
     boundary: String,
-    sender: Sender<Bytes>,
-    render_source: Sender<BytesImage>,
-    render_stream: OptionalStreamBox,
+    bus: pubsub::Bus<Bytes>,
     temp_image: Option<BytesImage>,
+    render_semaphore: PollSemaphore,
+    encode_semaphore: PollSemaphore
 }
 
 impl MjpegStream {
-    pub fn new(render_source: &Sender<BytesImage>) -> Self {
+    pub fn new(signal: &Arc<Semaphore>) -> Self {
         Self {
             // TODO: randomize boundary
             boundary: "mjpeg_rs_boundary".to_string(),
-            sender: Sender::default(),
-            render_source: render_source.clone(),
-            render_stream: Arc::new(Mutex::new(None)),
+            bus: pubsub::Bus::default(),
             temp_image: None,
+            render_semaphore: PollSemaphore::new(Arc::clone(signal)),
+            encode_semaphore: PollSemaphore::new(Arc::new(Semaphore::new(0))),
         }
     }
 
-    pub fn body(&self) -> Body {
+    pub fn body(&self) -> PermitBody<Body>{
         // The only kind of error BroadcastStream can send is when a receiver is lagged. In that
         // case just continue reading as the next recv() will work.
-        let jpeg_stream = self.sender.stream();
+        let jpeg_stream = self.bus.stream();
         let result_stream = jpeg_stream.map(Result::<Bytes, hyper::http::Error>::Ok);
-        Body::wrap_stream(result_stream)
+        let body_stream = Body::wrap_stream(result_stream);
+        let mut permit_body = PermitBody::from(body_stream);
+        permit_body.add_temp_permit_to(&self.render_semaphore.clone_inner());
+        permit_body.add_temp_permit_to(&self.encode_semaphore.clone_inner());
+        permit_body
     }
 
     pub fn content_type(&self) -> String {
@@ -68,37 +72,15 @@ impl MjpegStream {
     }
 }
 
-impl Future for MjpegStream {
-    type Output = ();
+#[async_trait]
+impl pubsub::Subscriber for MjpegStream {
+    type Item = BytesImage;
+    type Error = Infallible;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        loop {
-            match self.sender.poll_ready_unpin(cx) {
-                Poll::Pending => {
-                    // Assume that poll_ready_unpin takes care of registering a waker
-                    // Drop the render_stream as there's nowhere for it to go.
-                    self.render_stream.lock().unwrap().take();
-                    return Poll::Pending;
-                }
-                Poll::Ready(Ok(_)) => {
-                    if let Some(image) = self.temp_image.take() {
-                        self.send_image(image).unwrap();
-                    }
-                    self.temp_image = {
-                        let mut stream_option = self.render_stream.lock().unwrap();
-                        let stream = stream_option
-                            .get_or_insert_with(|| Box::new(self.render_source.stream()));
-                        ready!(stream.poll_next_unpin(cx))
-                    };
-                    match self.temp_image {
-                        None => return Poll::Ready(()),
-                        Some(_) => (),
-                    }
-                }
-                // spmc::Sender's error is Infallible.
-                Poll::Ready(Err(_)) => unreachable!(),
-            }
-        }
+    async fn receive(&self, item: Self::Item) -> Result<(), Self::Error> {
+        // If there are permits available (meaning there are streaming clients connected), encode
+        // an image and send it out.
+        ready!(self.encode_semaphore.poll_acquire(cx));
     }
 }
 
@@ -106,6 +88,10 @@ impl Sink<BytesImage> for MjpegStream {
     type Error = Infallible;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        // We're only ready if there are active clients, which is signified by there being
+        // available permits in the semaphore.
+        ready!(self.encode_semaphore.poll_acquire(cx));
+        // Check if the sender is ready
         self.sender.poll_ready_unpin(cx)
     }
 
@@ -151,7 +137,6 @@ fn encode_jpeg_image(image: &BytesImage) -> Bytes {
     encoder.encode_image(image).unwrap();
     jpeg_buf.into_inner().freeze()
 }
-
 
 #[cfg(not(feature = "mozjpeg"))]
 fn encode_jpeg(image: &BytesImage) -> Bytes {
