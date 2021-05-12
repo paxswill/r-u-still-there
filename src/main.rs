@@ -9,12 +9,13 @@ mod error;
 mod image_buffer;
 mod moving_average;
 mod pipeline;
+mod pubsub;
 mod render;
 mod settings;
-mod spmc;
 mod stream;
 
 use crate::pipeline::Pipeline;
+use crate::pubsub::spmc;
 use crate::settings::Settings;
 
 #[tokio::main]
