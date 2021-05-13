@@ -1,38 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::convert::Infallible;
-use std::ops::DerefMut;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, Waker};
-use std::vec::Vec;
+use std::sync::Arc;
 
+use futures::task::{AtomicWaker, Context, Poll};
 use futures::{Sink, Stream};
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Sender<T> {
     inner: broadcast::Sender<T>,
-    wakers: Arc<Mutex<Vec<Waker>>>,
+    waker: Arc<AtomicWaker>,
 }
 
 impl<T: 'static + Clone + Send> Sender<T> {
     pub fn new(capacity: usize) -> Self {
         let (inner, _) = broadcast::channel(capacity);
-        let wakers = Arc::new(Mutex::new(Vec::default()));
-        Self { inner, wakers }
+        Self {
+            inner,
+            waker: Arc::new(AtomicWaker::new()),
+        }
     }
 
     pub fn stream(&self) -> impl Stream<Item = T> {
-        // If there are pending wakers, notify them
-        {
-            let mut wakers_lock = self.wakers.lock().unwrap();
-            let wakers = wakers_lock.deref_mut();
-            for waker in wakers.drain(..) {
-                waker.wake();
-            }
-        }
+        // Wake any wakers up if needed
+        self.waker.wake();
         BroadcastStream::new(self.inner.subscribe()).filter_map(Result::ok)
     }
 }
@@ -42,9 +36,14 @@ impl<T: 'static + Clone + Send> Sink<T> for Sender<T> {
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         // Pending if there's no receivers, always ready otherwise.
+        // Skip registration if we can
+        if self.inner.receiver_count() != 0 {
+            return Poll::Ready(Ok(()));
+        }
+        // Register, then check again in case a subscriber was added between the first check and
+        // the registration.
+        self.waker.register(cx.waker());
         if self.inner.receiver_count() == 0 {
-            let mut wakers = self.wakers.lock().unwrap();
-            wakers.push(cx.waker().clone());
             Poll::Pending
         } else {
             Poll::Ready(Ok(()))
