@@ -316,11 +316,15 @@ mod test {
         let start_time = Instant::now();
         let tasks = tokio::join!(
             tokio::spawn(async move {
-                timeout(Duration::from_millis(1000), root).await.expect("root wait timed out");
+                timeout(Duration::from_millis(1000), root)
+                    .await
+                    .expect("root wait timed out");
                 Instant::now()
             }),
             tokio::spawn(async move {
-                timeout(Duration::from_millis(1000), child).await.expect("child wait timed out");
+                timeout(Duration::from_millis(1000), child)
+                    .await
+                    .expect("child wait timed out");
                 Instant::now()
             }),
             tokio::spawn(async move {
