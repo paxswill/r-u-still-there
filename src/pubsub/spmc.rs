@@ -1,33 +1,42 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::convert::Infallible;
 use std::pin::Pin;
-use std::sync::Arc;
 
-use futures::task::{AtomicWaker, Context, Poll};
-use futures::{Sink, Stream};
+use futures::task::{Context, Poll};
+use futures::{ready, Future, Sink, Stream};
+use pin_utils::unsafe_pinned;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
-#[derive(Debug)]
-pub struct Sender<T> {
+use super::{CountedStream, TreeCount};
+
+#[derive(Clone, Debug)]
+pub struct Sender<T: 'static + Clone + Send> {
     inner: broadcast::Sender<T>,
-    waker: Arc<AtomicWaker>,
+    count: TreeCount,
 }
 
 impl<T: 'static + Clone + Send> Sender<T> {
-    pub fn new(capacity: usize) -> Self {
-        let (inner, _) = broadcast::channel(capacity);
-        Self {
+    unsafe_pinned!(count: TreeCount);
+
+    pub fn new_child<U>(&self) -> Sender<U>
+    where
+        U: 'static + Clone + Send,
+    {
+        let (inner, _) = broadcast::channel(1);
+        Sender {
             inner,
-            waker: Arc::new(AtomicWaker::new()),
+            count: self.count.new_child(),
         }
     }
 
-    pub fn stream(&self) -> impl Stream<Item = T> {
-        // Wake any wakers up if needed
-        self.waker.wake();
+    pub fn uncounted_stream(&self) -> impl Stream<Item = T> {
         BroadcastStream::new(self.inner.subscribe()).filter_map(Result::ok)
+    }
+
+    pub fn stream(&self) -> impl Stream<Item = T> {
+        CountedStream::new(self.count.get_token(), self.uncounted_stream())
     }
 }
 
@@ -35,19 +44,9 @@ impl<T: 'static + Clone + Send> Sink<T> for Sender<T> {
     type Error = Infallible;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        // Pending if there's no receivers, always ready otherwise.
-        // Skip registration if we can
-        if self.inner.receiver_count() != 0 {
-            return Poll::Ready(Ok(()));
-        }
-        // Register, then check again in case a subscriber was added between the first check and
-        // the registration.
-        self.waker.register(cx.waker());
-        if self.inner.receiver_count() == 0 {
-            Poll::Pending
-        } else {
-            Poll::Ready(Ok(()))
-        }
+        ready!(self.count().poll(cx));
+        // If we reach here, that means ready!() didn't return early.
+        Poll::Ready(Ok(()))
     }
 
     fn start_send(self: Pin<&mut Self>, item: T) -> Result<(), Self::Error> {
@@ -69,6 +68,10 @@ impl<T: 'static + Clone + Send> Sink<T> for Sender<T> {
 
 impl<T: 'static + Clone + Send> Default for Sender<T> {
     fn default() -> Self {
-        Self::new(1)
+        let (inner, _) = broadcast::channel(1);
+        Self {
+            inner,
+            count: TreeCount::default(),
+        }
     }
 }
