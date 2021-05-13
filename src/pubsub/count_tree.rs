@@ -45,14 +45,6 @@ impl InnerTreeCount {
 }
 
 impl TreeCount {
-    pub fn new() -> Self {
-        Self(Arc::new(InnerTreeCount {
-            parent: None,
-            count: AtomicUsize::new(0),
-            waker: AtomicWaker::new(),
-        }))
-    }
-
     pub fn new_child(&self) -> Self {
         let parent = self.clone();
         Self(Arc::new(InnerTreeCount {
@@ -68,6 +60,16 @@ impl TreeCount {
 
     pub fn count(&self) -> usize {
         self.0.count.load(Ordering::Acquire)
+    }
+}
+
+impl Default for TreeCount {
+    fn default() -> Self {
+        Self(Arc::new(InnerTreeCount {
+            parent: None,
+            count: AtomicUsize::new(0),
+            waker: AtomicWaker::new(),
+        }))
     }
 }
 
@@ -118,7 +120,7 @@ mod test {
 
     #[test]
     fn single_node_count() {
-        let root = TreeCount::new();
+        let root = TreeCount::default();
         assert_eq!(root.count(), 0, "Initial count of a root node is not 0");
         let token = root.get_token();
         assert_eq!(
@@ -136,7 +138,7 @@ mod test {
 
     #[test]
     fn clone_token() {
-        let root = TreeCount::new();
+        let root = TreeCount::default();
         let token1 = root.get_token();
         assert_eq!(
             root.count(),
@@ -165,7 +167,7 @@ mod test {
 
     #[test]
     fn linear_tree() {
-        let root = TreeCount::new();
+        let root = TreeCount::default();
         let parent = root.new_child();
         let child = parent.new_child();
         assert_eq!(root.count(), 0, "Initial count of root node is not 0");
@@ -223,7 +225,7 @@ mod test {
 
     #[test]
     fn branched_tree() {
-        let root = TreeCount::new();
+        let root = TreeCount::default();
         let left = root.new_child();
         let right = root.new_child();
         assert_eq!(root.count(), 0, "Initial count of root node is not 0");
@@ -249,7 +251,7 @@ mod test {
 
     #[tokio::test]
     async fn ready_no_wait() {
-        let root = TreeCount::new();
+        let root = TreeCount::default();
         let _token = root.get_token();
         let count = timeout(Duration::from_secs(0), root).await;
         assert!(
@@ -265,7 +267,7 @@ mod test {
 
     #[tokio::test]
     async fn timeout_wait() {
-        let root = TreeCount::new();
+        let root = TreeCount::default();
         let root_token_source = root.clone();
         let (count, _) = tokio::join!(
             tokio::spawn(async move { timeout(Duration::from_millis(100), root).await }),
@@ -284,7 +286,7 @@ mod test {
     //#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[tokio::test]
     async fn simple_ready_wait() {
-        let root = TreeCount::new();
+        let root = TreeCount::default();
         let root_token_source = root.clone();
         let start_time = Instant::now();
         let (count, _) = tokio::join!(
@@ -310,7 +312,7 @@ mod test {
     //#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[tokio::test]
     async fn linear_ready_wait() {
-        let root = TreeCount::new();
+        let root = TreeCount::default();
         let child = root.new_child();
         let child_token_source = child.clone();
         let start_time = Instant::now();
