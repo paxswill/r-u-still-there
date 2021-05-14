@@ -116,8 +116,9 @@ impl Pipeline<CameraError<I2cdev>> {
                 // The preconditions for try_into_buffer should all be met, so panic if there's a
                 // problem.
                 let mut temperatures = buffer_image.try_into_buffer().unwrap();
-                // ThermalCamera has the origin in the lower left, while image has it in the upper // left. Flip the image vertically by default to compensate for this, but skip the
-                // flip if the use wants it flipped.
+                // ThermalCamera has the origin in the lower left, while image has it in the upper
+                // left. Flip the image vertically by default to compensate for this, but skip the
+                // flip if the user wants it flipped.
                 if !common_options.flip_vertical {
                     imageops::flip_vertical_in_place(&mut temperatures);
                 }
