@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use serde::Deserialize;
+use structopt::StructOpt;
+
+use std::str::FromStr;
 
 use crate::render::{Limit, TemperatureDisplay};
 
@@ -26,6 +29,18 @@ impl From<Option<TemperatureUnit>> for TemperatureDisplay {
                 TemperatureUnit::Celsius => Self::Celsius,
                 TemperatureUnit::Fahrenheit => Self::Fahrenheit,
             },
+        }
+    }
+}
+
+impl FromStr for TemperatureUnit {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match &s.to_ascii_lowercase() as &str {
+            "celsius" | "c" => Ok(TemperatureUnit::Celsius),
+            "fahrenheit" | "f" => Ok(TemperatureUnit::Fahrenheit),
+            _ => Err("unknown temperature unit"),
         }
     }
 }
@@ -60,20 +75,26 @@ mod from_test {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, StructOpt)]
 pub struct RenderSettings {
+    /// The size (in pixels) each camera pixel should be rendered as.
+    #[structopt(short, long, default_value = "50")]
     #[serde(default = "default_grid_size")]
     pub grid_size: usize,
 
+    #[structopt(short, long)]
     #[serde(default)]
     pub units: Option<TemperatureUnit>,
 
+    #[structopt(skip)]
     #[serde(default)]
     pub upper_limit: Limit,
 
+    #[structopt(skip)]
     #[serde(default)]
     pub lower_limit: Limit,
 
+    #[structopt(short = "C", long, parse(try_from_str = super::gradient::from_str), default_value = "turbo")]
     #[serde(
         default = "default_colors",
         deserialize_with = "super::gradient::deserialize"

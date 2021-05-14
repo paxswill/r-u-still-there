@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use serde::Deserialize;
+use structopt::StructOpt;
 
 use std::net;
 
@@ -15,16 +16,20 @@ fn default_stream_enabled() -> bool {
     true
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, StructOpt)]
 pub struct StreamSettings {
     /// The address to bind the server to. Defaults to `127.0.0.1`.
+    #[structopt(short, long, default_value = "127.0.0.1")]
     #[serde(default = "default_address")]
     address: net::IpAddr,
 
     /// The port to bind the server to. Default to `9000`.
+    #[structopt(long, short, default_value = "9000")]
     #[serde(default = "default_port")]
     port: u16,
 
+    /// Whether or not the MJPEG video stream should be enabled.
+    #[structopt(long, short = "M")]
     #[serde(default = "default_stream_enabled")]
     pub mjpeg: bool,
 }
