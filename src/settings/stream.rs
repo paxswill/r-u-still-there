@@ -4,7 +4,7 @@ use serde::Deserialize;
 use std::net;
 
 fn default_address() -> net::IpAddr {
-    net::IpAddr::from([0u8, 0u8, 0u8, 0u8])
+    net::IpAddr::from([127u8, 0u8, 0u8, 1u8])
 }
 
 fn default_port() -> u16 {
