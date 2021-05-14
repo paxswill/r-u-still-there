@@ -21,6 +21,7 @@ resvg = { version = "0.14.0", optional = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_repr = "0.1"
+structopt = "0.3.21"
 svg = { version = "0.9.1", optional = true }
 toml = "0.5"
 tiny-skia = { version = "0.5.0", optional = true }

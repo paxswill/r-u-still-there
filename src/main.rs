@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use structopt::StructOpt;
+
 use std::fs;
-use std::path::Path;
 
 #[macro_use]
 extern crate lazy_static;
@@ -16,12 +17,13 @@ mod stream;
 
 use crate::pipeline::Pipeline;
 use crate::pubsub::spmc;
-use crate::settings::Settings;
+use crate::settings::{Args, Settings};
 
 #[tokio::main]
 async fn main() {
-    // Static config location (and relative!) for now
-    let config_data = fs::read(Path::new("./config.toml")).unwrap();
+    let clap_app = Args::clap();
+    let matches = clap_app.get_matches();
+    let config_data = fs::read(matches.value_of("config-path").unwrap()).unwrap();
     let config: Settings = toml::from_slice(&config_data).unwrap();
 
     let app = Pipeline::from(config);
