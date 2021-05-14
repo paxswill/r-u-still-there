@@ -2,11 +2,7 @@
 use colorous::Gradient;
 use serde::de::{self, Deserialize, Deserializer};
 
-pub fn deserialize<'de, D>(deserializer: D) -> Result<Gradient, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let gradient_name: &str = Deserialize::deserialize(deserializer)?;
+pub fn from_str(gradient_name: &str) -> Result<Gradient, &'static str> {
     match &gradient_name.to_uppercase().replace(" ", "_") as &str {
         "BLUES" => Ok(colorous::BLUES),
         "BLUE_GREEN" => Ok(colorous::BLUE_GREEN),
@@ -46,11 +42,21 @@ where
         "YELLOW_GREEN_BLUE" => Ok(colorous::YELLOW_GREEN_BLUE),
         "YELLOW_ORANGE_BROWN" => Ok(colorous::YELLOW_ORANGE_BROWN),
         "YELLOW_ORANGE_RED" => Ok(colorous::YELLOW_ORANGE_RED),
-        _ => Err(de::Error::invalid_value(
+        _ => Err("Invalid gradient name"),
+    }
+}
+
+pub fn deserialize<'de, D>(deserializer: D) -> Result<Gradient, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let gradient_name: &str = Deserialize::deserialize(deserializer)?;
+    from_str(gradient_name).map_err(|_| {
+        de::Error::invalid_value(
             de::Unexpected::Str(gradient_name),
             &"a name of a colorous gradient",
-        )),
-    }
+        )
+    })
 }
 
 #[cfg(test)]
