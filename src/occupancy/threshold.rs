@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use image::{ImageBuffer, Luma};
+use image::{ImageBuffer, Luma, Primitive};
+use num_traits::{Bounded, Zero};
 
 use crate::image_buffer::ThermalImage;
 
@@ -9,15 +10,11 @@ pub enum Threshold {
     Automatic,
 }
 
-pub type ThresholdImage = ImageBuffer<Luma<u32>, Vec<u32>>;
-
 const AUTOMATIC_THRESHOLD_DIFFERENCE: f32 = 0.001;
 
 fn automatic_threshold(image: &ThermalImage, current_threshold: Option<f32>) -> f32 {
-
-    let threshold = current_threshold.unwrap_or_else(|| {
-        image.iter().sum::<f32>() / (image.height() * image.width()) as f32
-    });
+    let threshold = current_threshold
+        .unwrap_or_else(|| image.iter().sum::<f32>() / (image.height() * image.width()) as f32);
     let mut background = Vec::<f32>::default();
     let mut foreground = Vec::<f32>::default();
     for pixel in image.iter() {
@@ -40,7 +37,6 @@ fn automatic_threshold(image: &ThermalImage, current_threshold: Option<f32>) -> 
 }
 
 impl Threshold {
-
     fn calculate_level(&self, image: &ThermalImage) -> f32 {
         match self {
             Self::Static(n) => *n,
@@ -48,15 +44,18 @@ impl Threshold {
         }
     }
 
-    pub fn threshold_image(&self, image: &ThermalImage) -> ThresholdImage {
+    pub fn threshold_image<T>(&self, image: &ThermalImage) -> ImageBuffer<Luma<T>, Vec<T>>
+    where
+        T: 'static + Bounded + Zero + Primitive,
+    {
         let threshold = self.calculate_level(image);
-        let mut threshold_image = ThresholdImage::new(image.width(), image.height());
+        let mut threshold_image = ImageBuffer::new(image.width(), image.height());
         let pixel_pairs = image.iter().zip(threshold_image.iter_mut());
         for (source_pixel, threshold_pixel) in pixel_pairs {
             *threshold_pixel = if source_pixel < &threshold {
-                u32::MIN
+                T::zero()
             } else {
-                u32::MAX
+                T::max_value()
             };
         }
         threshold_image
@@ -71,13 +70,17 @@ impl Default for Threshold {
 
 #[cfg(test)]
 mod test {
+    use super::{automatic_threshold, Threshold};
     use crate::image_buffer::ThermalImage;
-    use super::{automatic_threshold, Threshold, ThresholdImage};
+    use image::{ImageBuffer, Luma};
+
+    type ThresholdImage = ImageBuffer<Luma<u32>, Vec<u32>>;
 
     // Just chose these as small-ish, but also not a square image.
     const WIDTH: u32 = 5;
     const HEIGHT: u32 = 3;
 
+    #[rustfmt::skip::macros(vec)]
     fn image() -> ThermalImage {
         // It's an image, with a rectangular portion in the middle that is "hot".
         // "Hot" pixels have a mean near 28.0, "cold" have a mean around 17.0
@@ -88,26 +91,29 @@ mod test {
                 14.0, 20.7, 16.1, 16.1, 17.8,
                 15.5, 27.8, 29.6, 28.5, 20.2,
                 18.8, 16.3, 19.4, 12.1, 20.6,
-            ]
-        ).unwrap()
+            ],
+        )
+        .unwrap()
     }
 
+    #[rustfmt::skip::macros(vec)]
     fn expected_image() -> ThresholdImage {
         ThresholdImage::from_raw(
             WIDTH,
             HEIGHT,
             vec![
                 0, 0, 0, 0, 0,
-                0, 255, 255, 255, 0,
+                0, u32::MAX, u32::MAX, u32::MAX, 0,
                 0, 0, 0, 0, 0,
-            ]
-        ).unwrap()
+            ],
+        )
+        .unwrap()
     }
 
     #[test]
     fn dimensions() {
         let image = image();
-        let processed = Threshold::default().threshold_image(&image);
+        let processed: ThresholdImage = Threshold::default().threshold_image(&image);
         assert_eq!(image.dimensions(), processed.dimensions());
     }
 
