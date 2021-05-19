@@ -12,6 +12,7 @@ colorous = "1.0.5"
 futures = "0.3.13"
 http = "0.2.4"
 i2cdev = "0.4.4"
+imageproc = "0.22.0"
 lazy_static = "1.4.0"
 linux-embedded-hal = "=0.4.0-alpha.0"
 mozjpeg = { version = "0.8.24", optional = true }
