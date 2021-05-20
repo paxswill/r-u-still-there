@@ -18,9 +18,10 @@ use std::task::{Context, Poll};
 use std::vec::Vec;
 
 use crate::image_buffer::{BytesImage, ThermalImage};
+use crate::occupancy::Tracker;
 use crate::render::Renderer as _;
 use crate::settings::{
-    CameraSettings, CommonOptions, I2cSettings, RenderSettings, Rotation, Settings, StreamSettings,
+    CameraSettings, CommonOptions, I2cSettings, RenderSettings, Rotation, Settings, StreamSettings, TrackerSettings,
 };
 use crate::{error, render, spmc, stream};
 
@@ -212,6 +213,27 @@ impl Pipeline<CameraError<I2cdev>> {
             .push(Box::new(warp::serve(combined_route).bind(settings).map(Ok)));
         Ok(())
     }
+
+    fn create_tracker(&mut self, settings: TrackerSettings) -> Result<(), &str> {
+        let tracker = Tracker::from(&settings);
+        let logged_count_stream = tracker.count_stream().inspect(|count| {
+            println!("New occupancy count: {}", count);
+        });
+        let frame_stream = self
+            .frame_source
+            .as_ref()
+            .ok_or("need to create frame source first")?
+            .stream();
+        self.tasks.push(Box::new(
+            ok_stream(logged_count_stream)
+                .forward(futures::sink::drain())
+                .err_into(),
+        ));
+        self.tasks.push(Box::new(
+            ok_stream(frame_stream).forward(tracker).err_into(),
+        ));
+        Ok(())
+    }
 }
 
 impl<E> Future for Pipeline<E> {
@@ -242,6 +264,7 @@ impl<'a> From<Settings<'a>> for Pipeline<CameraError<I2cdev>> {
         app.configure_camera(config.camera);
         app.create_renderer(config.render).unwrap();
         app.create_streams(config.streams).unwrap();
+        app.create_tracker(config.tracker).unwrap();
         app
     }
 }
