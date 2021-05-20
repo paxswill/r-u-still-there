@@ -31,10 +31,10 @@ struct Blob {
 }
 
 impl Tracker {
-    pub fn new(threshold: f32) -> Self {
+    pub fn new(threshold: Threshold) -> Self {
         let (sender, receiver) = watch::channel(0);
         Self {
-            threshold: Threshold::Static(threshold),
+            threshold,
             blobs: Arc::new(RwLock::new(Vec::default())),
             old_count: Arc::new(AtomicUsize::new(0)),
             count_sender: Arc::new(sender),
@@ -87,7 +87,7 @@ impl Default for Tracker {
         // Using 26.0 degrees celsius as the default threshold, compensating for the effect of
         // clothing and distance on normal body temperature (37 degrees) while still being a fairly
         // high ambient temperature.
-        Self::new(25.0)
+        Self::new(Threshold::default())
     }
 }
 

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use image::{ImageBuffer, Luma, Primitive};
 use num_traits::{Bounded, Zero};
+use serde::Deserialize;
 
 use crate::image_buffer::ThermalImage;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Threshold {
     Static(f32),
     Automatic,
