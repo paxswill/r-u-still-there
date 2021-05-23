@@ -62,7 +62,7 @@ impl Pipeline<CameraError<I2cdev>> {
     fn create_camera(
         settings: &CameraSettings,
     ) -> Arc<Mutex<dyn ThermalCamera<Error = CameraError<I2cdev>> + Send + Sync>> {
-        let i2c_config = I2cSettings::from(*settings);
+        let i2c_config: &I2cSettings = settings.into();
         // TODO: Add From<I2cError>
         let bus = I2cdev::try_from(i2c_config).unwrap();
         // TODO: Add From<I2cError>
@@ -230,8 +230,8 @@ impl<E> Future for Pipeline<E> {
     }
 }
 
-impl<'a> From<Settings<'a>> for Pipeline<CameraError<I2cdev>> {
-    fn from(config: Settings<'a>) -> Self {
+impl From<Settings> for Pipeline<CameraError<I2cdev>> {
+    fn from(config: Settings) -> Self {
         let camera = Self::create_camera(&config.camera);
         let mut app = Self {
             camera,

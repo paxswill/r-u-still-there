@@ -15,9 +15,8 @@ pub use render::RenderSettings;
 pub use stream::StreamSettings;
 
 #[derive(Debug, Deserialize)]
-pub struct Settings<'a> {
-    #[serde(borrow)]
-    pub camera: CameraSettings<'a>,
+pub struct Settings {
+    pub camera: CameraSettings,
 
     pub streams: StreamSettings,
 
