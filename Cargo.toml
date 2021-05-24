@@ -30,6 +30,10 @@ toml = "0.5"
 tiny-skia = { version = "0.5.0", optional = true }
 usvg = { version = "0.14.0", optional = true }
 
+[dependencies.figment]
+features = ["env", "toml", "yaml"]
+version = "0.10.5"
+
 [dependencies.hyper]
 features = ["stream"]
 optional = true
