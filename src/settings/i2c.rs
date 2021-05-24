@@ -2,13 +2,13 @@
 use linux_embedded_hal::I2cdev;
 
 use i2cdev::linux::LinuxI2CError;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use std::convert::TryFrom;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum Bus {
     Number(u32),
