@@ -2,6 +2,8 @@
 use colorous::Gradient;
 use serde::de::{self, Deserialize, Deserializer};
 
+use std::borrow::Cow;
+
 pub fn from_str(gradient_name: &str) -> Result<Gradient, &'static str> {
     match &gradient_name.to_uppercase().replace(" ", "_") as &str {
         "BLUES" => Ok(colorous::BLUES),
@@ -50,10 +52,10 @@ pub fn deserialize<'de, D>(deserializer: D) -> Result<Gradient, D::Error>
 where
     D: Deserializer<'de>,
 {
-    let gradient_name: &str = Deserialize::deserialize(deserializer)?;
-    from_str(gradient_name).map_err(|_| {
+    let gradient_name: Cow<'_, str> = Deserialize::deserialize(deserializer)?;
+    from_str(gradient_name.as_ref()).map_err(|_| {
         de::Error::invalid_value(
-            de::Unexpected::Str(gradient_name),
+            de::Unexpected::Str(gradient_name.as_ref()),
             &"a name of a colorous gradient",
         )
     })

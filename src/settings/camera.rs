@@ -2,6 +2,7 @@
 use serde::de::{self, Deserialize, Deserializer, MapAccess, Visitor};
 use serde_repr::Deserialize_repr;
 
+use std::borrow::Cow;
 use std::fmt;
 use std::time::Duration;
 
@@ -90,7 +91,7 @@ impl<'de> Deserialize<'de> for CameraSettings {
                 let mut flip_horizontal = None;
                 let mut flip_vertical = None;
                 let mut frame_rate = None;
-                let mut kind = None;
+                let mut kind: Option<Cow<'_, str>> = None;
                 while let Some(key) = map.next_key()? {
                     match key {
                         Field::Bus => {
@@ -165,7 +166,7 @@ impl<'de> Deserialize<'de> for CameraSettings {
                     flip_vertical,
                     frame_rate: frame_rate.clone().unwrap_or(1),
                 };
-                match kind {
+                match kind.as_ref() {
                     "grideye" => {
                         // The GridEYE only supports up to 10 FPS
                         let frame_rate = match frame_rate {
@@ -185,7 +186,7 @@ impl<'de> Deserialize<'de> for CameraSettings {
                         };
                         Ok(CameraSettings::GridEye { i2c, options })
                     }
-                    _ => Err(de::Error::unknown_variant(kind, CAMERA_KINDS)),
+                    _ => Err(de::Error::unknown_variant(kind.as_ref(), CAMERA_KINDS)),
                 }
             }
         }
