@@ -9,6 +9,8 @@ use thermal_camera::{grideye, Error as CameraError, ThermalCamera};
 use tokio::task::JoinError;
 use tokio::time::{self, Duration};
 use tokio_stream::wrappers::IntervalStream;
+use tracing::{debug, info, info_span, instrument, trace_span};
+use tracing_futures::Instrument;
 use warp::Filter;
 
 use std::convert::TryFrom;
@@ -61,6 +63,7 @@ pub struct Pipeline<E> {
 }
 
 impl Pipeline<CameraError<I2cdev>> {
+    #[instrument]
     fn create_camera(
         settings: &CameraSettings,
     ) -> Arc<Mutex<dyn ThermalCamera<Error = CameraError<I2cdev>> + Send + Sync>> {
@@ -139,6 +142,7 @@ impl Pipeline<CameraError<I2cdev>> {
                 };
                 temperatures
             })
+            .instrument(info_span!("frame_stream"))
             .boxed()
     }
 
@@ -164,6 +168,7 @@ impl Pipeline<CameraError<I2cdev>> {
             // TODO: use a real Error here
             .ok_or("need to create a frame stream first")?
             .stream()
+            .instrument(trace_span!("render_stream"))
             .map(move |temperatures| renderer.render_buffer(&temperatures));
         let rendered_multiplexer = spmc::Sender::default();
         let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
@@ -178,11 +183,13 @@ impl Pipeline<CameraError<I2cdev>> {
         // Bail out if there aren't any stream sources enabled.
         // For now there's just MJPEG, but HLS is planned for the future.
         if !settings.mjpeg {
+            info!("video streams disabled, skipping setup");
             // It's Ok, there was just nothing to do.
             return Ok(());
         }
         let mut routes = Vec::new();
         if settings.mjpeg {
+            debug!("creating MJPEG encoder");
             // MJPEG sink
             let render_source = self
                 .rendered_source
@@ -201,25 +208,33 @@ impl Pipeline<CameraError<I2cdev>> {
                 })
                 .boxed();
             routes.push(mjpeg_route);
-
             // Stream out rendered frames via MJPEG
-            self.tasks.push(Box::new(tokio::spawn(mjpeg).err_into()));
+            self.tasks.push(Box::new(
+                tokio::spawn(mjpeg.instrument(trace_span!("mjpeg_encoder"))).err_into(),
+            ));
         }
         let combined_route = routes
             .into_iter()
             .reduce(|combined, next| combined.or(next).unify().boxed())
             // TODO: more error-ing
             .ok_or("problem creating streaming routes")?;
-        self.tasks
-            .push(Box::new(warp::serve(combined_route).bind(settings).map(Ok)));
+        let bind_address: std::net::SocketAddr = settings.into();
+        debug!(address = ?bind_address, "creating warp server");
+        let server = warp::serve(combined_route).bind(bind_address);
+        self.tasks.push(Box::new(
+            server.instrument(info_span!("warp_server")).map(Ok),
+        ));
         Ok(())
     }
 
     fn create_tracker(&mut self, settings: TrackerSettings) -> Result<(), &str> {
         let tracker = Tracker::from(&settings);
-        let logged_count_stream = tracker.count_stream().inspect(|count| {
-            println!("New occupancy count: {}", count);
-        });
+        let logged_count_stream = tracker
+            .count_stream()
+            .instrument(info_span!("occupancy_count_stream"))
+            .inspect(|count| {
+                info!(occupancy_count = count, "occupancy count changed");
+            });
         let frame_stream = self
             .frame_source
             .as_ref()

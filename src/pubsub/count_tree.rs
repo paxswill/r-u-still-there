@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use futures::task::{AtomicWaker, Context, Poll};
 use futures::Future;
+use tracing::{debug, error, trace};
 
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -37,11 +38,14 @@ impl InnerTreeCount {
     /// This method will panic if the count overflows.
     fn add(&self, val: usize) {
         if let Some(parent) = &self.parent {
+            trace!(val, "adding to parent count");
             parent.0.add(val);
         }
+        trace!(val, "adding to self count");
         let old_size = self.count.fetch_add(val, Ordering::AcqRel);
         if old_size == usize::MAX {
-            panic!("Tree count has overflowed");
+            error!("tree count has overflowed");
+            panic!("tree count has overflowed");
         }
         self.waker.wake();
     }
@@ -51,11 +55,14 @@ impl InnerTreeCount {
     /// This method will panic if the count underflows (which it shouldn't!).
     fn remove(&self, val: usize) {
         if let Some(parent) = &self.parent {
+            trace!(val, "removing from parent count");
             parent.0.remove(val);
         }
+        trace!(val, "removing from self count");
         let old_size = self.count.fetch_sub(val, Ordering::AcqRel);
         if old_size == usize::MIN {
-            panic!("Tree count has underflowed");
+            error!("tree count has underflowed");
+            panic!("tree count has underflowed");
         }
     }
 }
@@ -64,6 +71,7 @@ impl TreeCount {
     /// Create a new [TreeCount] with this node as the parent.
     pub fn new_child(&self) -> Self {
         let parent = self.clone();
+        debug!("creating new child node");
         Self(Arc::new(InnerTreeCount {
             parent: Some(parent),
             count: AtomicUsize::new(0),
@@ -74,6 +82,7 @@ impl TreeCount {
     /// Return a [CountToken] for this tree. When the token is dropped, the count will be
     /// automatically decremented.
     pub fn get_token(&self) -> CountToken {
+        debug!("creating new count token");
         CountToken::new(self)
     }
 
@@ -372,17 +381,20 @@ mod test {
         assert!(
             root_wake < child_wake,
             "Child node was awoken before root node.\n({:?} < {:?})",
-            root_wake, child_wake,
+            root_wake,
+            child_wake,
         );
         assert!(
             token_time < root_wake,
             "Token time was somehow after root wake time.\n({:?} < {:?})",
-            token_time, root_wake,
+            token_time,
+            root_wake,
         );
         assert!(
             token_time < child_wake,
             "Token time was somehow after child wake time.\n({:?} < {:?})",
-            token_time, child_wake,
+            token_time,
+            child_wake,
         );
     }
 }

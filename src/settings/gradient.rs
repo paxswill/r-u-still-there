@@ -3,7 +3,9 @@ use colorous::Gradient;
 use serde::de::{self, Deserialize, Deserializer};
 
 pub fn from_str(gradient_name: &str) -> Result<Gradient, &'static str> {
-    match &gradient_name.to_uppercase().replace(" ", "_") as &str {
+    let normalized_name = gradient_name.to_uppercase().replace(" ", "_");
+    tracing::debug!(gradient = %normalized_name, "parsing gradient name");
+    match &normalized_name as &str {
         "BLUES" => Ok(colorous::BLUES),
         "BLUE_GREEN" => Ok(colorous::BLUE_GREEN),
         "BLUE_PURPLE" => Ok(colorous::BLUE_PURPLE),

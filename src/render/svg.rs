@@ -5,6 +5,7 @@ use svg::node::element::{Group, Rectangle, Text as TextElement};
 use svg::node::Text as TextNode;
 use svg::Document;
 use tiny_skia::PixmapMut;
+use tracing::{instrument, trace};
 use usvg::{FitTo, Tree};
 
 use crate::image_buffer::{BytesImage, ThermalImage};
@@ -133,17 +134,28 @@ impl RendererTrait for Renderer {
     }
 
     /// Render an image to a pixel buffer.
+    #[instrument(level = "trace", skip(image))]
     fn render_buffer(&self, image: &ThermalImage) -> BytesImage {
         // Map the thermal image to an actual RGB image. We're converting to RGBA at the same time
         // as that's what resvg wants.
         let map_func = self.color_map(image);
-        let mut temperature_colors = image::RgbaImage::new(image.width(), image.height());
+        let source_width = image.width();
+        let source_height = image.height();
+        let mut temperature_colors = image::RgbaImage::new(source_width, source_height);
         for (source, dest) in image.pixels().zip(temperature_colors.pixels_mut()) {
             *dest = image::Rgb::from(map_func(&source.0[0]).as_array()).to_rgba();
         }
+        trace!("mapped temperatures to colors");
         let mut rgba_image = self.enlarge_color_image(&temperature_colors);
         let full_width = rgba_image.width();
         let full_height = rgba_image.height();
+        trace!(
+            source_width,
+            source_height,
+            enlarged_width = full_width,
+            enlarged_height = full_height,
+            "enlarged source image"
+        );
         let buf = if self.display_temperature() != TemperatureDisplay::Disabled {
             let mut pixmap = PixmapMut::from_bytes(
                 rgba_image.as_flat_samples_mut().as_mut_slice(),
@@ -157,8 +169,10 @@ impl RendererTrait for Renderer {
             // Just render on top of the existing data. The generated SVG is just text on a
             // transparent background.
             resvg::render(&tree, FitTo::Original, (pixmap).as_mut()).unwrap();
+            trace!("rendered temperatures onto image");
             Bytes::from(pixmap.take())
         } else {
+            trace!("not rendering temperatures");
             Bytes::from(rgba_image.into_raw())
         };
         BytesImage::from_raw(full_width, full_height, buf).unwrap()
@@ -203,6 +217,7 @@ impl Renderer {
         full_image
     }
 
+    #[instrument(level = "trace")]
     fn create_svg_fragment(
         &self,
         row: u32,
@@ -244,6 +259,7 @@ impl Renderer {
         }
     }
 
+    #[instrument(level = "trace", skip(temperatures, temperature_colors))]
     pub fn render_text(
         &self,
         temperatures: &ThermalImage,

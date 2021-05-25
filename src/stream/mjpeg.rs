@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use bytes::{Buf, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use futures::sink::{Sink, SinkExt};
 use futures::stream::{Stream, StreamExt};
 use futures::{ready, Future};
 use hyper::Body;
+use image::codecs::jpeg::JpegEncoder;
 use pin_utils::unsafe_pinned;
+use tracing::{debug, debug_span, info, trace};
 
 #[cfg(feature = "mozjpeg")]
 use mozjpeg::{ColorSpace, Compress};
-
-use bytes::{BufMut, BytesMut};
-use image::codecs::jpeg::JpegEncoder;
 
 use std::convert::Infallible;
 use std::pin::Pin;
@@ -34,9 +33,11 @@ impl MjpegStream {
     unsafe_pinned!(sender: Sender<Bytes>);
 
     pub fn new(render_source: &Sender<BytesImage>) -> Self {
+        // TODO: randomize boundary
+        let boundary = "mjpeg_rs_boundary".to_string();
+        debug!(%boundary, "creating new MJPEG encoder");
         Self {
-            // TODO: randomize boundary
-            boundary: "mjpeg_rs_boundary".to_string(),
+            boundary,
             sender: render_source.new_child(),
             render_stream: Arc::new(Mutex::new(render_source.uncounted_stream())),
             temp_image: None,
@@ -48,6 +49,7 @@ impl MjpegStream {
         // case just continue reading as the next recv() will work.
         let jpeg_stream = self.sender.stream();
         let result_stream = jpeg_stream.map(Result::<Bytes, hyper::http::Error>::Ok);
+        info!("creating new MJPEG stream for client");
         Body::wrap_stream(result_stream)
     }
 
@@ -56,7 +58,10 @@ impl MjpegStream {
     }
 
     fn send_image(&mut self, buf: BytesImage) -> Result<(), Infallible> {
+        let span = debug_span!("send_mjpeg_image");
+        let _enter = span.enter();
         let jpeg_buf = encode_jpeg(&buf);
+        trace!(image_size = %(buf.len()), "sending ");
         let header = Bytes::from(format!(
             "\r\n--{}\r\nContent-Type: image/jpeg\r\n\r\n",
             self.boundary
@@ -64,6 +69,10 @@ impl MjpegStream {
         // TODO: this is doing some extra copies.
         let total_length = header.len() + jpeg_buf.len();
         let owned = header.chain(jpeg_buf).copy_to_bytes(total_length);
+        // This is alright to call like this, as this method is *only* called from the start_send()
+        // method of the Sink trait, and *that* method is required to be called *after*
+        // poll_ready(). This types poll_ready() calls self.sender.poll_ready(), ensuring that the
+        // sender is ready for the start_send().
         self.sender.start_send_unpin(owned)
     }
 }
@@ -116,6 +125,7 @@ impl Sink<BytesImage> for MjpegStream {
 
 #[cfg(feature = "mozjpeg")]
 fn encode_jpeg_mozjpeg(image: &BytesImage) -> Bytes {
+    trace!("using mozjpeg to encode JPEG image");
     // To make it simpler to use renderers within closures, we're creating a fresh encoder each
     // time this method is called. A little less efficient, but much easier to use.
     // BytesImage is defined to be RGBA.
@@ -138,6 +148,7 @@ fn encode_jpeg_mozjpeg(image: &BytesImage) -> Bytes {
 }
 
 fn encode_jpeg_image(image: &BytesImage) -> Bytes {
+    trace!("using image crate to encode JPEG image");
     let mut jpeg_buf = BytesMut::new().writer();
     let mut encoder = JpegEncoder::new(&mut jpeg_buf);
     encoder.encode_image(image).unwrap();

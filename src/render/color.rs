@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use tracing::debug;
+
 use std::cmp::Ordering;
 use std::convert::From;
 use std::fmt;
@@ -153,14 +155,16 @@ impl Color {
         let other_lum = other.luminance();
         let lum = self.luminance();
         // Lighter luminance means a higher value.
-        if other_lum > lum {
+        let cr = if other_lum > lum {
             (other_lum + 0.05) / (lum + 0.05)
         } else if lum > other_lum {
             (lum + 0.05) / (other_lum + 0.05)
         } else {
             // identical luminosity, so no contrast
             1.0
-        }
+        };
+        debug!(left = ?self, right = ?other, contrast_ratio = %cr);
+        cr
     }
 
     /// Treating this color as the background, return a color with a decent contrast ratio.
@@ -188,7 +192,11 @@ impl Color {
                 }
             });
         match possible_color {
-            Some((color, _)) => *color,
+            Some((color, _)) => {
+                let color = *color;
+                debug!(choices = ?text_colors, background = ?self, foregound = ?color);
+                color
+            }
             None => {
                 // If there isn't a max, an empty slice was given. Use the default colors instead
                 self.foreground_color()
@@ -351,7 +359,13 @@ mod color_test {
         let purple = Color::new(0x77, 0, 0xFF);
         let cyan = Color::new(0, 0xFF, 0xFF);
         let dark_orange = Color::new(0x8F, 0x4E, 0x11);
-        assert_eq!(purple.foreground_color_custom(&[purple, yellow, dark_orange]), yellow);
-        assert_eq!(yellow.foreground_color_custom(&[dark_orange, cyan, yellow]), dark_orange);
+        assert_eq!(
+            purple.foreground_color_custom(&[purple, yellow, dark_orange]),
+            yellow
+        );
+        assert_eq!(
+            yellow.foreground_color_custom(&[dark_orange, cyan, yellow]),
+            dark_orange
+        );
     }
 }

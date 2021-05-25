@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use serde::de::{self, Deserialize, Deserializer, MapAccess, Visitor};
 use serde_repr::Deserialize_repr;
+use tracing::{debug, error, info, instrument, trace};
 
 use std::fmt;
 use std::time::Duration;
@@ -54,6 +55,7 @@ const CAMERA_FIELDS: &[&str] = &[
 // Manually implementing Derserialize as there isn't a way to derive a flattened enum
 // implementation.
 impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
+    #[instrument(skip(deserializer), err)]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: Deserializer<'de>,
@@ -149,8 +151,8 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                 // Minimal check of frame_rate. Variants are expected to set frame_rate to an
                 // actual value themselves below.
                 // This can be simplified if the `option_result_contains` API gets standardized.
-                if frame_rate.is_some() {
-                    let frame_rate = frame_rate.clone().unwrap();
+                if let Some(frame_rate) = frame_rate {
+                    trace!(frame_rate, "checking for a positive frame rate");
                     if frame_rate == 0 {
                         return Err(serde::de::Error::invalid_value(
                             serde::de::Unexpected::Unsigned(0),
@@ -165,16 +167,27 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                     flip_vertical,
                     frame_rate: frame_rate.clone().unwrap_or(1),
                 };
+                debug!(?options);
                 match kind {
                     "grideye" => {
+                        info!(camera_kind = kind, "using a GridEYE camera");
                         // The GridEYE only supports up to 10 FPS
                         let frame_rate = match frame_rate {
-                            None => Ok(10),
-                            Some(n @ 1..=10) => Ok(n),
-                            Some(n) => Err(de::Error::invalid_value(
-                                de::Unexpected::Unsigned(n as u64),
-                                &"a frame rate between 1 and 10",
-                            )),
+                            None => {
+                                info!(frame_rate = 10, "defaulting to 10 FPS");
+                                Ok(10)
+                            }
+                            Some(n @ 1..=10) => {
+                                info!(frame_rate = n, "using provided frame rate");
+                                Ok(n)
+                            }
+                            Some(n) => {
+                                error!(frame_rate = n, "invalid frame rate");
+                                Err(de::Error::invalid_value(
+                                    de::Unexpected::Unsigned(n as u64),
+                                    &"a frame rate between 1 and 10",
+                                ))
+                            }
                         }?;
                         // No base update syntax for enums :(
                         let options = CommonOptions {
@@ -185,7 +198,10 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                         };
                         Ok(CameraSettings::GridEye { i2c, options })
                     }
-                    _ => Err(de::Error::unknown_variant(kind, CAMERA_KINDS)),
+                    _ => {
+                        error!(camera_kind = kind, "unknown camera kind");
+                        Err(de::Error::unknown_variant(kind, CAMERA_KINDS))
+                    }
                 }
             }
         }
