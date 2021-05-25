@@ -328,7 +328,10 @@ mod test {
         assert_eq!(count.unwrap(), 1, "Incorrect count for tree");
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    // This test *must* be run in a single thread, otherwise the child thread has a chance to wake
+    // up a few thousand nanoseconds before the parent. For humans, they're waking up at the same
+    // time, but for computers it's a test failure.
+    #[tokio::test]
     async fn linear_ready_wait() {
         let root = TreeCount::default();
         let child = root.new_child();
@@ -368,15 +371,18 @@ mod test {
         let (token_time, _token) = tasks.2.expect("Token acquisition task panicked");
         assert!(
             root_wake < child_wake,
-            "Child node was awoken before root node"
+            "Child node was awoken before root node.\n({:?} < {:?})",
+            root_wake, child_wake,
         );
         assert!(
             token_time < root_wake,
-            "Token time was somehow after root wake time."
+            "Token time was somehow after root wake time.\n({:?} < {:?})",
+            token_time, root_wake,
         );
         assert!(
             token_time < child_wake,
-            "Token time was somehow after child wake time."
+            "Token time was somehow after child wake time.\n({:?} < {:?})",
+            token_time, child_wake,
         );
     }
 }
