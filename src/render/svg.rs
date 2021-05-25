@@ -212,7 +212,7 @@ impl Renderer {
     ) -> Group {
         let grid_size = self.grid_size as u32;
         let display_temperature = self.display_temperature;
-        let text_color = color::Color::from(color_pixel).text_color(&[]);
+        let text_color = color::Color::from(color_pixel).foreground_color();
         let grid_cell = Rectangle::new()
             .set("fill", "none")
             .set("width", grid_size)

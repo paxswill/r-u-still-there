@@ -6,6 +6,9 @@ use std::fmt;
 /// A type for colors specifically for finding corresponding colors that have good contrast.
 /// This type uses the WCAG 2.0 definitions of "relative luminance" and "contrast ratio". These
 /// definitions are not very good, but they're good enough for our purposes.
+///
+/// This type can be formatted as a hex code using the standard formatting syntax. The formatted
+/// output will have a leading '#'.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Color {
     red: u8,
@@ -84,18 +87,22 @@ impl Color {
         blue: u8::MAX,
     };
 
+    /// Create a new [Color] with the given 8-bit color values.
     pub fn new(red: u8, green: u8, blue: u8) -> Self {
         Self { red, green, blue }
     }
 
+    /// The 8-bit color value of the red component.
     pub fn red(&self) -> u8 {
         self.red
     }
 
+    /// The 8-bit color value of the green component.
     pub fn green(&self) -> u8 {
         self.green
     }
 
+    /// The 8-bit color value of the blue component.
     pub fn blue(&self) -> u8 {
         self.blue
     }
@@ -156,9 +163,18 @@ impl Color {
         }
     }
 
+    /// Treating this color as the background, return a color with a decent contrast ratio.
+    ///
+    /// The possible colors this method can return is an implementation detail, but will generally
+    /// be a neutral color. At this point in time white and black used, but others may be added
+    /// later.
+    pub fn foreground_color(&self) -> Self {
+        self.foreground_color_custom(&[Self::WHITE, Self::BLACK])
+    }
+
     /// Treating this color as the background, pick a color from the given colors with the highest
     /// contrast ratio.
-    pub fn text_color(&self, text_colors: &[Color]) -> Self {
+    pub fn foreground_color_custom(&self, text_colors: &[Color]) -> Self {
         let possible_color = text_colors
             .iter()
             .map(|c| (c, self.contrast_ratio(c)))
@@ -174,17 +190,18 @@ impl Color {
         match possible_color {
             Some((color, _)) => *color,
             None => {
-                // If there isn't a max, an empty slice was given. Choose from white and black
-                // instead.
-                self.text_color(&[Self::WHITE, Self::BLACK])
+                // If there isn't a max, an empty slice was given. Use the default colors instead
+                self.foreground_color()
             }
         }
     }
 
+    /// The red, green, and blue components as a 3-tuple.
     pub fn as_tuple(&self) -> (u8, u8, u8) {
         (self.red(), self.green(), self.blue())
     }
 
+    /// The red, green, and blue components as a 3 element array.
     pub fn as_array(&self) -> [u8; 3] {
         [self.red(), self.green(), self.blue()]
     }
@@ -323,9 +340,9 @@ mod color_test {
     #[test]
     fn text_default() {
         let yellow = Color::new(0xFF, 0xFF, 0x47);
-        assert_eq!(yellow.text_color(&[]), Color::BLACK);
+        assert_eq!(yellow.foreground_color(), Color::BLACK);
         let purple = Color::new(0x77, 0, 0xFF);
-        assert_eq!(purple.text_color(&[]), Color::WHITE);
+        assert_eq!(purple.foreground_color(), Color::WHITE);
     }
 
     #[test]
@@ -334,7 +351,7 @@ mod color_test {
         let purple = Color::new(0x77, 0, 0xFF);
         let cyan = Color::new(0, 0xFF, 0xFF);
         let dark_orange = Color::new(0x8F, 0x4E, 0x11);
-        assert_eq!(purple.text_color(&[purple, yellow, dark_orange]), yellow);
-        assert_eq!(yellow.text_color(&[dark_orange, cyan, yellow]), dark_orange);
+        assert_eq!(purple.foreground_color_custom(&[purple, yellow, dark_orange]), yellow);
+        assert_eq!(yellow.foreground_color_custom(&[dark_orange, cyan, yellow]), dark_orange);
     }
 }
