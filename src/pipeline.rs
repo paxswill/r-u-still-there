@@ -21,7 +21,8 @@ use crate::image_buffer::{BytesImage, ThermalImage};
 use crate::occupancy::Tracker;
 use crate::render::Renderer as _;
 use crate::settings::{
-    CameraSettings, CommonOptions, I2cSettings, RenderSettings, Rotation, Settings, StreamSettings, TrackerSettings,
+    CameraSettings, CommonOptions, I2cSettings, RenderSettings, Rotation, Settings, StreamSettings,
+    TrackerSettings,
 };
 use crate::{error, render, spmc, stream};
 

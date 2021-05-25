@@ -303,8 +303,7 @@ mod test {
         );
     }
 
-    //#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn simple_ready_wait() {
         let root = TreeCount::default();
         let root_token_source = root.clone();
@@ -329,8 +328,7 @@ mod test {
         assert_eq!(count.unwrap(), 1, "Incorrect count for tree");
     }
 
-    //#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn linear_ready_wait() {
         let root = TreeCount::default();
         let child = root.new_child();

@@ -6,7 +6,7 @@ use std::fmt;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use crate::pubsub::CountToken;
+use super::CountToken;
 
 /// A wrapper around a [Stream] that holds a [CountToken] as well.
 ///
