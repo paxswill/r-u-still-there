@@ -11,6 +11,10 @@ use tokio_stream::StreamExt;
 
 use super::{CountedStream, TreeCount};
 
+/// A single-producer, multiple consumer channel.
+///
+/// This channel implements [futures.Sink], but will only accept items when there are consumers.
+/// Whether or not there are consumers is tracked using [TreeCount] and [CountedStream].
 #[derive(Clone, Debug)]
 pub struct Sender<T: 'static + Clone + Send> {
     inner: broadcast::Sender<T>,
@@ -20,6 +24,7 @@ pub struct Sender<T: 'static + Clone + Send> {
 impl<T: 'static + Clone + Send> Sender<T> {
     unsafe_pinned!(count: TreeCount);
 
+    /// Create a new [Sender] with a [TreeCount] set up as a child of this `Sender`'s `TreeCount`.
     pub fn new_child<U>(&self) -> Sender<U>
     where
         U: 'static + Clone + Send,
@@ -31,10 +36,20 @@ impl<T: 'static + Clone + Send> Sender<T> {
         }
     }
 
+    /// Create a [Stream] that *doesn't* increment the subscriber count.
+    ///
+    /// This is useful in cases where you have a consumer of a stream that *also* has it's own
+    /// [Sender] as a child of this one. The downstream `Sender` will hand out it's own `Stream`,
+    /// and in doing so those streams will be counted.
+    ///
+    /// In other words, this method is useful for building up a pipeline of async "filters".
     pub fn uncounted_stream(&self) -> impl Stream<Item = T> {
         BroadcastStream::new(self.inner.subscribe()).filter_map(Result::ok)
     }
 
+    /// Create a stream that increments the subscriber count.
+    ///
+    /// When this stream is dropped, the count is automatically decremented.
     pub fn stream(&self) -> impl Stream<Item = T> {
         CountedStream::new(self.count.get_token(), self.uncounted_stream())
     }

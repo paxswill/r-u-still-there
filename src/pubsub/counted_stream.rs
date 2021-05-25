@@ -8,6 +8,9 @@ use std::task::{Context, Poll};
 
 use crate::pubsub::CountToken;
 
+/// A wrapper around a [Stream] that holds a [CountToken] as well.
+///
+/// By keeping the [CountToken] with the [Steram], a [TreeCount] can be kept in sync.
 pub struct CountedStream<S: Stream + Send + Sync> {
     token: CountToken,
     stream: S,

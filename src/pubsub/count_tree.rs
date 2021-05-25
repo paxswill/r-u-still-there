@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 #[derive(Debug)]
+/// The inner data for a [TreeCount]. This should be kept behind an [Arc].
 pub struct InnerTreeCount {
     parent: Option<TreeCount>,
     count: AtomicUsize,
@@ -14,6 +15,15 @@ pub struct InnerTreeCount {
 }
 
 #[derive(Clone, Debug)]
+/// A hierarchal count of the number of [Token][CountToken]s currently outstanding.
+///
+/// A [TreeCount] can have child counts that will also increase the parent's count. For example,
+/// given a parent and child [TreeCount], if there is one outstanding token from the child, the
+/// count of both the parent and child will be 1. If there is only one outstanding token from the
+/// parent, the parent count will be 1, but the child count will be 0.
+///
+/// Treecount is a [Future], meaning it can be `await`ed until there are outstanding tokens. If
+/// there are outstanding tokens already, the `await` should immediately return.
 pub struct TreeCount(Arc<InnerTreeCount>);
 
 #[derive(Debug)]
@@ -22,6 +32,9 @@ pub struct CountToken {
 }
 
 impl InnerTreeCount {
+    /// Increment the count of this node and any parent nodes by one.
+    ///
+    /// This method will panic if the count overflows.
     fn add(&self, val: usize) {
         if let Some(parent) = &self.parent {
             parent.0.add(val);
@@ -33,6 +46,9 @@ impl InnerTreeCount {
         self.waker.wake();
     }
 
+    /// Decrement the count of this node and any parent nodes by one.
+    ///
+    /// This method will panic if the count underflows (which it shouldn't!).
     fn remove(&self, val: usize) {
         if let Some(parent) = &self.parent {
             parent.0.remove(val);
@@ -45,6 +61,7 @@ impl InnerTreeCount {
 }
 
 impl TreeCount {
+    /// Create a new [TreeCount] with this node as the parent.
     pub fn new_child(&self) -> Self {
         let parent = self.clone();
         Self(Arc::new(InnerTreeCount {
@@ -54,10 +71,13 @@ impl TreeCount {
         }))
     }
 
+    /// Return a [CountToken] for this tree. When the token is dropped, the count will be
+    /// automatically decremented.
     pub fn get_token(&self) -> CountToken {
         CountToken::new(self)
     }
 
+    /// Get the current count of outstanding tokens for this node and any child nodes.
     pub fn count(&self) -> usize {
         self.0.count.load(Ordering::Acquire)
     }
