@@ -3,6 +3,7 @@ use serde::de::{self, Deserialize, Deserializer, MapAccess, Visitor};
 use serde_repr::Deserialize_repr;
 use tracing::{debug, error, info, instrument, trace};
 
+use std::borrow::Cow;
 use std::fmt;
 use std::time::Duration;
 
@@ -32,10 +33,10 @@ pub struct CommonOptions {
     pub frame_rate: u8,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum CameraSettings<'a> {
+#[derive(Clone, Debug, PartialEq)]
+pub enum CameraSettings {
     GridEye {
-        i2c: I2cSettings<'a>,
+        i2c: I2cSettings,
         options: CommonOptions,
     },
 }
@@ -54,7 +55,7 @@ const CAMERA_FIELDS: &[&str] = &[
 
 // Manually implementing Derserialize as there isn't a way to derive a flattened enum
 // implementation.
-impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
+impl<'de> Deserialize<'de> for CameraSettings {
     #[instrument(skip(deserializer), err)]
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -76,13 +77,13 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
         struct CameraVisitor;
 
         impl<'de> Visitor<'de> for CameraVisitor {
-            type Value = CameraSettings<'de>;
+            type Value = CameraSettings;
 
             fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 f.write_str("enum CameraSettings")
             }
 
-            fn visit_map<V>(self, mut map: V) -> Result<CameraSettings<'de>, V::Error>
+            fn visit_map<V>(self, mut map: V) -> Result<CameraSettings, V::Error>
             where
                 V: MapAccess<'de>,
             {
@@ -92,7 +93,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                 let mut flip_horizontal = None;
                 let mut flip_vertical = None;
                 let mut frame_rate = None;
-                let mut kind = None;
+                let mut kind: Option<Cow<'_, str>> = None;
                 while let Some(key) = map.next_key()? {
                     match key {
                         Field::Bus => {
@@ -160,7 +161,7 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                         ));
                     }
                 }
-                let i2c = I2cSettings::<'de> { bus, address };
+                let i2c = I2cSettings { bus, address };
                 let options = CommonOptions {
                     rotation,
                     flip_horizontal,
@@ -168,9 +169,9 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                     frame_rate: frame_rate.clone().unwrap_or(1),
                 };
                 debug!(?options);
-                match kind {
+                match kind.as_ref() {
                     "grideye" => {
-                        info!(camera_kind = kind, "using a GridEYE camera");
+                        info!(camera_kind = %kind, "using a GridEYE camera");
                         // The GridEYE only supports up to 10 FPS
                         let frame_rate = match frame_rate {
                             None => {
@@ -199,8 +200,8 @@ impl<'de: 'a, 'a> Deserialize<'de> for CameraSettings<'a> {
                         Ok(CameraSettings::GridEye { i2c, options })
                     }
                     _ => {
-                        error!(camera_kind = kind, "unknown camera kind");
-                        Err(de::Error::unknown_variant(kind, CAMERA_KINDS))
+                        error!(camera_kind = %kind, "unknown camera kind");
+                        Err(de::Error::unknown_variant(kind.as_ref(), CAMERA_KINDS))
                     }
                 }
             }
@@ -402,7 +403,7 @@ mod de_tests {
         let parsed: CameraSettings = parsed.unwrap();
         let expected = CameraSettings::GridEye {
             i2c: I2cSettings {
-                bus: Bus::Path("1"),
+                bus: Bus::Path("1".to_string()),
                 address: 30,
             },
             options: CommonOptions {
@@ -462,7 +463,7 @@ mod de_tests {
         let parsed: CameraSettings = parsed.unwrap();
         let expected = CameraSettings::GridEye {
             i2c: I2cSettings {
-                bus: Bus::Path("1"),
+                bus: Bus::Path("1".to_string()),
                 address: 30,
             },
             options: CommonOptions {
@@ -550,15 +551,23 @@ impl From<CommonOptions> for Duration {
     }
 }
 
-impl<'a> From<CameraSettings<'a>> for I2cSettings<'a> {
-    fn from(settings: CameraSettings) -> I2cSettings {
+impl From<CameraSettings> for I2cSettings {
+    fn from(settings: CameraSettings) -> Self {
         match settings {
             CameraSettings::GridEye { i2c, options: _ } => i2c,
         }
     }
 }
 
-impl From<CameraSettings<'_>> for CommonOptions {
+impl<'a> From<&'a CameraSettings> for &'a I2cSettings {
+    fn from(settings: &'a CameraSettings) -> Self {
+        match settings {
+            CameraSettings::GridEye { i2c, options: _ } => i2c,
+        }
+    }
+}
+
+impl From<CameraSettings> for CommonOptions {
     fn from(settings: CameraSettings) -> Self {
         match settings {
             CameraSettings::GridEye {
