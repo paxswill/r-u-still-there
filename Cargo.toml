@@ -62,7 +62,7 @@ features = ["tokio", "std-future", "futures-03"]
 version = "0.2.5"
 
 [dependencies.tracing-subscriber]
-features = ["env-filter", "fmt", "ansi", "tracing-log", "chrono"]
+features = ["env-filter", "fmt", "ansi", "tracing-log", "chrono", "registry"]
 default-features = false
 version = "0.2"
 

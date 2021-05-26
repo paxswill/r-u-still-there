@@ -2,6 +2,10 @@
 use figment::providers::{Env, Format, Toml, Yaml};
 use figment::Figment;
 use structopt::StructOpt;
+use tracing::Level;
+use tracing::{debug, debug_span, error, instrument};
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::{filter::LevelFilter, fmt as tracing_fmt, EnvFilter, Registry};
 
 use std::path::PathBuf;
 
@@ -30,12 +34,14 @@ use crate::settings::{Args, Settings};
 /// If there's a path present in the provided [Figment], it will be used. Otherwise, one of
 /// `config.toml`, or `config.yaml`, will be searched for (in that order) within the
 /// `/etc/r-u-still-there/` directory. If no file is found, [None] is returned.
+#[instrument(level = "debug", err)]
 fn find_config_file(figment: &Figment) -> Result<Option<PathBuf>, String> {
     let given_config_path = figment
         .find_value("config_path")
         .ok()
         .and_then(|v| v.as_str().map(|s| s.to_string()));
     if let Some(given_config_path) = given_config_path {
+        debug!(%given_config_path, "using config path from user");
         let path = PathBuf::from(given_config_path);
         if path.exists() {
             return Ok(Some(path));
@@ -47,6 +53,7 @@ fn find_config_file(figment: &Figment) -> Result<Option<PathBuf>, String> {
     let file_names = ["config.toml", "config.yaml"];
     for name in file_names.iter() {
         let path = prefix.join(name);
+        debug!("checking for file {:?}", path);
         if path.exists() {
             return Ok(Some(path));
         }
@@ -54,6 +61,7 @@ fn find_config_file(figment: &Figment) -> Result<Option<PathBuf>, String> {
     Ok(None)
 }
 
+#[instrument(level = "debug", err)]
 fn create_config() -> Result<Settings, String> {
     // Configuration priority is as follows from least to greatest:
     // Defaults -> Config file -> Environment variable -> CLI flag
@@ -85,8 +93,32 @@ fn create_config() -> Result<Settings, String> {
 
 #[tokio::main]
 async fn main() {
-    let config = create_config().expect("Problem generating configuration");
-    println!("\n\nFinal config:\n{:?}", config);
-    let app = Pipeline::from(config);
+    // Create an initial logging config, then update it if needed after the full configuration has
+    // been merged.
+    // NOTE: This will need updating for tracing-subscriber v0.3.0
+    let fmt_sub = tracing_fmt::Layer::default().with_thread_names(true);
+    let env_filter = EnvFilter::try_from_default_env()
+        .or_else(|_| EnvFilter::try_new("info"))
+        .expect("'info' was not recognized as a valid log filter");
+    let span = debug_span!("setup");
+    let config = {
+        let _temp_subscriber = Registry::default()
+            .with(fmt_sub)
+            .with(env_filter)
+            .set_default();
+        let _enter = span.enter();
+        let config = create_config().expect("Problem generating configuration");
+        debug!(?config, "final config");
+        config
+    };
+    // TODO: add config knobs for logging
+    Registry::default()
+        .with(tracing_fmt::Layer::default())
+        .with(LevelFilter::from_level(Level::INFO))
+        .init();
+    let app = {
+        let _enter = span.enter();
+        Pipeline::from(config)
+    };
     app.await;
 }
