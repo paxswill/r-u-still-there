@@ -61,13 +61,14 @@ impl MjpegStream {
         let span = debug_span!("send_mjpeg_image");
         let _enter = span.enter();
         let jpeg_buf = encode_jpeg(&buf);
-        trace!(image_size = %(buf.len()), "sending ");
+        debug!(jpeg_size = %(jpeg_buf.len()), "encoded image to JPEG");
         let header = Bytes::from(format!(
             "\r\n--{}\r\nContent-Type: image/jpeg\r\n\r\n",
             self.boundary
         ));
         // TODO: this is doing some extra copies.
         let total_length = header.len() + jpeg_buf.len();
+        debug!(total_size = total_length, "total frame data length");
         let owned = header.chain(jpeg_buf).copy_to_bytes(total_length);
         // This is alright to call like this, as this method is *only* called from the start_send()
         // method of the Sink trait, and *that* method is required to be called *after*

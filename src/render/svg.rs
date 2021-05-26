@@ -5,7 +5,7 @@ use svg::node::element::{Group, Rectangle, Text as TextElement};
 use svg::node::Text as TextNode;
 use svg::Document;
 use tiny_skia::PixmapMut;
-use tracing::{instrument, trace};
+use tracing::{debug, instrument, trace};
 use usvg::{FitTo, Tree};
 
 use crate::image_buffer::{BytesImage, ThermalImage};
@@ -134,7 +134,7 @@ impl RendererTrait for Renderer {
     }
 
     /// Render an image to a pixel buffer.
-    #[instrument(level = "trace", skip(image))]
+    #[instrument(level = "debug", skip(image))]
     fn render_buffer(&self, image: &ThermalImage) -> BytesImage {
         // Map the thermal image to an actual RGB image. We're converting to RGBA at the same time
         // as that's what resvg wants.
@@ -169,10 +169,10 @@ impl RendererTrait for Renderer {
             // Just render on top of the existing data. The generated SVG is just text on a
             // transparent background.
             resvg::render(&tree, FitTo::Original, (pixmap).as_mut()).unwrap();
-            trace!("rendered temperatures onto image");
+            debug!("rendered temperatures onto image");
             Bytes::from(pixmap.take())
         } else {
-            trace!("not rendering temperatures");
+            debug!("not rendering temperatures");
             Bytes::from(rgba_image.into_raw())
         };
         BytesImage::from_raw(full_width, full_height, buf).unwrap()

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use tracing::debug;
+use tracing::trace;
 
 use std::cmp::Ordering;
 use std::convert::From;
@@ -163,7 +163,7 @@ impl Color {
             // identical luminosity, so no contrast
             1.0
         };
-        debug!(left = ?self, right = ?other, contrast_ratio = %cr);
+        trace!(left = ?self, right = ?other, contrast_ratio = %cr);
         cr
     }
 
@@ -194,7 +194,7 @@ impl Color {
         match possible_color {
             Some((color, _)) => {
                 let color = *color;
-                debug!(choices = ?text_colors, background = ?self, foregound = ?color);
+                trace!(choices = ?text_colors, background = ?self, foregound = ?color);
                 color
             }
             None => {

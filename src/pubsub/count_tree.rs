@@ -82,7 +82,7 @@ impl TreeCount {
     /// Return a [CountToken] for this tree. When the token is dropped, the count will be
     /// automatically decremented.
     pub fn get_token(&self) -> CountToken {
-        debug!("creating new count token");
+        trace!("creating new count token");
         CountToken::new(self)
     }
 
