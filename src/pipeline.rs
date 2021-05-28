@@ -4,8 +4,8 @@ use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
 use image::flat::{FlatSamples, SampleLayout};
 use image::imageops;
-use linux_embedded_hal::I2cdev;
-use thermal_camera::{grideye, Error as CameraError, ThermalCamera};
+use linux_embedded_hal::{I2cdev, i2cdev::linux::LinuxI2CError};
+use thermal_camera::{grideye, ThermalCamera};
 use tokio::task::JoinError;
 use tokio::time::{self, Duration};
 use tokio_stream::wrappers::IntervalStream;
@@ -55,18 +55,18 @@ where
     }
 }
 
-pub struct Pipeline<E> {
-    camera: Arc<Mutex<dyn ThermalCamera<Error = E> + Send + Sync>>,
+pub struct Pipeline {
+    camera: Arc<Mutex<dyn ThermalCamera<Error = LinuxI2CError> + Send + Sync>>,
     frame_source: Option<spmc::Sender<ThermalImage>>,
     rendered_source: Option<spmc::Sender<BytesImage>>,
     tasks: TaskList,
 }
 
-impl Pipeline<CameraError<I2cdev>> {
+impl Pipeline {
     #[instrument]
     fn create_camera(
         settings: &CameraSettings,
-    ) -> Arc<Mutex<dyn ThermalCamera<Error = CameraError<I2cdev>> + Send + Sync>> {
+    ) -> Arc<Mutex<dyn ThermalCamera<Error = LinuxI2CError> + Send + Sync>> {
         let i2c_config: &I2cSettings = settings.into();
         // TODO: Add From<I2cError>
         let bus = I2cdev::try_from(i2c_config).unwrap();
@@ -92,7 +92,7 @@ impl Pipeline<CameraError<I2cdev>> {
     }
 
     fn wrap_camera_stream(
-        camera: &Arc<Mutex<dyn ThermalCamera<Error = CameraError<I2cdev>> + Send + Sync>>,
+        camera: &Arc<Mutex<dyn ThermalCamera<Error = LinuxI2CError> + Send + Sync>>,
         common_options: CommonOptions,
     ) -> impl Stream<Item = ThermalImage> {
         let interval = time::interval(Duration::from(common_options));
@@ -252,7 +252,7 @@ impl Pipeline<CameraError<I2cdev>> {
     }
 }
 
-impl<E> Future for Pipeline<E> {
+impl Future for Pipeline {
     type Output = ();
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
@@ -268,7 +268,7 @@ impl<E> Future for Pipeline<E> {
     }
 }
 
-impl From<Settings> for Pipeline<CameraError<I2cdev>> {
+impl From<Settings> for Pipeline {
     fn from(config: Settings) -> Self {
         let camera = Self::create_camera(&config.camera);
         let mut app = Self {
