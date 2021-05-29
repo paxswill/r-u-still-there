@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use std::convert::Infallible;
 use std::pin::Pin;
 
 use futures::task::{Context, Poll};
@@ -56,7 +55,7 @@ impl<T: 'static + Clone + Send> Sender<T> {
 }
 
 impl<T: 'static + Clone + Send> Sink<T> for Sender<T> {
-    type Error = Infallible;
+    type Error = anyhow::Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         ready!(self.count().poll(cx));

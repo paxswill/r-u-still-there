@@ -7,12 +7,13 @@ use tracing::{debug, debug_span, error, instrument};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{filter::LevelFilter, fmt as tracing_fmt, EnvFilter, Registry};
 
+use std::convert::TryFrom;
 use std::path::PathBuf;
 
 #[macro_use]
 extern crate lazy_static;
 
-mod error;
+mod camera;
 mod image_buffer;
 mod moving_average;
 mod occupancy;
@@ -118,7 +119,10 @@ async fn main() {
         .init();
     let app = {
         let _enter = span.enter();
-        Pipeline::from(config)
+        Pipeline::try_from(config)
     };
-    app.await;
+    match app {
+        Ok(app) => app.await,
+        Err(e) => error!("{}", e),
+    }
 }

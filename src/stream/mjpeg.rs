@@ -11,7 +11,6 @@ use tracing::{debug, debug_span, info, trace};
 #[cfg(feature = "mozjpeg")]
 use mozjpeg::{ColorSpace, Compress};
 
-use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
@@ -57,7 +56,7 @@ impl MjpegStream {
         format!("multipart/x-mixed-replace; boundary={}", self.boundary)
     }
 
-    fn send_image(&mut self, buf: BytesImage) -> Result<(), Infallible> {
+    fn send_image(&mut self, buf: BytesImage) -> anyhow::Result<()> {
         let span = debug_span!("send_mjpeg_image");
         let _enter = span.enter();
         let jpeg_buf = encode_jpeg(&buf);
@@ -105,7 +104,7 @@ impl Future for MjpegStream {
 }
 
 impl Sink<BytesImage> for MjpegStream {
-    type Error = Infallible;
+    type Error = anyhow::Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         self.sender().poll_ready(cx)

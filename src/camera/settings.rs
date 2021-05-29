@@ -1,45 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use serde::de::{self, Deserialize, Deserializer, MapAccess, Visitor};
-use serde_repr::Deserialize_repr;
 use tracing::{debug, error, info, instrument, trace};
 
 use std::borrow::Cow;
 use std::fmt;
-use std::time::Duration;
 
-use super::i2c::I2cSettings;
-
-// This enum is purely used to restrict the acceptable values for rotation
-#[derive(Clone, Copy, Deserialize_repr, PartialEq, Debug)]
-#[repr(u16)]
-pub enum Rotation {
-    Zero = 0,
-    Ninety = 90,
-    OneEighty = 180,
-    TwoSeventy = 270,
-}
-
-impl Default for Rotation {
-    fn default() -> Self {
-        Self::Zero
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CommonOptions {
-    pub rotation: Rotation,
-    pub flip_horizontal: bool,
-    pub flip_vertical: bool,
-    pub frame_rate: u8,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum CameraSettings {
-    GridEye {
-        i2c: I2cSettings,
-        options: CommonOptions,
-    },
-}
+use super::{CommonSettings, I2cSettings, Rotation};
 
 const CAMERA_KINDS: &[&str] = &["grideye"];
 
@@ -52,6 +18,14 @@ const CAMERA_FIELDS: &[&str] = &[
     "flip_vertical",
     "frame_rate",
 ];
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum CameraSettings {
+    GridEye {
+        i2c: I2cSettings,
+        options: CommonSettings,
+    },
+}
 
 // Manually implementing Derserialize as there isn't a way to derive a flattened enum
 // implementation.
@@ -162,7 +136,7 @@ impl<'de> Deserialize<'de> for CameraSettings {
                     }
                 }
                 let i2c = I2cSettings { bus, address };
-                let options = CommonOptions {
+                let options = CommonSettings {
                     rotation,
                     flip_horizontal,
                     flip_vertical,
@@ -191,7 +165,7 @@ impl<'de> Deserialize<'de> for CameraSettings {
                             }
                         }?;
                         // No base update syntax for enums :(
-                        let options = CommonOptions {
+                        let options = CommonSettings {
                             rotation: options.rotation,
                             flip_horizontal: options.flip_horizontal,
                             flip_vertical: options.flip_vertical,
@@ -215,8 +189,7 @@ impl<'de> Deserialize<'de> for CameraSettings {
 mod de_tests {
     // I'm not sure I need to include both TOML and JSON test cases, but v0v
     // Also missing pytest's parameterized tests here.
-    use super::{CameraSettings, CommonOptions, Rotation};
-    use crate::settings::i2c::{Bus, I2cSettings};
+    use crate::camera::{Bus, CameraSettings, CommonSettings, I2cSettings, Rotation};
 
     #[test]
     fn error_0_frame_rate() {
@@ -322,7 +295,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CommonOptions {
+            options: CommonSettings {
                 rotation: Rotation::Zero,
                 flip_horizontal: false,
                 flip_vertical: false,
@@ -348,7 +321,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CommonOptions {
+            options: CommonSettings {
                 rotation: Rotation::Zero,
                 flip_horizontal: false,
                 flip_vertical: false,
@@ -377,7 +350,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CommonOptions {
+            options: CommonSettings {
                 rotation: Rotation::OneEighty,
                 flip_horizontal: true,
                 flip_vertical: true,
@@ -406,7 +379,7 @@ mod de_tests {
                 bus: Bus::Path("1".to_string()),
                 address: 30,
             },
-            options: CommonOptions {
+            options: CommonSettings {
                 rotation: Rotation::OneEighty,
                 flip_horizontal: true,
                 flip_vertical: true,
@@ -436,7 +409,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CommonOptions {
+            options: CommonSettings {
                 rotation: Rotation::OneEighty,
                 flip_horizontal: true,
                 flip_vertical: true,
@@ -466,7 +439,7 @@ mod de_tests {
                 bus: Bus::Path("1".to_string()),
                 address: 30,
             },
-            options: CommonOptions {
+            options: CommonSettings {
                 rotation: Rotation::OneEighty,
                 flip_horizontal: true,
                 flip_vertical: true,
@@ -492,7 +465,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CommonOptions {
+            options: CommonSettings {
                 rotation: Rotation::Zero,
                 flip_horizontal: false,
                 flip_vertical: false,
@@ -518,7 +491,7 @@ mod de_tests {
                 bus: Bus::Number(1),
                 address: 30,
             },
-            options: CommonOptions {
+            options: CommonSettings {
                 rotation: Rotation::Zero,
                 flip_horizontal: false,
                 flip_vertical: false,
@@ -545,12 +518,6 @@ mod de_tests {
     }
 }
 
-impl From<CommonOptions> for Duration {
-    fn from(options: CommonOptions) -> Self {
-        Self::from_millis(1000 / options.frame_rate as u64)
-    }
-}
-
 impl From<CameraSettings> for I2cSettings {
     fn from(settings: CameraSettings) -> Self {
         match settings {
@@ -567,7 +534,7 @@ impl<'a> From<&'a CameraSettings> for &'a I2cSettings {
     }
 }
 
-impl From<CameraSettings> for CommonOptions {
+impl From<CameraSettings> for CommonSettings {
     fn from(settings: CameraSettings) -> Self {
         match settings {
             CameraSettings::GridEye {
