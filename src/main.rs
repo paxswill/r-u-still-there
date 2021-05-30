@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use anyhow::anyhow;
 use figment::providers::{Env, Format, Toml, Yaml};
 use figment::Figment;
 use structopt::StructOpt;
@@ -26,16 +27,13 @@ use crate::pipeline::Pipeline;
 use crate::pubsub::spmc;
 use crate::settings::{Args, Settings};
 
-// TODO: As with many other areas in this program, the error handling leaves something to be
-// desired.
-
 /// Select a configuration file to use.
 ///
 /// If there's a path present in the provided [Figment], it will be used. Otherwise, one of
 /// `config.toml`, or `config.yaml`, will be searched for (in that order) within the
 /// `/etc/r-u-still-there/` directory. If no file is found, [None] is returned.
 #[instrument(level = "debug", err)]
-fn find_config_file(figment: &Figment) -> Result<Option<PathBuf>, String> {
+fn find_config_file(figment: &Figment) -> anyhow::Result<Option<PathBuf>> {
     let given_config_path = figment
         .find_value("config_path")
         .ok()
@@ -46,7 +44,7 @@ fn find_config_file(figment: &Figment) -> Result<Option<PathBuf>, String> {
         if path.exists() {
             return Ok(Some(path));
         } else {
-            return Err(format!("Non-existant config file given: {:?}", path));
+            return Err(anyhow!("Non-existant config file given: {:?}", path));
         }
     }
     let prefix = PathBuf::from("/etc/r-u-still-there");
@@ -62,7 +60,7 @@ fn find_config_file(figment: &Figment) -> Result<Option<PathBuf>, String> {
 }
 
 #[instrument(level = "debug", err)]
-fn create_config() -> Result<Settings, String> {
+fn create_config() -> anyhow::Result<Settings> {
     // Configuration priority is as follows from least to greatest:
     // Defaults -> Config file -> Environment variable -> CLI flag
     let args = Args::from_args();
@@ -82,13 +80,13 @@ fn create_config() -> Result<Settings, String> {
         } else if config_extension == Some("yaml") {
             complete_figment = complete_figment.merge(Yaml::file(config_path));
         } else {
-            return Err(format!("Unknown file extension for file {:?}", config_path));
+            return Err(anyhow!("Unknown file extension for file {:?}", config_path));
         }
     }
     complete_figment = complete_figment
         .merge(Env::prefixed("RUSTILLTHERE_"))
         .merge(&args);
-    complete_figment.extract().map_err(|e| e.to_string())
+    Ok(complete_figment.extract()?)
 }
 
 #[tokio::main]
