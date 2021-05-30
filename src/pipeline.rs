@@ -87,7 +87,6 @@ impl Pipeline {
         let combined_route = routes
             .into_iter()
             .reduce(|combined, next| combined.or(next).unify().boxed())
-            // TODO: more error-ing
             .ok_or_else(|| anyhow!("problem creating streaming routes"))?;
         let bind_address: std::net::SocketAddr = settings.into();
         debug!(address = ?bind_address, "creating warp server");

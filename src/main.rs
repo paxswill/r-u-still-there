@@ -2,10 +2,9 @@
 use figment::providers::{Env, Format, Toml, Yaml};
 use figment::Figment;
 use structopt::StructOpt;
-use tracing::Level;
 use tracing::{debug, debug_span, error, instrument};
 use tracing_subscriber::prelude::*;
-use tracing_subscriber::{filter::LevelFilter, fmt as tracing_fmt, EnvFilter, Registry};
+use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Registry};
 
 use std::convert::TryFrom;
 use std::path::PathBuf;
@@ -101,22 +100,14 @@ async fn main() {
     let env_filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("info"))
         .expect("'info' was not recognized as a valid log filter");
+    Registry::default().with(fmt_sub).with(env_filter).init();
     let span = debug_span!("setup");
     let config = {
-        let _temp_subscriber = Registry::default()
-            .with(fmt_sub)
-            .with(env_filter)
-            .set_default();
         let _enter = span.enter();
         let config = create_config().expect("Problem generating configuration");
         debug!(?config, "final config");
         config
     };
-    // TODO: add config knobs for logging
-    Registry::default()
-        .with(tracing_fmt::Layer::default())
-        .with(LevelFilter::from_level(Level::INFO))
-        .init();
     let app = {
         let _enter = span.enter();
         Pipeline::try_from(config)
