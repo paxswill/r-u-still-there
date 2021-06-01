@@ -16,6 +16,8 @@ extern crate lazy_static;
 mod camera;
 mod image_buffer;
 mod moving_average;
+#[cfg(feature = "mqtt")]
+mod mqtt;
 mod occupancy;
 mod pipeline;
 mod pubsub;

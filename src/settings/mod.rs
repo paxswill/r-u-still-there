@@ -8,6 +8,8 @@ mod stream;
 mod tracker;
 
 use crate::camera::CameraSettings;
+#[cfg(feature = "mqtt")]
+use crate::mqtt::MqttSettings;
 pub use cli::Args;
 pub use render::RenderSettings;
 pub use stream::StreamSettings;
@@ -29,6 +31,12 @@ pub struct Settings {
     #[serde(default)]
     pub render: RenderSettings,
 
+    /// Occupancy tracker settings.
     #[serde(default)]
     pub tracker: TrackerSettings,
+
+    /// MQTT server connection settings.
+    #[cfg(feature = "mqtt")]
+    #[serde(default)]
+    pub mqtt: Option<MqttSettings>,
 }

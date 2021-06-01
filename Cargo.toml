@@ -11,11 +11,14 @@ anyhow = "1.0"
 bytes = "1.0.1"
 colorous = "1.0.5"
 futures = "0.3.13"
+hex = { version = "0.4", features = ["serde"], optional = true }
+hmac = { version = "0.11", optional = true }
 http = "0.2.4"
 i2cdev = "0.4.4"
 imageproc = "0.22.0"
 lazy_static = "1.4.0"
 linux-embedded-hal = "=0.4.0-alpha.0"
+machine-uid = { version = "0.2", optional = true }
 mozjpeg = { version = "0.8.24", optional = true }
 ndarray = "0.15.1"
 num-traits = "0.2.14"
@@ -25,11 +28,13 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_repr = "0.1"
 serde_yaml = "0.8.17"
+sha2 = { version = "0.9", optional = true }
 structopt = "0.3.21"
 svg = { version = "0.9.1", optional = true }
 tiny-skia = { version = "0.5.0", optional = true }
 tracing = "0.1"
 toml = "0.5"
+url = { version = "2", features = ["serde"], optional = true }
 usvg = { version = "0.14.0", optional = true }
 
 [dependencies.figment]
@@ -74,11 +79,13 @@ version = "0.3.1"
 [features]
 # Use mozjpeg by default. mozjpeg is the difference 10 FPS taking <50% CPU on a
 # Beaglebone and lagging because the CPU is pegged.
-default = ["mjpeg", "mozjpeg", "render_svg"]
+default = ["mjpeg", "mozjpeg", "mqtt", "render_svg"]
 mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
+mqtt = ["hex", "hmac", "machine-uid", "mqttrs", "sha2", "tokio/net", "url"]
 render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
 
 [dev-dependencies]
 float-cmp = "0.8.0"
 fontdb = "0.5.1"
+tempfile = "3"
 ttf-parser = "0.12.0"
