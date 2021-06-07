@@ -20,6 +20,7 @@ lazy_static = "1.4.0"
 linux-embedded-hal = "=0.4.0-alpha.0"
 machine-uid = { version = "0.2", optional = true }
 mozjpeg = { version = "0.8.24", optional = true }
+mqttrs = { version = "0.4", optional = true }
 ndarray = "0.15.1"
 num-traits = "0.2.14"
 pin-project = "1"
@@ -64,6 +65,11 @@ version = "1"
 features = ["time"]
 version = "0.1.5"
 
+[dependencies.tokio-util]
+default-features = false
+optional = true
+version = "0.6"
+
 [dependencies.tracing-futures]
 features = ["tokio", "std-future", "futures-03"]
 version = "0.2.5"
@@ -82,7 +88,16 @@ version = "0.3.1"
 # Beaglebone and lagging because the CPU is pegged.
 default = ["mjpeg", "mozjpeg", "mqtt", "render_svg"]
 mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
-mqtt = ["hex", "hmac", "machine-uid", "mqttrs", "sha2", "tokio/net", "url"]
+mqtt = [
+    "hex",
+    "hmac",
+    "machine-uid",
+    "mqttrs",
+    "sha2",
+    "tokio/net",
+    "tokio-util/codec",
+    "url",
+]
 render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
 
 [dev-dependencies]
