@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::{anyhow, Context as _};
 use futures::{Sink, SinkExt, Stream, StreamExt};
-use mqttbytes::v4;
+use mqttbytes::{v4, QoS};
 use pin_project::pin_project;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use super::codec::{Error as MqttError, MqttCodec};
-use super::settings::MqttSettings;
+use super::settings::{MqttSettings, Topic};
 
 type MqttFramed<V> = Framed<MqttStream, MqttCodec<V>>;
 type SharedLazyStream<V> = Arc<Mutex<Option<MqttFramed<V>>>>;
@@ -119,7 +119,7 @@ impl MqttClient {
             // Put the
             // At this point, we have an active stream to the broker. Now we let the broker know
             // we're connected.
-            let connect_packet = v4::Packet::Connect((&self.settings).into());
+            let connect_packet = v4::Packet::Connect(self.connect_data());
             framed
                 .feed(connect_packet)
                 .await
@@ -143,6 +143,19 @@ impl MqttClient {
             *possible_connection = Some(framed);
         }
         Ok(Arc::clone(&self.connection))
+    }
+
+    fn connect_data(&self) -> v4::Connect {
+        let mut data: v4::Connect = (&self.settings).into();
+        let payload = serde_json::to_vec(&Status::Offline)
+            .expect("a static Status enum to encode cleanly into JSON");
+        data.last_will = Some(v4::LastWill::new(
+            self.settings.topic_for(Topic::Status),
+            payload,
+            QoS::AtLeastOnce,
+            true
+        ));
+        data
     }
 }
 

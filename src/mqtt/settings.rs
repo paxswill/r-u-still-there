@@ -70,6 +70,16 @@ pub struct MqttSettings {
     keep_alive: Option<u16>,
 }
 
+/// The different topics that will be published.
+#[derive(Clone, Copy)]
+pub(crate) enum Topic {
+    Status,
+    Temperature,
+    Occupancy,
+    Count,
+}
+
+
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(try_from = "Url")]
 pub struct MqttUrl(Url);
@@ -173,6 +183,18 @@ impl MqttSettings {
             }
         }
     }
+
+    pub(crate) fn topic_for(&self, topic: Topic) -> String {
+        // TODO: add a setting to override the base topic
+        let topic_name = match topic {
+            Topic::Status => "status",
+            Topic::Temperature => "temperature",
+            Topic::Occupancy => "occupied",
+            Topic::Count => "count",
+        };
+        format!("r_u_still_there/{}/{}", self.name, topic_name)
+    }
+
 }
 
 impl From<&MqttSettings> for v4::Connect {
