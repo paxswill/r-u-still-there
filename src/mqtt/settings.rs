@@ -2,6 +2,8 @@
 use anyhow::anyhow;
 use hmac::{Hmac, Mac, NewMac};
 use machine_uid::machine_id::get_machine_id;
+use mqttbytes::v4::Login;
+use mqttbytes::{v4, v5, Protocol};
 use serde::Deserialize;
 use sha2::Sha256;
 use tracing::{debug, trace, warn};
@@ -59,6 +61,13 @@ pub struct MqttSettings {
     /// need to add it manually.
     #[serde(default = "MqttSettings::default_home_assistant")]
     home_assistant: bool,
+
+    /// Enable MQTT keep-alive.
+    ///
+    /// Periodically the client will ping the server so the server knows the connection is still
+    /// active. Specified in seconds. 0 is the same as disabled.
+    #[serde(default)]
+    keep_alive: Option<u16>,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -120,12 +129,16 @@ impl MqttSettings {
         false
     }
 
+    pub fn server_url(&self) -> &Url {
+        &self.server.0
+    }
+
     /// Get the unique ID for this device.
     ///
     /// If one was provided, use that. If not, retrieve a machine-specific ID from the OS and hash
     /// it. If a machine-specific ID is not able to be found, the configured name is used instead
     /// (also hashed).
-    fn unique_id(&self) -> String {
+    pub fn unique_id(&self) -> String {
         match &self.unique_id {
             Some(uid) => uid.clone(),
             None => {
@@ -162,6 +175,31 @@ impl MqttSettings {
     }
 }
 
+impl From<&MqttSettings> for v4::Connect {
+    fn from(settings: &MqttSettings) -> Self {
+        let login: Option<v4::Login> = if let Some(username) = &settings.username {
+            let password: String = settings
+                .password
+                .as_ref()
+                .map_or("".to_string(), |p| p.0.clone());
+            Some(Login::new(username.clone(), password))
+        } else {
+            None
+        };
+        Self {
+            // Only MQTT 3.1.1 for now, but 5 should be implemented by mqttrs at some point.
+            protocol: Protocol::V4,
+            keep_alive: settings.keep_alive.unwrap_or(0),
+            // Using the name from the settings for now, but might change this later.
+            client_id: settings.name.clone(),
+            // Always start with a clean session
+            clean_session: true,
+            last_will: None,
+            login,
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::MqttSettings;
@@ -182,6 +220,7 @@ mod test {
             password: None,
             server: "mqtt://127.0.0.1".parse().unwrap(),
             home_assistant: false,
+            keep_alive: None,
         };
         assert_eq!(parsed, expected);
     }

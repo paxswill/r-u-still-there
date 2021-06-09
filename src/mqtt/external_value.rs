@@ -11,7 +11,7 @@ use std::path::PathBuf;
 /// will be read and used ad the final value.
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(try_from = "InnerExternalValue")]
-pub struct ExternalValue(String);
+pub struct ExternalValue(pub String);
 
 #[derive(Debug, serde::Deserialize)]
 #[serde(untagged)]
