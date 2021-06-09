@@ -35,9 +35,13 @@ structopt = "0.3.21"
 svg = { version = "0.9.1", optional = true }
 tiny-skia = { version = "0.5.0", optional = true }
 tracing = "0.1"
+tokio-rustls = { version = "0.22", optional = true }
 toml = "0.5"
 url = { version = "2", features = ["serde"], optional = true }
 usvg = { version = "0.14.0", optional = true }
+# Note: keep this in sync with the version of webpki used by tokio-rustls. If
+# you don't, the build errors will be very confusing.
+webpki-roots = { version = "0.21", optional= true }
 
 [dependencies.figment]
 features = ["env", "toml", "yaml"]
@@ -95,8 +99,11 @@ mqtt = [
     "mqttbytes",
     "sha2",
     "tokio/net",
+    "tokio/io-util",
+    "tokio-rustls",
     "tokio-util/codec",
     "url",
+    "webpki-roots"
 ]
 render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
 
