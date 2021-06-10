@@ -24,7 +24,7 @@ const APPLICATION_KEY: &[u8; 16] =
 #[derive(Deserialize, Debug, PartialEq)]
 pub struct MqttSettings {
     /// A name for the base topic for this device.
-    name: String,
+    pub(crate) name: String,
 
     /// Override the unique ID for this device.
     ///
@@ -60,7 +60,13 @@ pub struct MqttSettings {
     /// Do note that the MJPEG stream is *not* able to be automatically added in this way, you will
     /// need to add it manually.
     #[serde(default = "MqttSettings::default_home_assistant")]
-    home_assistant: bool,
+    pub(crate) home_assistant: bool,
+
+    /// The topic prefix used for Home Assistant MQTT discovery.
+    ///
+    /// Defaults to "homeassistant"
+    #[serde(default = "MqttSettings::default_home_assistant_topic")]
+    pub(crate) home_assistant_topic: String,
 
     /// Enable MQTT keep-alive.
     ///
@@ -69,16 +75,6 @@ pub struct MqttSettings {
     #[serde(default)]
     keep_alive: Option<u16>,
 }
-
-/// The different topics that will be published.
-#[derive(Clone, Copy)]
-pub(crate) enum Topic {
-    Status,
-    Temperature,
-    Occupancy,
-    Count,
-}
-
 
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(try_from = "Url")]
@@ -139,6 +135,12 @@ impl MqttSettings {
         false
     }
 
+    /// The default Home Assistant MQTT discovery topic prefix.
+    fn default_home_assistant_topic() -> String {
+        "homeassistant".into()
+    }
+
+    /// Access the server URL.
     pub fn server_url(&self) -> &Url {
         &self.server.0
     }
@@ -183,18 +185,6 @@ impl MqttSettings {
             }
         }
     }
-
-    pub(crate) fn topic_for(&self, topic: Topic) -> String {
-        // TODO: add a setting to override the base topic
-        let topic_name = match topic {
-            Topic::Status => "status",
-            Topic::Temperature => "temperature",
-            Topic::Occupancy => "occupied",
-            Topic::Count => "count",
-        };
-        format!("r_u_still_there/{}/{}", self.name, topic_name)
-    }
-
 }
 
 impl From<&MqttSettings> for v4::Connect {
@@ -242,6 +232,7 @@ mod test {
             password: None,
             server: "mqtt://127.0.0.1".parse().unwrap(),
             home_assistant: false,
+            home_assistant_topic: "homeassistant".into(),
             keep_alive: None,
         };
         assert_eq!(parsed, expected);

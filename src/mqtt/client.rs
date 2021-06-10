@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use super::codec::{Error as MqttError, MqttCodec};
-use super::settings::{MqttSettings, Topic};
+use super::home_assistant::Component;
+use super::settings::MqttSettings;
 
 type MqttFramed<V> = Framed<MqttStream, MqttCodec<V>>;
 type SharedLazyStream<V> = Arc<Mutex<Option<MqttFramed<V>>>>;
@@ -68,6 +69,25 @@ struct TopicState {
 enum Status {
     Online,
     Offline,
+}
+
+/// The different topics that will be published.
+#[derive(Clone, Copy)]
+pub(crate) enum Topic {
+    /// The status topic.
+    Status,
+
+    /// The temperature of the camera.
+    Temperature,
+
+    /// Whether or not the camera detects a person.
+    Occupancy,
+
+    /// How many people the camera is detecting.
+    Count,
+
+    /// The Home Assistant MQTT discovery topic for this device.
+    Discovery(Component),
 }
 
 async fn next_packet(
@@ -145,15 +165,35 @@ impl MqttClient {
         Ok(Arc::clone(&self.connection))
     }
 
+    fn topic_for(&self, topic: Topic) -> String {
+        // TODO: add a setting to override the base topic
+        let topic_name = match topic {
+            Topic::Status => "status",
+            Topic::Temperature => "temperature",
+            Topic::Occupancy => "occupied",
+            Topic::Count => "count",
+            // The discovery topic is special
+            Topic::Discovery(component) => {
+                return format!(
+                    "{}/{}/{}/config",
+                    self.settings.home_assistant_topic,
+                    component.to_string(),
+                    self.settings.unique_id()
+                );
+            }
+        };
+        format!("r_u_still_there/{}/{}", self.settings.name, topic_name)
+    }
+
     fn connect_data(&self) -> v4::Connect {
         let mut data: v4::Connect = (&self.settings).into();
         let payload = serde_json::to_vec(&Status::Offline)
             .expect("a static Status enum to encode cleanly into JSON");
         data.last_will = Some(v4::LastWill::new(
-            self.settings.topic_for(Topic::Status),
+            self.topic_for(Topic::Status),
             payload,
             QoS::AtLeastOnce,
-            true
+            true,
         ));
         data
     }
