@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::cell::{Ref, RefCell};
-use std::collections::{HashSet};
+use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::mem::discriminant;
 use std::rc::Rc;
 
 use mac_address::MacAddress;
 use paste::paste;
-use serde::{Deserialize, Serialize};
 use serde::de::{Deserializer, Error as _, MapAccess, SeqAccess, Visitor};
-use serde::ser::{Serializer, SerializeTuple};
+use serde::ser::{SerializeTuple, Serializer};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 /// Skip serializing a field if the current value is the same as the default.
@@ -156,22 +156,22 @@ impl Serialize for Connection {
     /// Serialize a Connection as a 2-tuple
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
-        S: Serializer
+        S: Serializer,
     {
         let mut tuple_serializer = serializer.serialize_tuple(2)?;
         match self {
             Connection::MacAddress(mac) => {
                 tuple_serializer.serialize_element(&ConnectionTag::Mac)?;
                 tuple_serializer.serialize_element(mac)?;
-            },
+            }
             Connection::UPnP(uuid) => {
                 tuple_serializer.serialize_element(&ConnectionTag::UPnP)?;
                 tuple_serializer.serialize_element(uuid)?;
-            },
+            }
             Connection::Zigbee(addr) => {
                 tuple_serializer.serialize_element(&ConnectionTag::Zigbee)?;
                 tuple_serializer.serialize_element(addr)?;
-            },
+            }
         };
         tuple_serializer.end()
     }
@@ -180,7 +180,7 @@ impl Serialize for Connection {
 impl<'de> Deserialize<'de> for Connection {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        D: Deserializer<'de>
+        D: Deserializer<'de>,
     {
         struct ConnectionVisitor;
 
@@ -193,37 +193,38 @@ impl<'de> Deserialize<'de> for Connection {
 
             fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
             where
-                V: MapAccess<'de>
+                V: MapAccess<'de>,
             {
                 // It's almost missing_field(), but there are multiple fields it could be
-                let missing_tag = V::Error::custom("Missing one of the connection type names as a key");
+                let missing_tag =
+                    V::Error::custom("Missing one of the connection type names as a key");
                 let tag = map.next_key()?.ok_or_else(|| missing_tag)?;
                 let connection_type = match tag {
                     ConnectionTag::Mac => {
                         let mac = map.next_value()?;
                         Connection::MacAddress(mac)
-                    },
+                    }
                     ConnectionTag::UPnP => {
                         let uuid = map.next_value()?;
                         Connection::UPnP(uuid)
-                    },
+                    }
                     ConnectionTag::Zigbee => {
                         let addr = map.next_value()?;
                         Connection::Zigbee(addr)
-                    },
+                    }
                 };
                 Ok(connection_type)
             }
 
             fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
             where
-                V: SeqAccess<'de>
+                V: SeqAccess<'de>,
             {
                 // There should be exactly two elements in the sequence
                 let expect_two = || {
                     V::Error::invalid_length(
                         2,
-                        &"there should be exactly two elements in a component array"
+                        &"there should be exactly two elements in a component array",
                     )
                 };
 
@@ -232,15 +233,15 @@ impl<'de> Deserialize<'de> for Connection {
                     ConnectionTag::Mac => {
                         let mac = seq.next_element()?.ok_or_else(expect_two)?;
                         Connection::MacAddress(mac)
-                    },
+                    }
                     ConnectionTag::UPnP => {
                         let uuid = seq.next_element()?.ok_or_else(expect_two)?;
                         Connection::UPnP(uuid)
-                    },
+                    }
                     ConnectionTag::Zigbee => {
                         let addr = seq.next_element()?.ok_or_else(expect_two)?;
                         Connection::Zigbee(addr)
-                    },
+                    }
                 };
                 Ok(connection_type)
             }
