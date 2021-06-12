@@ -18,6 +18,7 @@ fn is_default<T: Default + PartialEq>(val: &T) -> bool {
     val == &T::default()
 }
 
+#[macro_export]
 macro_rules! default_newtype {
     ($name:ident, $wrapped_type:ty, $default:literal) => {
         #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
@@ -40,6 +41,7 @@ macro_rules! default_newtype {
     };
 }
 
+#[macro_export]
 macro_rules! default_string {
     ($name:ident, $default:literal) => {
         default_newtype!($name, String, $default);
@@ -360,6 +362,7 @@ impl MqttConfig {
     }
 }
 
+#[macro_export]
 macro_rules! expose_inner {
     ($name:ident, $typ:ty) => {
         pub fn $name(&self) -> &$typ {
@@ -383,12 +386,14 @@ macro_rules! expose_inner {
     };
 }
 
+#[macro_export]
 macro_rules! expose_mqtt_config {
     ($name:ident, $typ:ty) => {
         expose_inner!(mqtt, $name, $typ);
     };
 }
 
+#[macro_export]
 macro_rules! expose_device_config {
     ($name:ident, $typ:ty) => {
         paste! {
@@ -402,6 +407,7 @@ macro_rules! expose_device_config {
     };
 }
 
+#[macro_export]
 macro_rules! expose_common {
     () => {
         pub fn availability_topics(&self) -> &HashSet<AvailabilityTopic> {
