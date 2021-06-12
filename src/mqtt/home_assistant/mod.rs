@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod common;
 mod device;
-mod internal;
 mod sensor;
+mod util;
 
-pub use internal::*;
+pub use device::{Connection, Device};

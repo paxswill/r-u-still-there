@@ -5,12 +5,12 @@ use std::collections::HashSet;
 use paste::paste;
 use serde::{Deserialize, Serialize};
 
-use super::is_default;
+use crate::{default_newtype, default_string};
 use super::common::{
     AvailabilityMode, AvailabilityTopic, ForceUpdate, MqttConfig, PayloadAvailable,
     PayloadNotAvailable, SensorQoS,
 };
-use crate::{default_newtype, default_string};
+use super::util::is_default;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Component {

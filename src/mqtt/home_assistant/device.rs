@@ -9,7 +9,7 @@ use serde::ser::{SerializeTuple, Serializer};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use super::is_default;
+use super::util::is_default;
 
 /// The types of connections that can be associated with a device in the Home Assistant device
 /// registry.

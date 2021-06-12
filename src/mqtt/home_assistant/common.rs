@@ -7,7 +7,7 @@ use paste::paste;
 use serde::{Deserialize, Serialize};
 
 use crate::{default_newtype, default_string};
-use super::{device::Device, is_default};
+use super::{device::Device, util::is_default};
 
 default_string!(PayloadAvailable, "online");
 default_string!(PayloadNotAvailable, "offline");
