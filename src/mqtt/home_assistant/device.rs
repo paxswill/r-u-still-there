@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::collections::HashSet;
+use std::iter::Iterator;
 use std::hash::{Hash, Hasher};
 use std::mem::discriminant;
 
@@ -9,6 +10,7 @@ use serde::ser::{SerializeTuple, Serializer};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::expose_inner;
 use super::util::is_default;
 
 /// The types of connections that can be associated with a device in the Home Assistant device
@@ -154,28 +156,60 @@ impl<'de> Deserialize<'de> for Connection {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Device {
     #[serde(alias = "cns", default, skip_serializing_if = "is_default")]
-    pub(super) connections: HashSet<Connection>,
+    connections: HashSet<Connection>,
 
     #[serde(alias = "ids", default, skip_serializing_if = "is_default")]
-    pub(super) identifiers: HashSet<String>,
+    identifiers: HashSet<String>,
 
     #[serde(alias = "mf", default, skip_serializing_if = "is_default")]
-    pub(super) manufacturer: Option<String>,
+    pub manufacturer: Option<String>,
 
     #[serde(alias = "mdl", default, skip_serializing_if = "is_default")]
-    pub(super) model: Option<String>,
+    pub model: Option<String>,
 
     // No alias for 'name'
     #[serde(default, skip_serializing_if = "is_default")]
-    pub(super) name: Option<String>,
+    pub name: Option<String>,
 
     #[serde(alias = "sa", default, skip_serializing_if = "is_default")]
-    pub(super) suggested_area: Option<String>,
+    pub suggested_area: Option<String>,
 
     #[serde(alias = "sw", default, skip_serializing_if = "is_default")]
-    pub(super) sw_version: Option<String>,
+    pub sw_version: Option<String>,
 
     // No alias for 'via_device' either
     #[serde(default, skip_serializing_if = "is_default")]
-    pub(super) via_device: Option<String>,
+    pub via_device: Option<String>,
+}
+
+impl Device {
+    /// Add a MAC address to this device.
+    pub fn add_mac_connection(&mut self, mac: MacAddress) {
+        self.connections.insert(Connection::MacAddress(mac));
+    }
+
+    // Skipping the UPnP and ZigBee access methods as I'm not planning on using them.
+
+    /// Iteratoe over the MAC addresses currently associated with this device.
+    pub fn mac_addresses(&self) -> impl Iterator<Item = &MacAddress> {
+        self.connections
+            .iter()
+            .filter_map(|con| {
+                match con {
+                    Connection::MacAddress(mac) => Some(mac),
+                    _ => None,
+                }
+            })
+    }
+
+    pub fn add_identifier<S>(&mut self, id: S)
+    where
+        S: Into<String>
+    {
+        self.identifiers.insert(id.into());
+    }
+
+    pub fn identifiers(&self) -> impl Iterator<Item = &String> {
+        self.identifiers.iter()
+    }
 }
