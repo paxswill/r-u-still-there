@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::collections::HashSet;
-use std::iter::Iterator;
 use std::hash::{Hash, Hasher};
+use std::iter::Iterator;
 use std::mem::discriminant;
 
 use mac_address::MacAddress;
@@ -10,7 +10,6 @@ use serde::ser::{SerializeTuple, Serializer};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::expose_inner;
 use super::util::is_default;
 
 /// The types of connections that can be associated with a device in the Home Assistant device
@@ -192,19 +191,15 @@ impl Device {
 
     /// Iteratoe over the MAC addresses currently associated with this device.
     pub fn mac_addresses(&self) -> impl Iterator<Item = &MacAddress> {
-        self.connections
-            .iter()
-            .filter_map(|con| {
-                match con {
-                    Connection::MacAddress(mac) => Some(mac),
-                    _ => None,
-                }
-            })
+        self.connections.iter().filter_map(|con| match con {
+            Connection::MacAddress(mac) => Some(mac),
+            _ => None,
+        })
     }
 
     pub fn add_identifier<S>(&mut self, id: S)
     where
-        S: Into<String>
+        S: Into<String>,
     {
         self.identifiers.insert(id.into());
     }

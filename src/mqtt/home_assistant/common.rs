@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use std::cell::{Ref, RefCell};
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashSet;
+use std::iter::Iterator;
 use std::rc::Rc;
 
-use paste::paste;
 use serde::{Deserialize, Serialize};
 
-use crate::{default_newtype, default_string};
 use super::{device::Device, util::is_default};
+use crate::{default_newtype, default_string};
 
 default_string!(PayloadAvailable, "online");
 default_string!(PayloadNotAvailable, "offline");
@@ -56,59 +56,67 @@ default_newtype!(ForceUpdate, bool, false);
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct MqttConfig {
     #[serde(alias = "avty", default, skip_serializing_if = "is_default")]
-    pub availability: HashSet<AvailabilityTopic>,
+    availability: HashSet<AvailabilityTopic>,
 
     #[serde(alias = "avty_mode", default, skip_serializing_if = "is_default")]
-    pub(super) availability_mode: AvailabilityMode,
+    pub availability_mode: AvailabilityMode,
 
     // NOTE: This is an Rc, that is serialized. This requires opting in to Rc/Arc serialization
     // with serde, as ref counted types aren't completely preserved. In this case that's ok, as the
     // ref counting is to try to keep memory usage/allocations down when doing a one-time
     // configuration on start up.
     #[serde(alias = "dev", default, skip_serializing_if = "is_default")]
-    pub(super) device: Rc<RefCell<Device>>,
+    device: Rc<RefCell<Device>>,
 
     #[serde(alias = "exp_aft", default, skip_serializing_if = "is_default")]
-    pub(super) expire_after: Option<u32>,
+    pub expire_after: Option<u32>,
 
     #[serde(alias = "exp_aft", default, skip_serializing_if = "is_default")]
-    pub(super) force_update: ForceUpdate,
+    pub force_update: ForceUpdate,
 
     #[serde(alias = "ic", default, skip_serializing_if = "is_default")]
-    pub(super) icon: Option<String>,
+    pub icon: Option<String>,
 
     #[serde(alias = "json_attr_tpl", default, skip_serializing_if = "is_default")]
-    pub(super) json_attributes_template: Option<String>,
+    pub json_attributes_template: Option<String>,
 
     #[serde(alias = "json_attr_t", default, skip_serializing_if = "is_default")]
-    pub(super) json_attributes_topic: Option<String>,
+    pub json_attributes_topic: Option<String>,
 
     // Not including 'name', as the default value for that is specific to the type of device
     #[serde(alias = "pl_avail", default, skip_serializing_if = "is_default")]
-    pub(super) payload_available: PayloadAvailable,
+    pub payload_available: PayloadAvailable,
 
     #[serde(alias = "pl_not_avail", default, skip_serializing_if = "is_default")]
-    pub(super) payload_not_available: PayloadNotAvailable,
+    pub payload_not_available: PayloadNotAvailable,
 
     #[serde(default, skip_serializing_if = "is_default")]
-    pub(super) qos: SensorQoS,
+    pub qos: SensorQoS,
 
     #[serde(alias = "stat_t")]
-    pub(super) state_topic: String,
+    pub state_topic: String,
 
     #[serde(alias = "uniq_id", default, skip_serializing_if = "is_default")]
-    pub(super) unique_id: Option<String>,
+    pub unique_id: Option<String>,
 
     #[serde(alias = "val_tpl", default, skip_serializing_if = "is_default")]
-    pub(super) value_template: Option<String>,
+    pub value_template: Option<String>,
 }
 
 impl MqttConfig {
     pub fn new_with_state_topic<P: Into<String>>(state_topic: P) -> Self {
+        let device = Rc::new(RefCell::new(Device::default()));
+        Self::new_with_state_and_device(state_topic, &device)
+    }
+
+    pub fn new_with_state_and_device<P>(state_topic: P, device: &Rc<RefCell<Device>>) -> Self
+    where
+        P: Into<String>,
+    {
         Self {
             availability: HashSet::default(),
             availability_mode: AvailabilityMode::default(),
-            device: Rc::new(RefCell::new(Device::default())),
+            device: Rc::clone(device),
             expire_after: None,
             force_update: ForceUpdate::default(),
             icon: None,
@@ -123,10 +131,64 @@ impl MqttConfig {
         }
     }
 
-    pub fn clone_with_state<P: Into<String>>(&self, new_state: P) -> Self {
-        Self {
-            state_topic: new_state.into(),
-            ..self.clone()
-        }
+    pub fn add_availability_topic_with_values<A, N>(
+        &mut self,
+        topic: String,
+        available: A,
+        not_available: N,
+    ) where
+        A: Into<PayloadAvailable>,
+        N: Into<PayloadNotAvailable>,
+    {
+        self.availability.insert(AvailabilityTopic {
+            payload_available: available.into().into(),
+            payload_not_available: not_available.into().into(),
+            topic: topic,
+        });
+    }
+
+    pub fn add_availability_topic(&mut self, topic: String) {
+        self.add_availability_topic_with_values(
+            topic,
+            PayloadAvailable::default(),
+            PayloadNotAvailable::default(),
+        );
+    }
+
+    pub fn set_availability_topic_with_values<A, N>(
+        &mut self,
+        topic: String,
+        available: A,
+        not_available: N,
+    ) where
+        A: Into<PayloadAvailable>,
+        N: Into<PayloadNotAvailable>,
+    {
+        self.availability.clear();
+        self.add_availability_topic_with_values(topic, available, not_available);
+    }
+
+    pub fn set_availability_topic(&mut self, topic: String) {
+        self.set_availability_topic_with_values(
+            topic,
+            PayloadAvailable::default(),
+            PayloadNotAvailable::default(),
+        );
+    }
+
+    pub fn availability_topics(&self) -> impl Iterator<Item = &AvailabilityTopic> {
+        self.availability.iter()
+    }
+
+    pub fn device(&self) -> Ref<'_, Device> {
+        self.device.borrow()
+    }
+
+    pub fn device_mut(&self) -> RefMut<'_, Device> {
+        self.device.borrow_mut()
+    }
+
+    pub fn set_device(&mut self, device: &Rc<RefCell<Device>>) {
+        self.device = Rc::clone(device);
     }
 }
