@@ -1,5 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::cell::{Ref, RefCell};
+use std::collections::{HashSet};
+use std::hash::{Hash, Hasher};
+use std::mem::discriminant;
+use std::rc::Rc;
+
+use mac_address::MacAddress;
+use paste::paste;
 use serde::{Deserialize, Serialize};
+use serde::de::{Deserializer, Error as _, MapAccess, SeqAccess, Visitor};
+use serde::ser::{Serializer, SerializeTuple};
+use uuid::Uuid;
 
 /// Skip serializing a field if the current value is the same as the default.
 // Code taken from https://mth.st/blog/skip-default/
@@ -9,7 +20,7 @@ fn is_default<T: Default + PartialEq>(val: &T) -> bool {
 
 macro_rules! default_newtype {
     ($name:ident, $wrapped_type:ty, $default:literal) => {
-        #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+        #[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
         pub struct $name(pub $wrapped_type);
         impl Default for $name {
             fn default() -> Self {
@@ -62,8 +73,8 @@ impl std::string::ToString for Component {
 default_string!(PayloadAvailable, "online");
 default_string!(PayloadNotAvailable, "offline");
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct AvailabilityTopicEntry {
+#[derive(Clone, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+pub struct AvailabilityTopic {
     #[serde(alias = "pl_avail", default, skip_serializing_if = "is_default")]
     pub payload_available: PayloadAvailable,
 
@@ -72,6 +83,16 @@ pub struct AvailabilityTopicEntry {
 
     #[serde(alias = "t")]
     pub topic: String,
+}
+
+impl AvailabilityTopic {
+    pub fn new(topic: String) -> Self {
+        Self {
+            payload_available: PayloadAvailable::default(),
+            payload_not_available: PayloadNotAvailable::default(),
+            topic: topic,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -88,42 +109,172 @@ impl Default for AvailabilityMode {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+/// The types of connections that can be associated with a device in the Home Assistant device
+/// registry.
+///
+/// There isn't a great reference for what kinds of connections are supported. The docs give MAC
+/// addresses as an example, but by peeking in the source we can see that UPnP and Zigbee IDs are
+/// also supported.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Connection {
-    #[serde(rename = "mac")]
-    MacAddress(String),
+    MacAddress(MacAddress),
+    // TODO: see if this actually matches the spec. This will also be a bit difficult as I'm not
+    // sure of any integrations that actually use this :/
+    UPnP(Uuid),
+    Zigbee(String),
+}
+// MacAddress doesn't implement Eq or Hash, so we get to implement (or mark) those ourselves.
+impl std::cmp::Eq for Connection {}
+impl Hash for Connection {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        discriminant(&self).hash(state);
+        match self {
+            Connection::MacAddress(mac) => {
+                mac.bytes().hash(state);
+            }
+            Connection::UPnP(upnp) => {
+                upnp.hash(state);
+            }
+            Connection::Zigbee(addr) => {
+                addr.hash(state);
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ConnectionTag {
+    Mac,
+    UPnP,
+    Zigbee,
+}
+
+impl Serialize for Connection {
+    /// Serialize a Connection as a 2-tuple
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer
+    {
+        let mut tuple_serializer = serializer.serialize_tuple(2)?;
+        match self {
+            Connection::MacAddress(mac) => {
+                tuple_serializer.serialize_element(&ConnectionTag::Mac)?;
+                tuple_serializer.serialize_element(mac)?;
+            },
+            Connection::UPnP(uuid) => {
+                tuple_serializer.serialize_element(&ConnectionTag::UPnP)?;
+                tuple_serializer.serialize_element(uuid)?;
+            },
+            Connection::Zigbee(addr) => {
+                tuple_serializer.serialize_element(&ConnectionTag::Zigbee)?;
+                tuple_serializer.serialize_element(addr)?;
+            },
+        };
+        tuple_serializer.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for Connection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>
+    {
+        struct ConnectionVisitor;
+
+        impl<'de> Visitor<'de> for ConnectionVisitor {
+            type Value = Connection;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a connection tuple")
+            }
+
+            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
+            where
+                V: MapAccess<'de>
+            {
+                // It's almost missing_field(), but there are multiple fields it could be
+                let missing_tag = V::Error::custom("Missing one of the connection type names as a key");
+                let tag = map.next_key()?.ok_or_else(|| missing_tag)?;
+                let connection_type = match tag {
+                    ConnectionTag::Mac => {
+                        let mac = map.next_value()?;
+                        Connection::MacAddress(mac)
+                    },
+                    ConnectionTag::UPnP => {
+                        let uuid = map.next_value()?;
+                        Connection::UPnP(uuid)
+                    },
+                    ConnectionTag::Zigbee => {
+                        let addr = map.next_value()?;
+                        Connection::Zigbee(addr)
+                    },
+                };
+                Ok(connection_type)
+            }
+
+            fn visit_seq<V>(self, mut seq: V) -> Result<Self::Value, V::Error>
+            where
+                V: SeqAccess<'de>
+            {
+                // There should be exactly two elements in the sequence
+                let expect_two = || {
+                    V::Error::invalid_length(
+                        2,
+                        &"there should be exactly two elements in a component array"
+                    )
+                };
+
+                let tag = seq.next_element()?.ok_or_else(expect_two)?;
+                let connection_type = match tag {
+                    ConnectionTag::Mac => {
+                        let mac = seq.next_element()?.ok_or_else(expect_two)?;
+                        Connection::MacAddress(mac)
+                    },
+                    ConnectionTag::UPnP => {
+                        let uuid = seq.next_element()?.ok_or_else(expect_two)?;
+                        Connection::UPnP(uuid)
+                    },
+                    ConnectionTag::Zigbee => {
+                        let addr = seq.next_element()?.ok_or_else(expect_two)?;
+                        Connection::Zigbee(addr)
+                    },
+                };
+                Ok(connection_type)
+            }
+        }
+
+        deserializer.deserialize_any(ConnectionVisitor)
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct Device {
-    // TODO: maybe implement the alternative format, a map of types to values
-    // Both available formats:
-    //     {"connections": {"mac": "de:ad:be:ef:ca:fe"}}
-    //     {"connections": ["mac", "de:ad:be:ef:ca:fe"]}
-    // TODO: Also verify with HAss docs that this is the actual format
-    #[serde(alias = "cns")]
-    pub connections: Option<Connection>,
+    #[serde(alias = "cns", default, skip_serializing_if = "is_default")]
+    connections: HashSet<Connection>,
 
-    #[serde(alias = "ids")]
-    pub identifiers: Option<Vec<String>>,
+    #[serde(alias = "ids", default, skip_serializing_if = "is_default")]
+    identifiers: HashSet<String>,
 
-    #[serde(alias = "mf")]
-    pub manufacturer: Option<String>,
+    #[serde(alias = "mf", default, skip_serializing_if = "is_default")]
+    manufacturer: Option<String>,
 
-    #[serde(alias = "mdl")]
-    pub model: Option<String>,
+    #[serde(alias = "mdl", default, skip_serializing_if = "is_default")]
+    model: Option<String>,
 
     // No alias for 'name'
-    pub name: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    name: Option<String>,
 
-    #[serde(alias = "sa")]
-    pub suggested_area: Option<String>,
+    #[serde(alias = "sa", default, skip_serializing_if = "is_default")]
+    suggested_area: Option<String>,
 
-    #[serde(alias = "sw")]
-    pub sw_version: Option<String>,
+    #[serde(alias = "sw", default, skip_serializing_if = "is_default")]
+    sw_version: Option<String>,
 
     // No alias for 'via_device' either
-    pub via_device: Option<String>,
+    #[serde(default, skip_serializing_if = "is_default")]
+    via_device: Option<String>,
 }
 
 // TODO: encode this as a enum of numbers (and duplicate mqttbytes::QoS in the process)
@@ -133,61 +284,60 @@ default_newtype!(ForceUpdate, bool, false);
 /// Settings common to any MQTT device
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct MqttConfig {
-    #[serde(alias = "avty")]
-    pub availability: Option<Vec<AvailabilityTopicEntry>>,
+    #[serde(alias = "avty", default, skip_serializing_if = "is_default")]
+    pub availability: HashSet<AvailabilityTopic>,
 
     #[serde(alias = "avty_mode", default, skip_serializing_if = "is_default")]
-    pub availability_mode: AvailabilityMode,
+    availability_mode: AvailabilityMode,
 
-    // TODO: define a way so that availability and availability_topic are mutually exclusive
-    #[serde(default, skip_serializing_if = "is_default")]
-    pub availability_topic: Option<String>,
-
+    // NOTE: This is an Rc, that is serialized. This requires opting in to Rc/Arc serialization
+    // with serde, as ref counted types aren't completely preserved. In this case that's ok, as the
+    // ref counting is to try to keep memory usage/allocations down when doing a one-time
+    // configuration on start up.
     #[serde(alias = "dev", default, skip_serializing_if = "is_default")]
-    pub device: Device,
+    device: Rc<RefCell<Device>>,
 
     #[serde(alias = "exp_aft", default, skip_serializing_if = "is_default")]
-    pub expire_after: Option<u32>,
+    expire_after: Option<u32>,
 
     #[serde(alias = "exp_aft", default, skip_serializing_if = "is_default")]
-    pub force_update: ForceUpdate,
+    force_update: ForceUpdate,
 
     #[serde(alias = "ic", default, skip_serializing_if = "is_default")]
-    pub icon: Option<String>,
+    icon: Option<String>,
 
     #[serde(alias = "json_attr_tpl", default, skip_serializing_if = "is_default")]
-    pub json_attributes_template: Option<String>,
+    json_attributes_template: Option<String>,
 
     #[serde(alias = "json_attr_t", default, skip_serializing_if = "is_default")]
-    pub json_attributes_topic: Option<String>,
+    json_attributes_topic: Option<String>,
 
     // Not including 'name', as the default value for that is specific to the type of device
     #[serde(alias = "pl_avail", default, skip_serializing_if = "is_default")]
-    pub payload_available: PayloadAvailable,
+    payload_available: PayloadAvailable,
 
     #[serde(alias = "pl_not_avail", default, skip_serializing_if = "is_default")]
-    pub payload_not_available: PayloadNotAvailable,
+    payload_not_available: PayloadNotAvailable,
 
     #[serde(default, skip_serializing_if = "is_default")]
-    pub qos: SensorQoS,
+    qos: SensorQoS,
 
     #[serde(alias = "stat_t")]
-    pub state_topic: String,
+    state_topic: String,
 
     #[serde(alias = "uniq_id", default, skip_serializing_if = "is_default")]
-    pub unique_id: Option<String>,
+    unique_id: Option<String>,
 
     #[serde(alias = "val_tpl", default, skip_serializing_if = "is_default")]
-    pub value_template: Option<String>,
+    value_template: Option<String>,
 }
 
 impl MqttConfig {
     pub fn new_with_state_topic<P: Into<String>>(state_topic: P) -> Self {
         Self {
-            availability: None,
+            availability: HashSet::default(),
             availability_mode: AvailabilityMode::default(),
-            availability_topic: None,
-            device: Device::default(),
+            device: Rc::new(RefCell::new(Device::default())),
             expire_after: None,
             force_update: ForceUpdate::default(),
             icon: None,
@@ -201,20 +351,115 @@ impl MqttConfig {
             value_template: None,
         }
     }
+
+    pub fn clone_with_state<P: Into<String>>(&self, new_state: P) -> Self {
+        Self {
+            state_topic: new_state.into(),
+            ..self.clone()
+        }
+    }
+}
+
+macro_rules! expose_inner {
+    ($name:ident, $typ:ty) => {
+        pub fn $name(&self) -> &$typ {
+            &self.$name
+        }
+        paste! {
+            pub fn [<set_ $name>](&mut self, new_value: $typ) {
+                self.$name = new_value
+            }
+        }
+    };
+    ($inner_name:ident, $name:ident, $typ:ty) => {
+        pub fn $name(&self) -> &$typ {
+            &self.$inner_name.$name
+        }
+        paste! {
+            pub fn [<set_ $name>](&mut self, new_value: $typ) {
+                self.$inner_name.$name = new_value
+            }
+        }
+    };
+}
+
+macro_rules! expose_mqtt_config {
+    ($name:ident, $typ:ty) => {
+        expose_inner!(mqtt, $name, $typ);
+    };
+}
+
+macro_rules! expose_device_config {
+    ($name:ident, $typ:ty) => {
+        paste! {
+            pub fn [<device_ $name>](&self) -> Ref<'_, $typ> {
+                Ref::map(self.mqtt.device.borrow(), |d| &d.$name)
+            }
+            pub fn [<set_device_ $name>](&mut self, new_value: $typ) {
+                self.mqtt.device.borrow_mut().$name = new_value
+            }
+        }
+    };
+}
+
+macro_rules! expose_common {
+    () => {
+        pub fn availability_topics(&self) -> &HashSet<AvailabilityTopic> {
+            &self.mqtt.availability
+        }
+        pub fn add_availability_topic(&mut self, topic: String) {
+            self.mqtt.availability.insert(AvailabilityTopic::new(topic));
+        }
+        expose_mqtt_config!(availability_mode, AvailabilityMode);
+        // Device?
+        expose_mqtt_config!(expire_after, Option<u32>);
+        expose_mqtt_config!(force_update, ForceUpdate);
+        expose_mqtt_config!(icon, Option<String>);
+        expose_mqtt_config!(json_attributes_template, Option<String>);
+        expose_mqtt_config!(json_attributes_topic, Option<String>);
+        expose_mqtt_config!(payload_available, PayloadAvailable);
+        expose_mqtt_config!(payload_not_available, PayloadNotAvailable);
+        expose_mqtt_config!(qos, SensorQoS);
+        expose_mqtt_config!(state_topic, String);
+        expose_mqtt_config!(unique_id, Option<String>);
+        expose_mqtt_config!(value_template, Option<String>);
+
+        /*
+        //expose_device_config!(connections, Option<Connection>);
+        pub fn device_mac(&self) -> Option<Ref<'_, &String>> {
+            let connections: Ref<'_, Option<Connection>> = Ref::map(self.mqtt.device.borrow(), |d| &d.connections);
+            // It's surprisingly tricky to convert a Ref<'_, Option<T>> to Option<Ref<'_, T>>
+            if connections.is_none() {
+                Some(Ref::map(connections, |c| {
+
+                }))
+            } else {
+                None
+            }
+        }
+        */
+        expose_device_config!(identifiers, HashSet<String>);
+        expose_device_config!(manufacturer, Option<String>);
+        expose_device_config!(model, Option<String>);
+        expose_device_config!(name, Option<String>);
+        expose_device_config!(suggested_area, Option<String>);
+        expose_device_config!(sw_version, Option<String>);
+        expose_device_config!(via_device, Option<String>);
+    };
 }
 
 // Only defining a few of the classes for now. If I break this out into a library, this should be
 // expanded to cover all of the device classes.
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum BinaryDeviceClass {
+pub enum BinarySensorClass {
     None,
     Battery,
     Connectivity,
     Occupancy,
 }
 
-impl Default for BinaryDeviceClass {
+impl Default for BinarySensorClass {
     fn default() -> Self {
         Self::None
     }
@@ -227,40 +472,53 @@ default_string!(PayloadOn, "ON");
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct BinarySensor {
     #[serde(flatten)]
-    pub mqtt: MqttConfig,
+    mqtt: MqttConfig,
 
     #[serde(alias = "dev_cla", default, skip_serializing_if = "is_default")]
-    pub device_class: BinaryDeviceClass,
+    device_class: BinarySensorClass,
 
     #[serde(default, skip_serializing_if = "is_default")]
-    pub name: BinarySensorName,
+    name: BinarySensorName,
 
     #[serde(alias = "off_dly", default, skip_serializing_if = "is_default")]
-    pub off_delay: Option<u32>,
+    off_delay: Option<u32>,
 
     #[serde(alias = "pl_off", default, skip_serializing_if = "is_default")]
-    pub payload_off: PayloadOff,
+    payload_off: PayloadOff,
 
     #[serde(alias = "pl_on", default, skip_serializing_if = "is_default")]
-    pub payload_on: PayloadOn,
+    payload_on: PayloadOn,
 }
 
+#[allow(dead_code)]
 impl BinarySensor {
+    expose_common!();
+    expose_inner!(device_class, BinarySensorClass);
+    expose_inner!(off_delay, Option<u32>);
+    expose_inner!(payload_off, PayloadOff);
+    expose_inner!(payload_on, PayloadOn);
+
     pub fn new_with_state_topic<P: Into<String>>(state_topic: P) -> Self {
         Self {
             mqtt: MqttConfig::new_with_state_topic(state_topic),
-            device_class: BinaryDeviceClass::default(),
+            device_class: BinarySensorClass::default(),
             name: BinarySensorName::default(),
             off_delay: None,
             payload_off: PayloadOff::default(),
             payload_on: PayloadOn::default(),
         }
     }
-}
 
-impl From<&BinarySensor> for Component {
-    fn from(sensor: &BinarySensor) -> Self {
-        Self::BinarySensor
+    pub fn component() -> Component {
+        Component::BinarySensor
+    }
+
+    pub fn name(&self) -> &String {
+        &self.name.0
+    }
+
+    pub fn set_name(&mut self, new_name: String) {
+        self.name.0 = new_name;
     }
 }
 
@@ -284,19 +542,24 @@ default_string!(AnalogSensorName, "MQTT Sensor");
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AnalogSensor {
     #[serde(flatten)]
-    pub mqtt: MqttConfig,
+    mqtt: MqttConfig,
 
     #[serde(alias = "dev_cla", default, skip_serializing_if = "is_default")]
-    pub device_class: AnalogSensorClass,
+    device_class: AnalogSensorClass,
 
     #[serde(default, skip_serializing_if = "is_default")]
-    pub name: AnalogSensorName,
+    name: AnalogSensorName,
 
     #[serde(alias = "unit_of_meas", default, skip_serializing_if = "is_default")]
-    pub unit_of_measurement: Option<String>,
+    unit_of_measurement: Option<String>,
 }
 
+#[allow(dead_code)]
 impl AnalogSensor {
+    expose_common!();
+    expose_inner!(device_class, AnalogSensorClass);
+    expose_inner!(unit_of_measurement, Option<String>);
+
     pub fn new_with_state_topic<P: Into<String>>(state_topic: P) -> Self {
         Self {
             mqtt: MqttConfig::new_with_state_topic(state_topic),
@@ -305,10 +568,16 @@ impl AnalogSensor {
             unit_of_measurement: None,
         }
     }
-}
 
-impl From<&AnalogSensor> for Component {
-    fn from(sensor: &AnalogSensor) -> Self {
-        Self::Sensor
+    pub fn component() -> Component {
+        Component::Sensor
+    }
+
+    pub fn name(&self) -> &String {
+        &self.name.0
+    }
+
+    pub fn set_name(&mut self, new_name: String) {
+        self.name.0 = new_name;
     }
 }
