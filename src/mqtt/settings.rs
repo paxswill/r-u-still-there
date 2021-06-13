@@ -26,12 +26,13 @@ pub struct MqttSettings {
     /// A name for the base topic for this device.
     pub(crate) name: String,
 
-    /// Override the unique ID for this device.
+    /// Provide a persistent unique identifier for this device.
     ///
-    /// The unique ID is only used with the Home Assistant integration. If not provided, an ID is
-    /// generated automatically. The generated ID should be stable across a system install, but if
-    /// you want to guarantee that (or re-use an existing ID) you can specify it here. If
-    /// specified, the ID is used *exactly* as written.
+    /// This value need to be unique across different devices, but also persistent over the life of
+    /// the device. By default the systemd `machine-id` is used as a seed to generate an ID
+    /// automatically, but there are some uses for manually specifying it (ex: migrating an
+    /// existing setup to a new installation, or using a volatile system that regenerates its
+    /// `machine-id` on every boot).
     #[serde(default)]
     unique_id: Option<String>,
 

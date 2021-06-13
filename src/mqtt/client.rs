@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::{anyhow, Context as _};
+use bytes::{BufMut, BytesMut};
 use futures::{Sink, SinkExt, Stream, StreamExt};
 use mqttbytes::{v4, QoS};
 use pin_project::pin_project;
@@ -10,14 +11,17 @@ use tokio_rustls::rustls::ClientConfig;
 use tokio_rustls::webpki;
 use tokio_rustls::{client::TlsStream, TlsConnector};
 use tokio_util::codec::Framed;
+use tracing::warn;
 
+use std::cell::RefCell;
 use std::io;
 use std::pin::Pin;
+use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
 use super::codec::{Error as MqttError, MqttCodec};
-use super::home_assistant::Component;
+use super::home_assistant as hass;
 use super::settings::MqttSettings;
 
 type MqttFramed<V> = Framed<MqttStream, MqttCodec<V>>;
@@ -87,7 +91,7 @@ pub(crate) enum Topic {
     Count,
 
     /// The Home Assistant MQTT discovery topic for this device.
-    Discovery(Component),
+    Discovery(hass::Component),
 }
 
 async fn next_packet(
@@ -185,6 +189,20 @@ impl MqttClient {
         format!("r_u_still_there/{}/{}", self.settings.name, topic_name)
     }
 
+    fn unique_id_for(&self, topic: Topic) -> String {
+        let unique_id = self.settings.unique_id();
+        let entity_kind = match topic {
+            // Status doesn't really need a unique_id, buyt just in case I add it later
+            Topic::Status => "status",
+            Topic::Temperature => "temperature",
+            Topic::Occupancy => "occupied",
+            Topic::Count => "count",
+            // For "discovery" just use the bare device unique ID.
+            Topic::Discovery(_) => return unique_id,
+        };
+        format!("{}_{}_r-u-still-there", unique_id, entity_kind)
+    }
+
     fn connect_data(&self) -> v4::Connect {
         let mut data: v4::Connect = (&self.settings).into();
         let payload = serde_json::to_vec(&Status::Offline)
@@ -196,6 +214,96 @@ impl MqttClient {
             true,
         ));
         data
+    }
+
+    /// Create the device description common to all entities in Home Assistant.
+    fn create_hass_device(&self) -> Rc<RefCell<hass::Device>> {
+        let mut device = hass::Device::default();
+        // Add all the MAC addresses to our device, it'll update whatever Home Assistant has.
+        let mac_addresses = match mac_address::MacAddressIterator::new() {
+            Ok(address_iterator) => Some(address_iterator),
+            Err(e) => {
+                warn!("unable to access MAC addresses: {:?}", e);
+                None
+            }
+        };
+        if let Some(address_iterator) = mac_addresses {
+            for address in address_iterator {
+                device.add_mac_connection(address);
+            }
+        }
+        device.name = Some(self.settings.name.clone());
+        device.add_identifier(self.settings.unique_id());
+        // TODO: investigate using the 'built' crate to also get Git hash
+        device.sw_version = option_env!("CARGO_PKG_VERSION").map(|vers| format!("r-u-still-there v{}", vers));
+        Rc::new(RefCell::new(device))
+    }
+
+    async fn publish_discovery_config<'a, T: 'a>(
+        &mut self,
+        config: &'a T,
+        framed: &mut MqttFramed<v4::Packet>,
+    ) -> anyhow::Result<()>
+    where
+        T: Serialize,
+        hass::Component: From<&'a T>,
+    {
+        let mut payload = BytesMut::new().writer();
+        serde_json::to_writer(&mut payload, config)
+            .context("serializing MQTT discovery config")?;
+        let mut packet_data = v4::Publish::from_bytes(
+            self.topic_for(Topic::Discovery(config.into())),
+            // TODO: More QoS tracking
+            QoS::AtMostOnce,
+            payload.into_inner().freeze()
+        );
+        // Retain the configuration
+        packet_data.retain = true;
+        // TODO: implement tracking for QoS
+        framed.feed(v4::Packet::Publish(packet_data)).await
+            .context("sending discovery configuration to MQTT broker")?;
+        Ok(())
+    }
+
+    async fn publish_home_assistant(&mut self, framed: &mut MqttFramed<v4::Packet>) -> anyhow::Result<()> {
+        if !self.settings.home_assistant {
+            warn!("Publishing Home Assistant discovery data without that option set");
+        }
+        let device = self.create_hass_device();
+
+        let mut temperature_config = hass::AnalogSensor::new_with_state_topic_and_device(
+            self.topic_for(Topic::Temperature),
+            &device
+        );
+        temperature_config.add_availability_topic(self.topic_for(Topic::Status));
+        temperature_config.set_device_class(hass::AnalogSensorClass::Temperature);
+        temperature_config.set_name(format!("{} Temperature", self.settings.name).into());
+        // TODO: let this be temperature_configurable?
+        temperature_config.set_unit_of_measurement(Some("C".to_string()));
+        temperature_config.set_unique_id(Some(self.unique_id_for(Topic::Temperature)));
+        self.publish_discovery_config(&temperature_config, framed).await?;
+
+        let mut count_config = hass::AnalogSensor::new_with_state_topic_and_device(
+            self.topic_for(Topic::Count),
+            &device
+        );
+        count_config.add_availability_topic(self.topic_for(Topic::Status));
+        count_config.set_name(format!("{} Occupancy Count", self.settings.name).into());
+        count_config.set_unit_of_measurement(Some("people".to_string()));
+        count_config.set_unique_id(Some(self.unique_id_for(Topic::Count)));
+        self.publish_discovery_config(&count_config, framed).await?;
+
+        let mut occupancy_config = hass::BinarySensor::new_with_state_topic_and_device(
+            self.topic_for(Topic::Occupancy),
+            &device
+        );
+        occupancy_config.add_availability_topic(self.topic_for(Topic::Status));
+        occupancy_config.set_device_class(hass::BinarySensorClass::Occupancy);
+        occupancy_config.set_name(format!("{} Occupancy", self.settings.name).into());
+        occupancy_config.set_unique_id(Some(self.unique_id_for(Topic::Occupancy)));
+        self.publish_discovery_config(&occupancy_config, framed).await?;
+
+        Ok(())
     }
 }
 
