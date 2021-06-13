@@ -4,8 +4,10 @@ use hmac::{Hmac, Mac, NewMac};
 use machine_uid::machine_id::get_machine_id;
 use mqttbytes::v4::Login;
 use mqttbytes::{v4, v5, Protocol};
+use rumqttc::{ClientConfig, MqttOptions, Transport};
 use serde::Deserialize;
 use sha2::Sha256;
+use tokio_rustls::webpki;
 use tracing::{debug, trace, warn};
 use url::Url;
 
@@ -13,6 +15,7 @@ use std::convert::{TryFrom, TryInto};
 use std::str::FromStr;
 
 use super::external_value::ExternalValue;
+use super::home_assistant as hass;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -20,6 +23,25 @@ pub const DEFAULT_MQTT_PORT: u16 = 1883;
 pub const DEFAULT_MQTTS_PORT: u16 = 8883;
 const APPLICATION_KEY: &[u8; 16] =
     b"\x64\x6c\x30\xc3\x41\xd7\x47\x40\x8b\x1e\xe0\x78\xf7\x4c\x73\xe0";
+
+/// The different topics that will be published.
+#[derive(Clone, Copy)]
+pub enum Topic {
+    /// The status topic.
+    Status,
+
+    /// The temperature of the camera.
+    Temperature,
+
+    /// Whether or not the camera detects a person.
+    Occupancy,
+
+    /// How many people the camera is detecting.
+    Count,
+
+    /// The Home Assistant MQTT discovery topic for this device.
+    Discovery(hass::Component),
+}
 
 #[derive(Deserialize, Debug, PartialEq)]
 pub struct MqttSettings {
@@ -146,6 +168,26 @@ impl MqttSettings {
         &self.server.0
     }
 
+    pub fn topic_for(&self, topic: Topic) -> String {
+        // TODO: add a setting to override the base topic
+        let topic_name = match topic {
+            Topic::Status => "status",
+            Topic::Temperature => "temperature",
+            Topic::Occupancy => "occupied",
+            Topic::Count => "count",
+            // The discovery topic is special
+            Topic::Discovery(component) => {
+                return format!(
+                    "{}/{}/{}/config",
+                    self.home_assistant_topic,
+                    component.to_string(),
+                    self.unique_id()
+                );
+            }
+        };
+        format!("r_u_still_there/{}/{}", self.name, topic_name)
+    }
+
     /// Get the unique ID for this device.
     ///
     /// If one was provided, use that. If not, retrieve a machine-specific ID from the OS and hash
@@ -188,28 +230,40 @@ impl MqttSettings {
     }
 }
 
-impl From<&MqttSettings> for v4::Connect {
-    fn from(settings: &MqttSettings) -> Self {
-        let login: Option<v4::Login> = if let Some(username) = &settings.username {
-            let password: String = settings
+impl TryFrom<&MqttSettings> for rumqttc::MqttOptions {
+    type Error = anyhow::Error;
+
+    fn try_from(user_config: &MqttSettings) -> anyhow::Result<Self> {
+        let url = user_config.server_url();
+        let host_str = url
+            .host_str()
+            .ok_or(anyhow!("MQTT URL somehow doesn't have a host"))?;
+        let port = url.port().ok_or(anyhow!("Unset port for the MQTT URL"))?;
+        let mut options = Self::new(user_config.name.clone(), host_str, port);
+        match url.scheme() {
+            "mqtts" => {
+                let mut tls_config = ClientConfig::new();
+                // If disabling client verification was ever supported, it would be done here.
+                // On second thought, provide a way to use a custom certificate as the trust root,
+                // but not completely disable verification.
+                tls_config
+                    .root_store
+                    .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+                options.set_transport(Transport::tls_with_config(tls_config.into()));
+            }
+            "mqtt" => {
+                options.set_transport(Transport::tcp());
+            }
+            _ => return Err(anyhow!("unknown MQTT scheme")),
+        }
+        if let Some(username) = &user_config.username {
+            let password = user_config
                 .password
                 .as_ref()
                 .map_or("".to_string(), |p| p.0.clone());
-            Some(Login::new(username.clone(), password))
-        } else {
-            None
-        };
-        Self {
-            // Only MQTT 3.1.1 for now, but 5 should be implemented by mqttrs at some point.
-            protocol: Protocol::V4,
-            keep_alive: settings.keep_alive.unwrap_or(0),
-            // Using the name from the settings for now, but might change this later.
-            client_id: settings.name.clone(),
-            // Always start with a clean session
-            clean_session: true,
-            last_will: None,
-            login,
+            options.set_credentials(username, &password);
         }
+        Ok(options)
     }
 }
 

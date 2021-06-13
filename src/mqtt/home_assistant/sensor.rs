@@ -198,7 +198,6 @@ impl From<&BinarySensor> for Component {
     }
 }
 
-
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AnalogSensorClass {
