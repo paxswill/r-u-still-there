@@ -5,3 +5,4 @@ mod sensor;
 mod util;
 
 pub use device::{Connection, Device};
+pub use sensor::{AnalogSensor, AnalogSensorClass, BinarySensor, BinarySensorClass, Component};

@@ -10,6 +10,7 @@ version = "0.1.0"
 anyhow = "1.0"
 bytes = "1.0.1"
 colorous = "1.0.5"
+delegate = { version = "0.5", optional = true }
 futures = "0.3.13"
 hex = { version = "0.4", features = ["serde"], optional = true }
 hmac = { version = "0.11", optional = true }
@@ -96,6 +97,7 @@ version = "0.3.1"
 default = ["mjpeg", "mozjpeg", "mqtt", "render_svg"]
 mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
 mqtt = [
+    "delegate",
     "hex",
     "hmac",
     "mac_address/serde",

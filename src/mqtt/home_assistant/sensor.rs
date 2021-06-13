@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use std::cell::Ref;
-use std::collections::HashSet;
+use std::cell::{Ref, RefCell, RefMut};
+use std::rc::Rc;
 
+use delegate::delegate;
 use paste::paste;
 use serde::{Deserialize, Serialize};
 
-use crate::{default_newtype, default_string};
 use super::common::{
     AvailabilityMode, AvailabilityTopic, ForceUpdate, MqttConfig, PayloadAvailable,
     PayloadNotAvailable, SensorQoS,
 };
+use super::device::Device;
 use super::util::is_default;
+use crate::{default_newtype, default_string};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum Component {
@@ -68,30 +70,37 @@ macro_rules! expose_mqtt_config {
 }
 
 #[macro_export]
-macro_rules! expose_device_config {
-    ($name:ident, $typ:ty) => {
-        paste! {
-            pub fn [<device_ $name>](&self) -> Ref<'_, $typ> {
-                Ref::map(self.mqtt.device.borrow(), |d| &d.$name)
-            }
-            pub fn [<set_device_ $name>](&mut self, new_value: $typ) {
-                self.mqtt.device.borrow_mut().$name = new_value
-            }
-        }
-    };
-}
-
-#[macro_export]
 macro_rules! expose_common {
     () => {
-        pub fn availability_topics(&self) -> &HashSet<AvailabilityTopic> {
-            &self.mqtt.availability
+        delegate! {
+            to self.mqtt {
+                pub fn add_availability_topic_with_values<A, N>(
+                    &mut self,
+                    topic: String,
+                    available: A,
+                    not_available: N,
+                ) where
+                    A: Into<PayloadAvailable>,
+                    N: Into<PayloadNotAvailable>;
+
+                pub fn add_availability_topic( &mut self, topic: String);
+                pub fn set_availability_topic_with_values<A, N>(
+                    &mut self,
+                    topic: String,
+                    available: A,
+                    not_available: N,
+                ) where
+                    A: Into<PayloadAvailable>,
+                    N: Into<PayloadNotAvailable>;
+                pub fn set_availability_topic( &mut self, topic: String);
+                pub fn availability_topics(&self) -> impl Iterator<Item = &AvailabilityTopic>;
+                pub fn device(&self) -> Ref<'_, Device>;
+                pub fn device_mut(&self) -> RefMut<'_, Device>;
+                pub fn set_device(&mut self, device: &Rc<RefCell<Device>>);
+            }
         }
-        pub fn add_availability_topic(&mut self, topic: String) {
-            self.mqtt.availability.insert(AvailabilityTopic::new(topic));
-        }
+
         expose_mqtt_config!(availability_mode, AvailabilityMode);
-        // Device?
         expose_mqtt_config!(expire_after, Option<u32>);
         expose_mqtt_config!(force_update, ForceUpdate);
         expose_mqtt_config!(icon, Option<String>);
@@ -103,28 +112,6 @@ macro_rules! expose_common {
         expose_mqtt_config!(state_topic, String);
         expose_mqtt_config!(unique_id, Option<String>);
         expose_mqtt_config!(value_template, Option<String>);
-
-        /*
-        //expose_device_config!(connections, Option<Connection>);
-        pub fn device_mac(&self) -> Option<Ref<'_, &String>> {
-            let connections: Ref<'_, Option<Connection>> = Ref::map(self.mqtt.device.borrow(), |d| &d.connections);
-            // It's surprisingly tricky to convert a Ref<'_, Option<T>> to Option<Ref<'_, T>>
-            if connections.is_none() {
-                Some(Ref::map(connections, |c| {
-
-                }))
-            } else {
-                None
-            }
-        }
-        */
-        expose_device_config!(identifiers, HashSet<String>);
-        expose_device_config!(manufacturer, Option<String>);
-        expose_device_config!(model, Option<String>);
-        expose_device_config!(name, Option<String>);
-        expose_device_config!(suggested_area, Option<String>);
-        expose_device_config!(sw_version, Option<String>);
-        expose_device_config!(via_device, Option<String>);
     };
 }
 
@@ -178,9 +165,12 @@ impl BinarySensor {
     expose_inner!(payload_off, PayloadOff);
     expose_inner!(payload_on, PayloadOn);
 
-    pub fn new_with_state_topic<P: Into<String>>(state_topic: P) -> Self {
+    pub fn new_with_state_topic_and_device<P>(state_topic: P, device: &Rc<RefCell<Device>>) -> Self
+    where
+        P: Into<String>,
+    {
         Self {
-            mqtt: MqttConfig::new_with_state_topic(state_topic),
+            mqtt: MqttConfig::new_with_state_and_device(state_topic, device),
             device_class: BinarySensorClass::default(),
             name: BinarySensorName::default(),
             off_delay: None,
@@ -201,6 +191,13 @@ impl BinarySensor {
         self.name.0 = new_name;
     }
 }
+
+impl From<&BinarySensor> for Component {
+    fn from(_: &BinarySensor) -> Self {
+        Self::BinarySensor
+    }
+}
+
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -240,17 +237,16 @@ impl AnalogSensor {
     expose_inner!(device_class, AnalogSensorClass);
     expose_inner!(unit_of_measurement, Option<String>);
 
-    pub fn new_with_state_topic<P: Into<String>>(state_topic: P) -> Self {
+    pub fn new_with_state_topic_and_device<P>(state_topic: P, device: &Rc<RefCell<Device>>) -> Self
+    where
+        P: Into<String>,
+    {
         Self {
-            mqtt: MqttConfig::new_with_state_topic(state_topic),
+            mqtt: MqttConfig::new_with_state_and_device(state_topic, device),
             device_class: AnalogSensorClass::default(),
             name: AnalogSensorName::default(),
             unit_of_measurement: None,
         }
-    }
-
-    pub fn component() -> Component {
-        Component::Sensor
     }
 
     pub fn name(&self) -> &String {
@@ -259,5 +255,11 @@ impl AnalogSensor {
 
     pub fn set_name(&mut self, new_name: String) {
         self.name.0 = new_name;
+    }
+}
+
+impl From<&AnalogSensor> for Component {
+    fn from(_: &AnalogSensor) -> Self {
+        Self::Sensor
     }
 }
