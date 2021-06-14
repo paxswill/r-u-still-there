@@ -5,7 +5,7 @@ use futures::ready;
 use pin_project::pin_project;
 use rumqttc::{AsyncClient, LastWill, MqttOptions as RuMqttOptions, QoS};
 use serde::{Deserialize, Serialize};
-use tokio::task::{JoinHandle, spawn};
+use tokio::task::{spawn, JoinHandle};
 use tracing::{debug, warn};
 
 use std::cell::RefCell;
@@ -69,7 +69,6 @@ pub enum Topic {
     /// How many people the camera is detecting.
     Count,
 }
-
 
 #[derive(Debug, Deserialize, Serialize)]
 struct TopicState {
@@ -161,8 +160,7 @@ impl MqttClient {
         );
         let mut payload = BytesMut::new().writer();
         serde_json::to_writer(&mut payload, config).context("serializing MQTT discovery config")?;
-        let topic = self
-            .client
+        self.client
             .publish_bytes(
                 topic,
                 QoS::AtLeastOnce,
@@ -219,10 +217,7 @@ impl MqttClient {
 impl Future for MqttClient {
     type Output = Result<(), anyhow::Error>;
 
-    fn poll(
-        self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         match ready!(self.project().loop_task.poll(cx)) {
             Ok(inner_result) => Poll::Ready(inner_result),
             Err(e) => Poll::Ready(Err(e.into())),
@@ -247,7 +242,10 @@ impl TryFrom<MqttSettings> for MqttClient {
         let (client, mut eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
         let loop_task = spawn(async move {
             loop {
-                let event = eventloop.poll().await.context("polling the MQTT event loop")?;
+                let event = eventloop
+                    .poll()
+                    .await
+                    .context("polling the MQTT event loop")?;
                 debug!("MQTT event processed: {:?}", event);
             }
         });
