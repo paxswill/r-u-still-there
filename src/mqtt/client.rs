@@ -90,13 +90,13 @@ struct TopicState {
     temperature: Option<f32>,
 
     /// Whether or not the camera senses a person in its view.
-    #[serde(default = "default_occupied")]
+    #[serde(default = "TopicState::default_occupied")]
     occupied: bool,
 
     // TODO: Consider adding the coordinates of detected objects later on, but for now just skip
     // them.
     /// The number of objects detected.
-    #[serde(default = "default_count")]
+    #[serde(default = "TopicState::default_count")]
     count: u32,
     // TODO: Add last_update field
 }
@@ -291,10 +291,12 @@ impl Default for Status {
     }
 }
 
-fn default_occupied() -> bool {
-    false
-}
+impl TopicState {
+    fn default_occupied() -> bool {
+        false
+    }
 
-fn default_count() -> u32 {
-    0
+    fn default_count() -> u32 {
+        0
+    }
 }
