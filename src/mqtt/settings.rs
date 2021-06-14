@@ -54,6 +54,13 @@ pub struct MqttSettings {
     /// 1883 is used for MQTT over TCP, and 8883 for MQTT over TLS.
     server: MqttUrl,
 
+    /// Enable MQTT keep-alive.
+    ///
+    /// Periodically the client will ping the server so the server knows the connection is still
+    /// active. Specified in seconds. 0 is the same as disabled.
+    #[serde(default)]
+    keep_alive: Option<u16>,
+
     /// Enable Home Assistant integration.
     ///
     /// When enabled, entities will be automatically added to Home Assistant using MQTT discovery.
@@ -68,12 +75,14 @@ pub struct MqttSettings {
     #[serde(default = "MqttSettings::default_home_assistant_topic")]
     pub(crate) home_assistant_topic: String,
 
-    /// Enable MQTT keep-alive.
+    /// Retain Home Assistant MQTT discovery configuration on the MQTT broker.
     ///
-    /// Periodically the client will ping the server so the server knows the connection is still
-    /// active. Specified in seconds. 0 is the same as disabled.
-    #[serde(default)]
-    keep_alive: Option<u16>,
+    /// **In almost all cases this option should be enabled, and the default is to be enabled.**
+    ///
+    /// By disabling this, the entity configuration will not be stored on the MQTT broker, and Home
+    /// Assistant will only receive it when r-u-still-there starts up.
+    #[serde(default = "MqttSettings::default_home_assistant_retain")]
+    pub(super) home_assistant_retain: bool,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -138,6 +147,11 @@ impl MqttSettings {
     /// The default Home Assistant MQTT discovery topic prefix.
     fn default_home_assistant_topic() -> String {
         "homeassistant".into()
+    }
+
+    /// The default value for whether or not to retain Home Assistant MQTT discovery configuration.
+    fn default_home_assistant_retain() -> bool {
+        true
     }
 
     /// Access the server URL.
@@ -219,6 +233,7 @@ impl TryFrom<&MqttSettings> for rumqttc::MqttOptions {
                 .password
                 .as_ref()
                 .map_or("".to_string(), |p| p.0.clone());
+            debug!("Adding credentials to MQTT client configuration");
             options.set_credentials(username, &password);
         }
         // Explicit keep alive setting
@@ -248,9 +263,10 @@ mod test {
             username: None,
             password: None,
             server: "mqtt://127.0.0.1".parse().unwrap(),
+            keep_alive: None,
             home_assistant: false,
             home_assistant_topic: "homeassistant".into(),
-            keep_alive: None,
+            home_assistant_retain: true,
         };
         assert_eq!(parsed, expected);
     }

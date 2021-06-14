@@ -46,6 +46,14 @@ pub struct MqttClient {
     /// Defaults to "homeassistant"
     home_assistant_topic: String,
 
+    /// Retain Home Assistant MQTT discovery configuration on the MQTT broker.
+    ///
+    /// **In almost all cases this option should be enabled, and the default is to be enabled.**
+    ///
+    /// By disabling this, the entity configuration will not be stored on the MQTT broker, and Home
+    /// Assistant will only receive it when r-u-still-there starts up.
+    home_assistant_retain: bool,
+
     /// The MQTT client.
     client: AsyncClient,
 
@@ -164,8 +172,7 @@ impl MqttClient {
             .publish_bytes(
                 topic,
                 QoS::AtLeastOnce,
-                // Retain the config data
-                true,
+                self.home_assistant_retain,
                 payload.into_inner().freeze(),
             )
             .await?;
@@ -173,8 +180,8 @@ impl MqttClient {
     }
 
     pub async fn publish_home_assistant(&mut self) -> anyhow::Result<()> {
-        if !self.home_assistant {
-            warn!("Publishing Home Assistant discovery data without that option set");
+        if !self.home_assistant_retain {
+            warn!("Publishing Home Assistant discovery data without the retain flag");
         }
         let device = self.create_hass_device();
 
@@ -257,6 +264,7 @@ impl TryFrom<MqttSettings> for MqttClient {
             device_uid,
             home_assistant: settings.home_assistant,
             home_assistant_topic: settings.home_assistant_topic,
+            home_assistant_retain: settings.home_assistant_retain,
             client,
             loop_task,
         })
