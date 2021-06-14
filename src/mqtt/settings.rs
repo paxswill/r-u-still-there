@@ -2,12 +2,9 @@
 use anyhow::anyhow;
 use hmac::{Hmac, Mac, NewMac};
 use machine_uid::machine_id::get_machine_id;
-use mqttbytes::v4::Login;
-use mqttbytes::{v4, v5, Protocol};
-use rumqttc::{ClientConfig, MqttOptions, Transport};
+use rumqttc::{ClientConfig, Transport};
 use serde::Deserialize;
 use sha2::Sha256;
-use tokio_rustls::webpki;
 use tracing::{debug, trace, warn};
 use url::Url;
 
@@ -15,7 +12,6 @@ use std::convert::{TryFrom, TryInto};
 use std::str::FromStr;
 
 use super::external_value::ExternalValue;
-use super::home_assistant as hass;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -23,25 +19,6 @@ pub const DEFAULT_MQTT_PORT: u16 = 1883;
 pub const DEFAULT_MQTTS_PORT: u16 = 8883;
 const APPLICATION_KEY: &[u8; 16] =
     b"\x64\x6c\x30\xc3\x41\xd7\x47\x40\x8b\x1e\xe0\x78\xf7\x4c\x73\xe0";
-
-/// The different topics that will be published.
-#[derive(Clone, Copy)]
-pub enum Topic {
-    /// The status topic.
-    Status,
-
-    /// The temperature of the camera.
-    Temperature,
-
-    /// Whether or not the camera detects a person.
-    Occupancy,
-
-    /// How many people the camera is detecting.
-    Count,
-
-    /// The Home Assistant MQTT discovery topic for this device.
-    Discovery(hass::Component),
-}
 
 #[derive(Deserialize, Debug, PartialEq)]
 pub struct MqttSettings {
@@ -166,26 +143,6 @@ impl MqttSettings {
     /// Access the server URL.
     pub fn server_url(&self) -> &Url {
         &self.server.0
-    }
-
-    pub fn topic_for(&self, topic: Topic) -> String {
-        // TODO: add a setting to override the base topic
-        let topic_name = match topic {
-            Topic::Status => "status",
-            Topic::Temperature => "temperature",
-            Topic::Occupancy => "occupied",
-            Topic::Count => "count",
-            // The discovery topic is special
-            Topic::Discovery(component) => {
-                return format!(
-                    "{}/{}/{}/config",
-                    self.home_assistant_topic,
-                    component.to_string(),
-                    self.unique_id()
-                );
-            }
-        };
-        format!("r_u_still_there/{}/{}", self.name, topic_name)
     }
 
     /// Get the unique ID for this device.
