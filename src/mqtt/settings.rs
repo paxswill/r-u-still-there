@@ -256,12 +256,17 @@ impl TryFrom<&MqttSettings> for rumqttc::MqttOptions {
             }
             _ => return Err(anyhow!("unknown MQTT scheme")),
         }
+        // MQTT3/4 authentication
         if let Some(username) = &user_config.username {
             let password = user_config
                 .password
                 .as_ref()
                 .map_or("".to_string(), |p| p.0.clone());
             options.set_credentials(username, &password);
+        }
+        // Explicit keep alive setting
+        if let Some(keep_alive) = user_config.keep_alive {
+            options.set_keep_alive(keep_alive);
         }
         Ok(options)
     }
