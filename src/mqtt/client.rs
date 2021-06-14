@@ -1,25 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use anyhow::{anyhow, Context as _};
+use anyhow::Context as _;
 use bytes::{BufMut, BytesMut};
-use futures::{Sink, SinkExt, Stream, StreamExt};
+use futures::ready;
 use pin_project::pin_project;
-use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions as RuMqttOptions, QoS};
+use rumqttc::{AsyncClient, LastWill, MqttOptions as RuMqttOptions, QoS};
 use serde::{Deserialize, Serialize};
-use tracing::warn;
+use tokio::task::{JoinHandle, spawn};
+use tracing::{debug, warn};
 
 use std::cell::RefCell;
 use std::convert::TryFrom;
-use std::io;
+use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
-use super::codec::{Error as MqttError, MqttCodec};
 use super::home_assistant as hass;
 use super::settings::{MqttSettings, Topic};
 
-//#[derive(Debug)]
+#[pin_project]
+#[derive(Debug)]
 pub struct MqttClient {
     /// The various settings for connecting to the MQTT server.
     settings: MqttSettings,
@@ -27,8 +27,9 @@ pub struct MqttClient {
     /// The MQTT client.
     client: AsyncClient,
 
-    /// The MQTT event loop.
-    eventloop: EventLoop,
+    /// A `JoinHandle` for the task running the rumqttc event loop.
+    #[pin]
+    loop_task: JoinHandle<Result<(), anyhow::Error>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -76,11 +77,17 @@ impl MqttClient {
             QoS::AtLeastOnce,
             true,
         ));
-        let (client, eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
+        let (client, mut eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
+        let loop_task = spawn(async move {
+            loop {
+                let event = eventloop.poll().await.context("polling the MQTT event loop")?;
+                debug!("MQTT event processed: {:?}", event);
+            }
+        });
         Ok(Self {
             settings,
             client,
-            eventloop,
+            loop_task,
         })
     }
 
@@ -181,6 +188,20 @@ impl MqttClient {
         self.publish_discovery_config(&occupancy_config).await?;
 
         Ok(())
+    }
+}
+
+impl Future for MqttClient {
+    type Output = Result<(), anyhow::Error>;
+
+    fn poll(
+        self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Self::Output> {
+        match ready!(self.project().loop_task.poll(cx)) {
+            Ok(inner_result) => Poll::Ready(inner_result),
+            Err(e) => Poll::Ready(Err(e.into())),
+        }
     }
 }
 
