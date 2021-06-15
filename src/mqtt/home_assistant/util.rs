@@ -1,10 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use std::cell::{Ref, RefCell};
-use std::collections::HashSet;
-use std::rc::Rc;
-
-use paste::paste;
-use serde::{Deserialize, Serialize};
 
 /// Skip serializing a field if the current value is the same as the default.
 // Code taken from https://mth.st/blog/skip-default/

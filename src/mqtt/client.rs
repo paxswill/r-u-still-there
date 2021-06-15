@@ -1,26 +1,20 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::Context as _;
 use bytes::{BufMut, BytesMut};
-use futures::ready;
 use pin_project::pin_project;
-use rumqttc::{AsyncClient, LastWill, MqttOptions as RuMqttOptions, QoS};
+use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions as RuMqttOptions, QoS};
 use serde::{Deserialize, Serialize};
-use tokio::task::{spawn, JoinHandle};
-use tracing::{debug, warn};
+use tracing::warn;
 
 use std::cell::RefCell;
 use std::convert::TryFrom;
-use std::future::Future;
-use std::pin::Pin;
 use std::rc::Rc;
-use std::task::{Context, Poll};
 
 use super::home_assistant as hass;
 use super::settings::MqttSettings;
 
 #[pin_project]
-#[derive(Debug, Deserialize)]
-#[serde(try_from = "MqttSettings")]
+#[derive(Debug)]
 pub struct MqttClient {
     /// A name for the base topic for this device.
     name: String,
@@ -56,10 +50,6 @@ pub struct MqttClient {
 
     /// The MQTT client.
     client: AsyncClient,
-
-    /// A `JoinHandle` for the task running the rumqttc event loop.
-    #[pin]
-    loop_task: JoinHandle<Result<(), anyhow::Error>>,
 }
 
 /// The different topics that will be published.
@@ -113,6 +103,34 @@ enum Status {
 const EVENT_LOOP_CAPACITY: usize = 10;
 
 impl MqttClient {
+    pub fn connect(settings: MqttSettings) -> anyhow::Result<(Self, EventLoop)> {
+        // Create rumqttc client and event loop task
+        let mut client_options = RuMqttOptions::try_from(&settings)?;
+        let payload = serde_json::to_vec(&Status::Offline)
+            .expect("a static Status enum to encode cleanly into JSON");
+        client_options.set_last_will(LastWill::new(
+            topic_for(&settings.name, Topic::Status),
+            payload,
+            QoS::AtLeastOnce,
+            true,
+        ));
+        let (client, eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
+        // Extract values from settings
+        let device_uid = settings.unique_id();
+        let name = settings.name;
+        Ok((
+            Self {
+                name,
+                device_uid,
+                home_assistant: settings.home_assistant,
+                home_assistant_topic: settings.home_assistant_topic,
+                home_assistant_retain: settings.home_assistant_retain,
+                client,
+            },
+            eventloop,
+        ))
+    }
+
     fn unique_id_for(&self, topic: Topic) -> String {
         let entity_kind = match topic {
             // Status doesn't really need a unique_id, buyt just in case I add it later
@@ -218,56 +236,6 @@ impl MqttClient {
         self.publish_discovery_config(&occupancy_config).await?;
 
         Ok(())
-    }
-}
-
-impl Future for MqttClient {
-    type Output = Result<(), anyhow::Error>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        match ready!(self.project().loop_task.poll(cx)) {
-            Ok(inner_result) => Poll::Ready(inner_result),
-            Err(e) => Poll::Ready(Err(e.into())),
-        }
-    }
-}
-
-impl TryFrom<MqttSettings> for MqttClient {
-    type Error = anyhow::Error;
-
-    fn try_from(settings: MqttSettings) -> Result<Self, Self::Error> {
-        // Create rumqttc client and event loop task
-        let mut client_options = RuMqttOptions::try_from(&settings)?;
-        let payload = serde_json::to_vec(&Status::Offline)
-            .expect("a static Status enum to encode cleanly into JSON");
-        client_options.set_last_will(LastWill::new(
-            topic_for(&settings.name, Topic::Status),
-            payload,
-            QoS::AtLeastOnce,
-            true,
-        ));
-        let (client, mut eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
-        let loop_task = spawn(async move {
-            loop {
-                let event = eventloop
-                    .poll()
-                    .await
-                    .context("polling the MQTT event loop")?;
-                debug!("MQTT event processed: {:?}", event);
-            }
-        });
-        // Extract values from settings
-        let device_uid = settings.unique_id();
-        let name = settings.name;
-        Ok(Self {
-            name,
-            device_uid,
-            home_assistant: settings.home_assistant,
-            home_assistant_topic: settings.home_assistant_topic,
-            home_assistant_retain: settings.home_assistant_retain,
-            client,
-            loop_task,
-        })
     }
 }
 

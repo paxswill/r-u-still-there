@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
+use pin_project::pin_project;
 use tokio::task::JoinError;
-use tracing::{debug, info, info_span, trace_span};
+use tracing::{debug, debug_span, info, info_span, trace_span};
 use tracing_futures::Instrument;
 use warp::Filter;
 
@@ -18,7 +19,7 @@ use crate::image_buffer::{BytesImage, ThermalImage};
 use crate::occupancy::Tracker;
 use crate::render::Renderer as _;
 use crate::settings::{RenderSettings, Settings, StreamSettings, TrackerSettings};
-use crate::{render, spmc, stream};
+use crate::{mqtt, render, spmc, stream};
 
 fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
 where
@@ -51,6 +52,7 @@ pub struct Pipeline {
     camera: Camera,
     frame_source: spmc::Sender<ThermalImage>,
     rendered_source: spmc::Sender<BytesImage>,
+    mqtt_client: Option<mqtt::MqttClient>,
     tasks: TaskList,
 }
 
@@ -116,6 +118,10 @@ impl Pipeline {
         ));
         Ok(())
     }
+
+    fn connect_mqtt(&mut self, settings: mqtt::MqttSettings) -> anyhow::Result<()> {
+        todo!();
+    }
 }
 
 impl Future for Pipeline {
@@ -144,10 +150,31 @@ impl TryFrom<Settings> for Pipeline {
         let (rendered_source, render_task) = create_renderer(&frame_source, config.render)?;
         // Once IntoIterator is implemented for arrays, this line can be simplified
         let tasks: TaskList = std::array::IntoIter::new([frame_task, render_task]).collect();
+        let mqtt_client = if let Some(mqtt_config) = config.mqtt {
+            let (client, mut eventloop) = mqtt::MqttClient::connect(mqtt_config)?;
+            let loop_task: InnerTask = Box::new(
+                tokio::spawn(async move {
+                    loop {
+                        let event = eventloop.poll().await.context("polling MQTT event loop")?;
+                        debug!("MQTT event processed: {:?}", event);
+                    }
+                    // This weird looking bit is a back-door type annotation for the return type of the
+                    // async closure.
+                    #[allow(unreachable_code)]
+                    Ok::<(), anyhow::Error>(())
+                })
+                .map(flatten_join_result),
+            );
+            tasks.push(loop_task);
+            Some(client)
+        } else {
+            None
+        };
         let mut app = Self {
             camera,
             frame_source,
             rendered_source,
+            mqtt_client,
             tasks,
         };
         app.create_streams(config.streams)?;
