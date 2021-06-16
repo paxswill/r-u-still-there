@@ -8,6 +8,7 @@ version = "0.1.0"
 
 [dependencies]
 anyhow = "1.0"
+base64 = "0.13"
 bytes = "1.0.1"
 colorous = "1.0.5"
 delegate = "0.5"

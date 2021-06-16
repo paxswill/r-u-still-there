@@ -194,7 +194,10 @@ impl MqttSettings {
                 let mut mac = HmacSha256::new_from_slice(APPLICATION_KEY)
                     .expect("HMAC can be created from embedded key");
                 mac.update(&machine_id);
-                let uid = hex::encode(mac.finalize().into_bytes());
+                // The full output of the HMAC is 256 bits, but we only need 128 (aka 16 bytes).
+                let uid_bytes = &mac.finalize().into_bytes()[..16];
+                // Encode the output as base64, the full output as hex is a bit long
+                let uid = base64::encode_config(uid_bytes, base64::URL_SAFE_NO_PAD);
                 debug!(unique_id = %uid, "generated unique ID");
                 uid
             }
