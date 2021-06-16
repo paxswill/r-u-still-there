@@ -34,7 +34,7 @@ impl TryFrom<InnerExternalValue> for ExternalValue {
         match inner {
             InnerExternalValue::File { file } => {
                 debug!("Reading secret from {:?}", file);
-                std::fs::read_to_string(file).map(Self)
+                std::fs::read_to_string(file).map(|s| Self(s.trim().to_string()))
             }
             InnerExternalValue::String(s) => {
                 debug!("Using secret directly");
@@ -87,6 +87,23 @@ mod test {
         let mut file = NamedTempFile::new().expect("to be able to create a temp file");
         let file_value = "foo bar baz";
         write!(file, "{}", file_value).expect("to be able to write to a new temp file");
+        let data = format!(
+            r#"
+        field = {{ file = "{}" }}
+        "#,
+            file.path().to_string_lossy()
+        );
+        let parsed: Result<Wrapper, _> = toml::from_str(&data);
+        assert!(parsed.is_ok());
+        let parsed = parsed.unwrap();
+        assert_eq!(parsed.field.0, file_value.to_string());
+    }
+
+    #[test]
+    fn read_file_trailing_newline() {
+        let mut file = NamedTempFile::new().expect("to be able to create a temp file");
+        let file_value = "foo bar baz";
+        writeln!(file, "{}", file_value).expect("to be able to write to a new temp file");
         let data = format!(
             r#"
         field = {{ file = "{}" }}

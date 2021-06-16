@@ -131,6 +131,10 @@ impl MqttClient {
         ))
     }
 
+    pub fn home_assistant(&self) -> bool {
+        self.home_assistant
+    }
+
     fn unique_id_for(&self, topic: Topic) -> String {
         let entity_kind = match topic {
             // Status doesn't really need a unique_id, buyt just in case I add it later
