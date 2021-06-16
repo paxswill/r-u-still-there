@@ -29,7 +29,7 @@ impl AvailabilityTopic {
         Self {
             payload_available: PayloadAvailable::default(),
             payload_not_available: PayloadNotAvailable::default(),
-            topic: topic,
+            topic,
         }
     }
 }
@@ -141,9 +141,9 @@ impl MqttConfig {
         N: Into<PayloadNotAvailable>,
     {
         self.availability.insert(AvailabilityTopic {
-            payload_available: available.into().into(),
-            payload_not_available: not_available.into().into(),
-            topic: topic,
+            payload_available: available.into(),
+            payload_not_available: not_available.into(),
+            topic,
         });
     }
 

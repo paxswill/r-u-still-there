@@ -28,9 +28,10 @@ pub enum Connection {
 }
 // MacAddress doesn't implement Eq or Hash, so we get to implement (or mark) those ourselves.
 impl std::cmp::Eq for Connection {}
+#[allow(clippy::clippy::derive_hash_xor_eq)]
 impl Hash for Connection {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        discriminant(&self).hash(state);
+        discriminant(self).hash(state);
         match self {
             Connection::MacAddress(mac) => {
                 mac.bytes().hash(state);
@@ -99,7 +100,7 @@ impl<'de> Deserialize<'de> for Connection {
                 // It's almost missing_field(), but there are multiple fields it could be
                 let missing_tag =
                     V::Error::custom("Missing one of the connection type names as a key");
-                let tag = map.next_key()?.ok_or_else(|| missing_tag)?;
+                let tag = map.next_key()?.ok_or(missing_tag)?;
                 let connection_type = match tag {
                     ConnectionTag::Mac => {
                         let mac = map.next_value()?;

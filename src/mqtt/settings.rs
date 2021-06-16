@@ -230,8 +230,10 @@ impl TryFrom<&MqttSettings> for rumqttc::MqttOptions {
         let url = user_config.server_url();
         let host_str = url
             .host_str()
-            .ok_or(anyhow!("MQTT URL somehow doesn't have a host"))?;
-        let port = url.port().ok_or(anyhow!("Unset port for the MQTT URL"))?;
+            .ok_or_else(|| anyhow!("MQTT URL somehow doesn't have a host"))?;
+        let port = url
+            .port()
+            .ok_or_else(|| anyhow!("Unset port for the MQTT URL"))?;
         let mut options = Self::new(user_config.name.clone(), host_str, port);
         match url.scheme() {
             "mqtts" => {

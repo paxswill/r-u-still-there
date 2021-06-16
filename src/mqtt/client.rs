@@ -219,7 +219,7 @@ impl MqttClient {
         );
         temperature_config.add_availability_topic(self.topic_for(Topic::Status));
         temperature_config.set_device_class(hass::AnalogSensorClass::Temperature);
-        temperature_config.set_name(format!("{} Temperature", self.name).into());
+        temperature_config.set_name(format!("{} Temperature", self.name));
         // TODO: let this be temperature_configurable?
         temperature_config.set_unit_of_measurement(Some("C".to_string()));
         temperature_config.set_unique_id(Some(self.unique_id_for(Topic::Temperature)));
@@ -237,7 +237,7 @@ impl MqttClient {
             &device,
         );
         count_config.add_availability_topic(self.topic_for(Topic::Status));
-        count_config.set_name(format!("{} Occupancy Count", self.name).into());
+        count_config.set_name(format!("{} Occupancy Count", self.name));
         count_config.set_unit_of_measurement(Some("people".to_string()));
         count_config.set_unique_id(Some(self.unique_id_for(Topic::Count)));
         self.publish_discovery_config(
@@ -255,7 +255,7 @@ impl MqttClient {
         );
         occupancy_config.add_availability_topic(self.topic_for(Topic::Status));
         occupancy_config.set_device_class(hass::BinarySensorClass::Occupancy);
-        occupancy_config.set_name(format!("{} Occupancy", self.name).into());
+        occupancy_config.set_name(format!("{} Occupancy", self.name));
         occupancy_config.set_unique_id(Some(self.unique_id_for(Topic::Occupancy)));
         self.publish_discovery_config(
             &occupancy_config
