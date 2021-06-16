@@ -165,7 +165,9 @@ impl MqttClient {
             }
         };
         if let Some(address_iterator) = mac_addresses {
-            for address in address_iterator {
+            // Filter out all-zero MAC addresses (like from a loopback interface)
+            let filtered_addresses = address_iterator.filter(|a| a.bytes() != [0u8; 6]);
+            for address in filtered_addresses {
                 device.add_mac_connection(address);
             }
         }
