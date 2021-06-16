@@ -131,8 +131,53 @@ impl MqttClient {
         ))
     }
 
-    pub fn home_assistant(&self) -> bool {
-        self.home_assistant
+    /// Publish the initial messages to the MQTT broker.
+    ///
+    /// These include Home Assistant discovery (if enabled) as well as the default values for the
+    /// different states (temperature, occupancy, etc).
+    pub async fn publish_initial(&mut self) -> anyhow::Result<()> {
+        if self.home_assistant {
+            self.publish_home_assistant().await?;
+        }
+        // TODO: This code duplication is screaming out for a better approach.
+        // Status
+        let status = self.state.status;
+        self.publish_serialize(
+            self.topic_for(Topic::Status),
+            QoS::AtLeastOnce,
+            true,
+            &status,
+        )
+        .await?;
+        // Temperature
+        let temperature = self.state.temperature;
+        self.publish_serialize(
+            self.topic_for(Topic::Temperature),
+            QoS::AtLeastOnce,
+            true,
+            &temperature,
+        )
+        .await?;
+        // Occupancy
+        let occupied = self.state.occupied;
+        self.publish_serialize(
+            self.topic_for(Topic::Occupancy),
+            QoS::AtLeastOnce,
+            true,
+            &occupied,
+        )
+        .await?;
+        // Occupancy count
+        let count = self.state.count;
+        self.publish_serialize(
+            self.topic_for(Topic::Count),
+            QoS::AtLeastOnce,
+            true,
+            &count,
+        )
+        .await?;
+
+        Ok(())
     }
 
     fn unique_id_for(&self, topic: Topic) -> String {
@@ -179,6 +224,24 @@ impl MqttClient {
         Rc::new(RefCell::new(device))
     }
 
+    async fn publish_serialize<T>(
+        &mut self,
+        topic: String,
+        qos: QoS,
+        retain: bool,
+        payload: &T,
+    ) -> anyhow::Result<()>
+    where
+        T: Serialize,
+    {
+        let mut payload_data = BytesMut::new().writer();
+        serde_json::to_writer(&mut payload_data, payload)?;
+        self.client
+            .publish_bytes(topic, qos, retain, payload_data.into_inner().freeze())
+            .await?;
+        Ok(())
+    }
+
     async fn publish_discovery_config<'a, T: 'a>(
         &mut self,
         unique_id: &'a str,
@@ -194,17 +257,9 @@ impl MqttClient {
             hass::Component::from(config).to_string(),
             unique_id
         );
-        let mut payload = BytesMut::new().writer();
-        serde_json::to_writer(&mut payload, config).context("serializing MQTT discovery config")?;
-        self.client
-            .publish_bytes(
-                topic,
-                QoS::AtLeastOnce,
-                self.home_assistant_retain,
-                payload.into_inner().freeze(),
-            )
-            .await?;
-        Ok(())
+        self.publish_serialize(topic, QoS::AtLeastOnce, self.home_assistant_retain, config)
+            .await
+            .context("serializing MQTT discovery config")
     }
 
     pub async fn publish_home_assistant(&mut self) -> anyhow::Result<()> {

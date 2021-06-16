@@ -3,13 +3,13 @@ use anyhow::{anyhow, Context as _};
 use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
-use pin_project::pin_project;
+use rumqttc::{ConnectReturnCode, Event, Packet};
 use tokio::task::JoinError;
-use tracing::{debug, debug_span, info, info_span, trace_span};
+use tracing::{debug, debug_span, error, info, info_span, trace_span};
 use tracing_futures::Instrument;
 use warp::Filter;
 
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryInto;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::vec::Vec;
@@ -57,6 +57,68 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
+    pub async fn new(config: Settings) -> anyhow::Result<Self> {
+        let camera_settings = &config.camera;
+        let camera: Camera = camera_settings.try_into()?;
+        let (frame_source, frame_task) = create_frame_source(&camera)?;
+        let (rendered_source, render_task) = create_renderer(&frame_source, config.render)?;
+        // Once IntoIterator is implemented for arrays, this line can be simplified
+        let tasks: TaskList = std::array::IntoIter::new([frame_task, render_task]).collect();
+        let mqtt_client = if let Some(mqtt_config) = config.mqtt {
+            debug!("Opening connection to MQTT broker");
+            let (client, mut eventloop) = mqtt::MqttClient::connect(mqtt_config)?;
+            // Wait until we get a ConnAck packet from the broker before continuing with setup.
+            loop {
+                let event = eventloop.poll().await?;
+                if let Event::Incoming(Packet::ConnAck(conn_ack)) = event {
+                    if conn_ack.code == ConnectReturnCode::Success {
+                        debug!("Connected to MQTT broker");
+                        break;
+                    } else {
+                        error!(response_code = ?conn_ack.code, "Connection to MQTT broker refused.");
+                        return Err(anyhow!("Connection to MQTT broker refused"));
+                    }
+                }
+            }
+            let loop_task: InnerTask = Box::new(
+                tokio::spawn(
+                    async move {
+                        loop {
+                            match eventloop.poll().await.context("polling MQTT event loop") {
+                                Ok(event) => debug!(?event, "MQTT event processed"),
+                                Err(err) => {
+                                    error!(error = ?err, "Error with MQTT connection");
+                                    return Err(err);
+                                }
+                            }
+                        }
+                        // This weird looking bit is a back-door type annotation for the return type of the
+                        // async closure. It's unreachable, but necessary (for now).
+                        #[allow(unreachable_code)]
+                        Ok::<(), anyhow::Error>(())
+                    }
+                    .instrument(debug_span!("mqtt_event_loop")),
+                )
+                .map(flatten_join_result),
+            );
+            tasks.push(loop_task);
+            Some(client)
+        } else {
+            None
+        };
+        let mut app = Self {
+            camera,
+            frame_source,
+            rendered_source,
+            mqtt_client,
+            tasks,
+        };
+        app.create_streams(config.streams)?;
+        app.create_tracker(config.tracker)?;
+        app.connect_mqtt().await?;
+        Ok(app)
+    }
+
     fn create_streams(&mut self, settings: StreamSettings) -> anyhow::Result<()> {
         // Bail out if there aren't any stream sources enabled.
         // For now there's just MJPEG, but HLS is planned for the future.
@@ -119,8 +181,12 @@ impl Pipeline {
         Ok(())
     }
 
-    fn connect_mqtt(&mut self, settings: mqtt::MqttSettings) -> anyhow::Result<()> {
-        todo!();
+    async fn connect_mqtt(&mut self) -> anyhow::Result<()> {
+        // Bail out early if there's no MQTT config
+        if let Some(mqtt_client) = &mut self.mqtt_client {
+            mqtt_client.publish_initial().await?;
+        }
+        Ok(())
     }
 }
 
@@ -137,49 +203,6 @@ impl Future for Pipeline {
                 },
             }
         }
-    }
-}
-
-impl TryFrom<Settings> for Pipeline {
-    type Error = anyhow::Error;
-
-    fn try_from(config: Settings) -> anyhow::Result<Self> {
-        let camera_settings = &config.camera;
-        let camera: Camera = camera_settings.try_into()?;
-        let (frame_source, frame_task) = create_frame_source(&camera)?;
-        let (rendered_source, render_task) = create_renderer(&frame_source, config.render)?;
-        // Once IntoIterator is implemented for arrays, this line can be simplified
-        let tasks: TaskList = std::array::IntoIter::new([frame_task, render_task]).collect();
-        let mqtt_client = if let Some(mqtt_config) = config.mqtt {
-            let (client, mut eventloop) = mqtt::MqttClient::connect(mqtt_config)?;
-            let loop_task: InnerTask = Box::new(
-                tokio::spawn(async move {
-                    loop {
-                        let event = eventloop.poll().await.context("polling MQTT event loop")?;
-                        debug!("MQTT event processed: {:?}", event);
-                    }
-                    // This weird looking bit is a back-door type annotation for the return type of the
-                    // async closure.
-                    #[allow(unreachable_code)]
-                    Ok::<(), anyhow::Error>(())
-                })
-                .map(flatten_join_result),
-            );
-            tasks.push(loop_task);
-            Some(client)
-        } else {
-            None
-        };
-        let mut app = Self {
-            camera,
-            frame_source,
-            rendered_source,
-            mqtt_client,
-            tasks,
-        };
-        app.create_streams(config.streams)?;
-        app.create_tracker(config.tracker)?;
-        Ok(app)
     }
 }
 
