@@ -179,7 +179,11 @@ impl MqttClient {
         Rc::new(RefCell::new(device))
     }
 
-    async fn publish_discovery_config<'a, T: 'a>(&mut self, config: &'a T) -> anyhow::Result<()>
+    async fn publish_discovery_config<'a, T: 'a>(
+        &mut self,
+        unique_id: &'a str,
+        config: &'a T,
+    ) -> anyhow::Result<()>
     where
         T: Serialize,
         hass::Component: From<&'a T>,
@@ -188,7 +192,7 @@ impl MqttClient {
             "{}/{}/{}/config",
             self.home_assistant_topic,
             hass::Component::from(config).to_string(),
-            self.device_uid
+            unique_id
         );
         let mut payload = BytesMut::new().writer();
         serde_json::to_writer(&mut payload, config).context("serializing MQTT discovery config")?;
@@ -219,7 +223,14 @@ impl MqttClient {
         // TODO: let this be temperature_configurable?
         temperature_config.set_unit_of_measurement(Some("C".to_string()));
         temperature_config.set_unique_id(Some(self.unique_id_for(Topic::Temperature)));
-        self.publish_discovery_config(&temperature_config).await?;
+        self.publish_discovery_config(
+            &temperature_config
+                .unique_id()
+                .as_ref()
+                .expect("the unique ID to be what it was just set to"),
+            &temperature_config,
+        )
+        .await?;
 
         let mut count_config = hass::AnalogSensor::new_with_state_topic_and_device(
             self.topic_for(Topic::Count),
@@ -229,7 +240,14 @@ impl MqttClient {
         count_config.set_name(format!("{} Occupancy Count", self.name).into());
         count_config.set_unit_of_measurement(Some("people".to_string()));
         count_config.set_unique_id(Some(self.unique_id_for(Topic::Count)));
-        self.publish_discovery_config(&count_config).await?;
+        self.publish_discovery_config(
+            &count_config
+                .unique_id()
+                .as_ref()
+                .expect("the unique ID to be what it was just set to"),
+            &count_config,
+        )
+        .await?;
 
         let mut occupancy_config = hass::BinarySensor::new_with_state_topic_and_device(
             self.topic_for(Topic::Occupancy),
@@ -239,7 +257,14 @@ impl MqttClient {
         occupancy_config.set_device_class(hass::BinarySensorClass::Occupancy);
         occupancy_config.set_name(format!("{} Occupancy", self.name).into());
         occupancy_config.set_unique_id(Some(self.unique_id_for(Topic::Occupancy)));
-        self.publish_discovery_config(&occupancy_config).await?;
+        self.publish_discovery_config(
+            &occupancy_config
+                .unique_id()
+                .as_ref()
+                .expect("the unique ID to be what it was just set to"),
+            &occupancy_config,
+        )
+        .await?;
 
         Ok(())
     }
