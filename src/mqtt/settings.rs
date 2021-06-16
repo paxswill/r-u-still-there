@@ -9,6 +9,7 @@ use tracing::{debug, trace, warn};
 use url::Url;
 
 use std::convert::{TryFrom, TryInto};
+use std::fmt;
 use std::str::FromStr;
 
 use super::external_value::ExternalValue;
@@ -20,7 +21,7 @@ pub const DEFAULT_MQTTS_PORT: u16 = 8883;
 const APPLICATION_KEY: &[u8; 16] =
     b"\x64\x6c\x30\xc3\x41\xd7\x47\x40\x8b\x1e\xe0\x78\xf7\x4c\x73\xe0";
 
-#[derive(Deserialize, Debug, PartialEq)]
+#[derive(Deserialize, PartialEq)]
 pub struct MqttSettings {
     /// A name for the base topic for this device.
     pub(super) name: String,
@@ -198,6 +199,24 @@ impl MqttSettings {
                 uid
             }
         }
+    }
+}
+
+impl fmt::Debug for MqttSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("MqttSettings")
+            .field("name", &self.name)
+            .field("unique_id", &self.unique_id)
+            .field("username", &self.username)
+            // <Cthon98> lol, yes. See, when YOU type hunter2, it shows to us as *******
+            // Censor the password (if any) to keep it out of the logs.
+            .field("password", &self.password.as_ref().map(|_| "*******"))
+            .field("server", &self.server)
+            .field("keep_alive", &self.keep_alive)
+            .field("home_assistant", &self.home_assistant)
+            .field("home_assistant_topic", &self.home_assistant_topic)
+            .field("home_assistant_retain", &self.home_assistant_retain)
+            .finish()
     }
 }
 
