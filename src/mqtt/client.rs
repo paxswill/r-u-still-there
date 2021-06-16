@@ -50,6 +50,9 @@ pub struct MqttClient {
 
     /// The MQTT client.
     client: AsyncClient,
+
+    /// The current state of the various outputs.
+    state: TopicState,
 }
 
 /// The different topics that will be published.
@@ -68,7 +71,7 @@ pub enum Topic {
     Count,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 struct TopicState {
     /// The status of this device. Normally [Online], but the MQTT LWT should set it to [Offline]
     /// when we disconnect from the server.
@@ -92,7 +95,7 @@ struct TopicState {
 }
 
 /// The status of a device as known to the MQTT server.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum Status {
     Online,
@@ -126,6 +129,7 @@ impl MqttClient {
                 home_assistant_topic: settings.home_assistant_topic,
                 home_assistant_retain: settings.home_assistant_retain,
                 client,
+                state: TopicState::default(),
             },
             eventloop,
         ))
@@ -323,6 +327,25 @@ impl MqttClient {
 
         Ok(())
     }
+
+    /// Update the 'online' status of the device as published to the broker.
+    ///
+    /// If the new status is unchanged from the current status, no message is sent as the status is
+    /// a retained message.
+    pub async fn update_online(&mut self, online: bool) -> anyhow::Result<()> {
+        let new_status = Status::from(online);
+        if self.state.status == new_status {
+            debug!(status = ?new_status, "Skipping unchanged status update");
+            return Ok(());
+        }
+        self.publish_serialize(
+            self.topic_for(Topic::Status),
+            QoS::AtLeastOnce,
+            true,
+            &new_status,
+        )
+        .await
+    }
 }
 
 /// Generate the full topic given a topic type.
@@ -345,6 +368,16 @@ impl Default for Status {
     }
 }
 
+impl From<bool> for Status {
+    fn from(online: bool) -> Self {
+        if online {
+            Self::Online
+        } else {
+            Self::Offline
+        }
+    }
+}
+
 impl TopicState {
     fn default_occupied() -> bool {
         false
@@ -352,5 +385,16 @@ impl TopicState {
 
     fn default_count() -> u32 {
         0
+    }
+}
+
+impl Default for TopicState {
+    fn default() -> Self {
+        Self {
+            status: Status::default(),
+            temperature: None,
+            occupied: false,
+            count: 0,
+        }
     }
 }
