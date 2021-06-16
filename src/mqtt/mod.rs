@@ -3,6 +3,7 @@ mod client;
 mod external_value;
 mod home_assistant;
 mod settings;
+mod state;
 
 pub use client::MqttClient;
 pub use settings::MqttSettings;

@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use super::home_assistant as hass;
 use super::settings::MqttSettings;
+use super::state::State;
 
 #[pin_project]
 #[derive(Debug)]
@@ -51,8 +52,19 @@ pub struct MqttClient {
     /// The MQTT client.
     client: AsyncClient,
 
-    /// The current state of the various outputs.
-    state: TopicState,
+    /// The state of this device (online or offline).
+    status: State<Status>,
+
+    /// The temperature as detected by the camera
+    temperature: State<Option<f32>>,
+
+    /// Whether or not the camera detects a person.
+    occupied: State<bool>,
+
+    /// The number of people the camera detects.
+    count: State<u32>,
+
+    // TODO: Consider adding last_update field, as well as adding the coordinates of all detected objects.
 }
 
 /// The different topics that will be published.
@@ -71,29 +83,6 @@ pub enum Topic {
     Count,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
-struct TopicState {
-    /// The status of this device. Normally [Online], but the MQTT LWT should set it to [Offline]
-    /// when we disconnect from the server.
-    #[serde(default)]
-    status: Status,
-
-    /// The temperature of the camera, if available.
-    #[serde(default)]
-    temperature: Option<f32>,
-
-    /// Whether or not the camera senses a person in its view.
-    #[serde(default = "TopicState::default_occupied")]
-    occupied: bool,
-
-    // TODO: Consider adding the coordinates of detected objects later on, but for now just skip
-    // them.
-    /// The number of objects detected.
-    #[serde(default = "TopicState::default_count")]
-    count: u32,
-    // TODO: Add last_update field
-}
-
 /// The status of a device as known to the MQTT server.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -107,29 +96,38 @@ const EVENT_LOOP_CAPACITY: usize = 10;
 
 impl MqttClient {
     pub fn connect(settings: MqttSettings) -> anyhow::Result<(Self, EventLoop)> {
+        let device_uid = settings.unique_id();
         // Create rumqttc client and event loop task
         let mut client_options = RuMqttOptions::try_from(&settings)?;
         let payload = serde_json::to_vec(&Status::Offline)
             .expect("a static Status enum to encode cleanly into JSON");
+        // TODO: add a setting to override the base topic
+        let base_topic = "r-u-still-there";
+        let status_topic = [base_topic, &device_uid, "status"].join("/");
         client_options.set_last_will(LastWill::new(
-            topic_for(&settings.name, Topic::Status),
+            &status_topic,
             payload,
             QoS::AtLeastOnce,
             true,
         ));
         let (client, eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
-        // Extract values from settings
-        let device_uid = settings.unique_id();
-        let name = settings.name;
+        // Create the states first, as they use a reference to device_uid
+        let status = State::new_default_at(status_topic);
+        let temperature = State::new_default_at([base_topic, &device_uid, "temperature"].join("/"));
+        let occupied = State::new_default_at([base_topic, &device_uid, "occupied"].join("/"));
+        let count = State::new_default_at([base_topic, &device_uid, "occupancy_count"].join("/"));
         Ok((
             Self {
-                name,
+                name: settings.name,
                 device_uid,
                 home_assistant: settings.home_assistant,
                 home_assistant_topic: settings.home_assistant_topic,
                 home_assistant_retain: settings.home_assistant_retain,
                 client,
-                state: TopicState::default(),
+                status,
+                temperature,
+                occupied,
+                count,
             },
             eventloop,
         ))
@@ -143,44 +141,10 @@ impl MqttClient {
         if self.home_assistant {
             self.publish_home_assistant().await?;
         }
-        // TODO: This code duplication is screaming out for a better approach.
-        // Status
-        let status = self.state.status;
-        self.publish_serialize(
-            self.topic_for(Topic::Status),
-            QoS::AtLeastOnce,
-            true,
-            &status,
-        )
-        .await?;
-        // Temperature
-        let temperature = self.state.temperature;
-        self.publish_serialize(
-            self.topic_for(Topic::Temperature),
-            QoS::AtLeastOnce,
-            true,
-            &temperature,
-        )
-        .await?;
-        // Occupancy
-        let occupied = self.state.occupied;
-        self.publish_serialize(
-            self.topic_for(Topic::Occupancy),
-            QoS::AtLeastOnce,
-            true,
-            &occupied,
-        )
-        .await?;
-        // Occupancy count
-        let count = self.state.count;
-        self.publish_serialize(
-            self.topic_for(Topic::Count),
-            QoS::AtLeastOnce,
-            true,
-            &count,
-        )
-        .await?;
-
+        self.status.publish(&mut self.client).await?;
+        self.temperature.publish(&mut self.client).await?;
+        self.occupied.publish(&mut self.client).await?;
+        self.count.publish(&mut self.client).await?;
         Ok(())
     }
 
@@ -194,14 +158,6 @@ impl MqttClient {
         };
         format!("{}_{}_r-u-still-there", self.device_uid, entity_kind)
     }
-
-    /// Generate the full topic that a type of value whould be published at.
-    ///
-    /// This just forwards to the free function `topic_for`, providing the static values from `self`.
-    fn topic_for(&self, topic: Topic) -> String {
-        topic_for(&self.name, topic)
-    }
-
     /// Create the device description common to all entities in Home Assistant.
     fn create_hass_device(&self) -> Rc<RefCell<hass::Device>> {
         let mut device = hass::Device::default();
@@ -273,10 +229,10 @@ impl MqttClient {
         let device = self.create_hass_device();
 
         let mut temperature_config = hass::AnalogSensor::new_with_state_topic_and_device(
-            self.topic_for(Topic::Temperature),
+            self.temperature.topic(),
             &device,
         );
-        temperature_config.add_availability_topic(self.topic_for(Topic::Status));
+        temperature_config.add_availability_topic(self.status.topic().into());
         temperature_config.set_device_class(hass::AnalogSensorClass::Temperature);
         temperature_config.set_name(format!("{} Temperature", self.name));
         // TODO: let this be temperature_configurable?
@@ -292,10 +248,10 @@ impl MqttClient {
         .await?;
 
         let mut count_config = hass::AnalogSensor::new_with_state_topic_and_device(
-            self.topic_for(Topic::Count),
+            self.count.topic(),
             &device,
         );
-        count_config.add_availability_topic(self.topic_for(Topic::Status));
+        count_config.add_availability_topic(self.status.topic().into());
         count_config.set_name(format!("{} Occupancy Count", self.name));
         count_config.set_unit_of_measurement(Some("people".to_string()));
         count_config.set_unique_id(Some(self.unique_id_for(Topic::Count)));
@@ -309,10 +265,10 @@ impl MqttClient {
         .await?;
 
         let mut occupancy_config = hass::BinarySensor::new_with_state_topic_and_device(
-            self.topic_for(Topic::Occupancy),
+            self.occupied.topic(),
             &device,
         );
-        occupancy_config.add_availability_topic(self.topic_for(Topic::Status));
+        occupancy_config.add_availability_topic(self.status.topic().into());
         occupancy_config.set_device_class(hass::BinarySensorClass::Occupancy);
         occupancy_config.set_name(format!("{} Occupancy", self.name));
         occupancy_config.set_unique_id(Some(self.unique_id_for(Topic::Occupancy)));
@@ -332,34 +288,19 @@ impl MqttClient {
     ///
     /// If the new status is unchanged from the current status, no message is sent as the status is
     /// a retained message.
-    pub async fn update_online(&mut self, online: bool) -> anyhow::Result<()> {
+    pub async fn update_online(&mut self, online: bool) -> anyhow::Result<bool> {
         let new_status = Status::from(online);
-        if self.state.status == new_status {
-            debug!(status = ?new_status, "Skipping unchanged status update");
-            return Ok(());
-        }
-        self.publish_serialize(
-            self.topic_for(Topic::Status),
-            QoS::AtLeastOnce,
-            true,
-            &new_status,
-        )
-        .await
+        self.status.publish_if_update(new_status, &mut self.client).await
     }
-}
 
-/// Generate the full topic given a topic type.
-// This used to be a member function of MqttClient, but it's also needed when creating the Last
-// Will message, so it was pulled out into a free function.
-fn topic_for(name: &str, topic: Topic) -> String {
-    // TODO: add a setting to override the base topic
-    let topic_name = match topic {
-        Topic::Status => "status",
-        Topic::Temperature => "temperature",
-        Topic::Occupancy => "occupied",
-        Topic::Count => "count",
-    };
-    format!("r_u_still_there/{}/{}", name, topic_name)
+    pub async fn update_temperature(&mut self, temperature: Option<f32>) -> anyhow::Result<bool> {
+        self.temperature.publish_if_update(temperature, &mut self.client).await
+    }
+
+    pub async fn update_occupancy_count(&mut self, count: u32) -> anyhow::Result<bool> {
+        self.occupied.publish_if_update(count == 0, &mut self.client).await?;
+        self.count.publish_if_update(count, &mut self.client).await
+    }
 }
 
 impl Default for Status {
@@ -374,27 +315,6 @@ impl From<bool> for Status {
             Self::Online
         } else {
             Self::Offline
-        }
-    }
-}
-
-impl TopicState {
-    fn default_occupied() -> bool {
-        false
-    }
-
-    fn default_count() -> u32 {
-        0
-    }
-}
-
-impl Default for TopicState {
-    fn default() -> Self {
-        Self {
-            status: Status::default(),
-            temperature: None,
-            occupied: false,
-            count: 0,
         }
     }
 }
