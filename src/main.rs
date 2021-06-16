@@ -110,6 +110,6 @@ async fn main() {
     let app = Pipeline::new(config).instrument(span).await;
     match app {
         Ok(app) => app.await,
-        Err(e) => error!("{}", e),
+        Err(e) => error!("{:?}", e),
     }
 }

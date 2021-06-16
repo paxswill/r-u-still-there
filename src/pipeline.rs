@@ -199,7 +199,11 @@ impl Future for Pipeline {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(option) => match option {
                     None => return Poll::Ready(()),
-                    Some(_) => (),
+                    Some(res) => {
+                        if let Err(err) = res {
+                            error!(error = ?err, "error in task");
+                        }
+                    }
                 },
             }
         }

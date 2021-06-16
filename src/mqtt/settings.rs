@@ -244,9 +244,11 @@ impl TryFrom<&MqttSettings> for rumqttc::MqttOptions {
                 tls_config
                     .root_store
                     .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+                debug!(host = host_str, port = port, "connecting to MQTT over TLS");
                 options.set_transport(Transport::tls_with_config(tls_config.into()));
             }
             "mqtt" => {
+                debug!(host = host_str, port = port, "connecting to MQTT over TCP");
                 options.set_transport(Transport::tcp());
             }
             _ => return Err(anyhow!("unknown MQTT scheme")),
