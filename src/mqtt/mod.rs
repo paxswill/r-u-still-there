@@ -5,5 +5,5 @@ mod home_assistant;
 mod settings;
 mod state;
 
-pub use client::MqttClient;
+pub use client::{ClientMessage, MqttClient};
 pub use settings::MqttSettings;

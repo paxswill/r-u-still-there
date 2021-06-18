@@ -1,21 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use anyhow::Context as _;
+use anyhow::{anyhow, Context as _};
 use bytes::{BufMut, BytesMut};
+use futures::{ready, Future};
 use pin_project::pin_project;
 use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions as RuMqttOptions, QoS};
 use serde::{Deserialize, Serialize};
+use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 
 use std::cell::RefCell;
 use std::convert::TryFrom;
+use std::pin::Pin;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::task::{Context, Poll};
 
 use super::home_assistant as hass;
 use super::settings::MqttSettings;
 use super::state::State;
 
-#[pin_project]
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
+pub enum ClientMessage {
+    UpdateTemperature(Option<f32>),
+    UpdateOccupancy(usize),
+    UpdateStatus(bool),
+}
+
 pub struct MqttClient {
     /// A name for the base topic for this device.
     name: String,
@@ -50,7 +60,7 @@ pub struct MqttClient {
     home_assistant_retain: bool,
 
     /// The MQTT client.
-    client: AsyncClient,
+    client: Arc<Mutex<AsyncClient>>,
 
     /// The state of this device (online or offline).
     status: State<Status>,
@@ -62,9 +72,18 @@ pub struct MqttClient {
     occupied: State<bool>,
 
     /// The number of people the camera detects.
-    count: State<u32>,
+    count: State<usize>,
 
     // TODO: Consider adding last_update field, as well as adding the coordinates of all detected objects.
+    /// Send side of a channel used to send commands to the client while it's running. Kept so that
+    /// It can be freely cloned and to ensure the receiver side stays open.
+    command_tx: mpsc::Sender<ClientMessage>,
+
+    /// Receive side of a channel used to send commands to this client while it's running.
+    command_rx: mpsc::Receiver<ClientMessage>,
+
+    /// A [Future] for updating one of the states.
+    in_progress_future: Option<Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send>>>,
 }
 
 /// The different topics that will be published.
@@ -92,7 +111,7 @@ enum Status {
 }
 
 /// The length of the internal buffer of MQTT packets used by the `rumqttc` event loop.
-const EVENT_LOOP_CAPACITY: usize = 10;
+const EVENT_LOOP_CAPACITY: usize = 20;
 
 impl MqttClient {
     pub fn connect(settings: MqttSettings) -> anyhow::Result<(Self, EventLoop)> {
@@ -111,7 +130,8 @@ impl MqttClient {
             true,
         ));
         let (client, eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
-        // Create the states first, as they use a reference to device_uid
+        let (command_tx, command_rx) = mpsc::channel(30);
+        // Create the states early, as they use a reference to device_uid
         let status = State::new_default_at(status_topic);
         let temperature = State::new_default_at([base_topic, &device_uid, "temperature"].join("/"));
         let occupied = State::new_default_at([base_topic, &device_uid, "occupied"].join("/"));
@@ -123,11 +143,14 @@ impl MqttClient {
                 home_assistant: settings.home_assistant,
                 home_assistant_topic: settings.home_assistant_topic,
                 home_assistant_retain: settings.home_assistant_retain,
-                client,
+                client: Arc::new(Mutex::new(client)),
                 status,
                 temperature,
                 occupied,
                 count,
+                command_tx,
+                command_rx,
+                in_progress_future: None,
             },
             eventloop,
         ))
@@ -141,10 +164,23 @@ impl MqttClient {
         if self.home_assistant {
             self.publish_home_assistant().await?;
         }
-        self.status.publish(&mut self.client).await?;
-        self.temperature.publish(&mut self.client).await?;
-        self.occupied.publish(&mut self.client).await?;
-        self.count.publish(&mut self.client).await?;
+        // Only keep the lock as long as required for each client.
+        {
+            let mut client = self.client.lock().await;
+            self.status.publish(&mut client).await?;
+        }
+        {
+            let mut client = self.client.lock().await;
+            self.temperature.publish(&mut client).await?;
+        }
+        {
+            let mut client = self.client.lock().await;
+            self.occupied.publish(&mut client).await?;
+        }
+        {
+            let mut client = self.client.lock().await;
+            self.count.publish(&mut client).await?;
+        }
         Ok(())
     }
 
@@ -197,6 +233,8 @@ impl MqttClient {
         let mut payload_data = BytesMut::new().writer();
         serde_json::to_writer(&mut payload_data, payload)?;
         self.client
+            .lock()
+            .await
             .publish_bytes(topic, qos, retain, payload_data.into_inner().freeze())
             .await?;
         Ok(())
@@ -284,22 +322,67 @@ impl MqttClient {
         Ok(())
     }
 
-    /// Update the 'online' status of the device as published to the broker.
-    ///
-    /// If the new status is unchanged from the current status, no message is sent as the status is
-    /// a retained message.
-    pub async fn update_online(&mut self, online: bool) -> anyhow::Result<bool> {
-        let new_status = Status::from(online);
-        self.status.publish_if_update(new_status, &mut self.client).await
+    pub fn command_channel(&self) -> mpsc::Sender<ClientMessage> {
+        self.command_tx.clone()
     }
+}
 
-    pub async fn update_temperature(&mut self, temperature: Option<f32>) -> anyhow::Result<bool> {
-        self.temperature.publish_if_update(temperature, &mut self.client).await
-    }
+impl Future for MqttClient {
+    type Output = anyhow::Result<()>;
 
-    pub async fn update_occupancy_count(&mut self, count: u32) -> anyhow::Result<bool> {
-        self.occupied.publish_if_update(count == 0, &mut self.client).await?;
-        self.count.publish_if_update(count, &mut self.client).await
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        loop {
+            if let Some(fut) = &mut self.in_progress_future {
+                match ready!(fut.as_mut().poll(cx)) {
+                    Err(e) => {
+                        return Poll::Ready(Err(e));
+                    }
+                    Ok(_) => {
+                        self.in_progress_future = None;
+                    }
+                }
+            }
+            match ready!(self.command_rx.poll_recv(cx)) {
+                Some(msg) => {
+                    let client = Arc::clone(&self.client);
+                    match msg {
+                        ClientMessage::UpdateTemperature(temperature) => {
+                            let mut state = self.temperature.clone();
+                            self.in_progress_future = Some(Box::pin(async move {
+                                let mut client_guard = client.lock().await;
+                                state
+                                    .publish_if_update(temperature, &mut client_guard)
+                                    .await
+                            }));
+                        }
+                        ClientMessage::UpdateOccupancy(count) => {
+                            let mut binary_state = self.occupied.clone();
+                            let mut count_state = self.count.clone();
+                            self.in_progress_future = Some(Box::pin(async move {
+                                let mut client_guard = client.lock().await;
+                                binary_state
+                                    .publish_if_update(count != 0, &mut client_guard)
+                                    .await?;
+                                count_state
+                                    .publish_if_update(count, &mut client_guard)
+                                    .await
+                            }));
+                        }
+                        ClientMessage::UpdateStatus(status) => {
+                            let new_status = Status::from(status);
+                            let mut state = self.status.clone();
+                            self.in_progress_future = Some(Box::pin(async move {
+                                let mut client_guard = client.lock().await;
+                                state.publish_if_update(new_status, &mut client_guard).await
+                            }));
+                        }
+                    }
+                }
+                None => {
+                    return Poll::Ready(Err(anyhow!("Client command channel closed unexpectedly")))
+                }
+            }
+        }
     }
 }
 
