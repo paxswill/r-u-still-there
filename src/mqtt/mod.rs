@@ -2,6 +2,7 @@
 mod client;
 mod external_value;
 mod home_assistant;
+mod serialize;
 mod settings;
 mod state;
 

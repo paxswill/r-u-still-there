@@ -2,11 +2,12 @@
 use std::fmt;
 use std::sync::Arc;
 
-use bytes::{BufMut, BytesMut};
 use rumqttc::{AsyncClient, QoS};
 use serde::Serialize;
 use tokio::sync::RwLock;
 use tracing::debug;
+
+use super::serialize::serialize;
 
 /// A container for managing MQTT topic state.
 #[derive(Clone)]
@@ -81,16 +82,15 @@ where
 {
     /// Publish the current state using the provided client.
     pub(crate) async fn publish(&self, client: &mut AsyncClient) -> anyhow::Result<()> {
-        let mut payload_data = BytesMut::new().writer();
         // TODO figure out how to remove this clone
         let value = self.current().await;
-        serde_json::to_writer(&mut payload_data, &value)?;
+        let payload_data = serialize(&value)?;
         client
-            .publish_bytes(
+            .publish(
                 self.topic(),
                 self.qos,
                 self.retain,
-                payload_data.into_inner().freeze(),
+                payload_data,
             )
             .await
             .map_err(anyhow::Error::from)

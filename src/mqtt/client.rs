@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::{anyhow, Context as _};
-use bytes::{BufMut, BytesMut};
 use futures::{ready, Future};
 use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions as RuMqttOptions, QoS};
 use serde::{Deserialize, Serialize};
@@ -15,6 +14,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use super::home_assistant as hass;
+use super::serialize::serialize;
 use super::settings::MqttSettings;
 use super::state::State;
 
@@ -117,7 +117,7 @@ impl MqttClient {
         let device_uid = settings.unique_id();
         // Create rumqttc client and event loop task
         let mut client_options = RuMqttOptions::try_from(&settings)?;
-        let payload = serde_json::to_vec(&Status::Offline)
+        let payload = serialize(&Status::Offline)
             .expect("a static Status enum to encode cleanly into JSON");
         // TODO: add a setting to override the base topic
         let base_topic = "r-u-still-there";
@@ -229,12 +229,11 @@ impl MqttClient {
     where
         T: Serialize,
     {
-        let mut payload_data = BytesMut::new().writer();
-        serde_json::to_writer(&mut payload_data, payload)?;
+        let payload_data = serialize(payload)?;
         self.client
             .lock()
             .await
-            .publish_bytes(topic, qos, retain, payload_data.into_inner().freeze())
+            .publish(topic, qos, retain, payload_data)
             .await?;
         Ok(())
     }
