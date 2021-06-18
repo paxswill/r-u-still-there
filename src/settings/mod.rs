@@ -35,6 +35,5 @@ pub struct Settings {
     pub tracker: TrackerSettings,
 
     /// MQTT server connection settings.
-    #[serde(default)]
-    pub mqtt: Option<MqttSettings>,
+    pub mqtt: MqttSettings,
 }

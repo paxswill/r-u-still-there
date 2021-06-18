@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::{anyhow, Context as _};
 use futures::future::{Future, FutureExt, TryFutureExt};
-use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use futures::sink::Sink;
+use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream, TryStreamExt};
 use http::Response;
-use rumqttc::{ConnectReturnCode, Event, Packet};
 use pin_project::pin_project;
+use rumqttc::{ConnectReturnCode, Event, EventLoop, Packet};
+use tokio::sync::mpsc;
 use tokio::task::JoinError;
 use tracing::{debug, debug_span, error, info, info_span, trace_span};
 use tracing_futures::Instrument;
@@ -56,7 +57,7 @@ pub struct Pipeline {
     camera: Camera,
     frame_source: spmc::Sender<ThermalImage>,
     rendered_source: spmc::Sender<BytesImage>,
-    mqtt_client: Option<mqtt::MqttClient>,
+    update_channel: mpsc::Sender<mqtt::ClientMessage>,
     #[pin]
     tasks: TaskList,
 }
@@ -69,58 +70,20 @@ impl Pipeline {
         let (rendered_source, render_task) = create_renderer(&frame_source, config.render)?;
         // Once IntoIterator is implemented for arrays, this line can be simplified
         let tasks: TaskList = std::array::IntoIter::new([frame_task, render_task]).collect();
-        let mqtt_client = if let Some(mqtt_config) = config.mqtt {
-            debug!("Opening connection to MQTT broker");
-            let (client, mut eventloop) = mqtt::MqttClient::connect(mqtt_config)?;
-            // Wait until we get a ConnAck packet from the broker before continuing with setup.
-            loop {
-                let event = eventloop.poll().await?;
-                if let Event::Incoming(Packet::ConnAck(conn_ack)) = event {
-                    if conn_ack.code == ConnectReturnCode::Success {
-                        debug!("Connected to MQTT broker");
-                        break;
-                    } else {
-                        error!(response_code = ?conn_ack.code, "Connection to MQTT broker refused.");
-                        return Err(anyhow!("Connection to MQTT broker refused"));
-                    }
-                }
-            }
-            let loop_task: InnerTask = Box::new(
-                tokio::spawn(
-                    async move {
-                        loop {
-                            match eventloop.poll().await.context("polling MQTT event loop") {
-                                Ok(event) => debug!(?event, "MQTT event processed"),
-                                Err(err) => {
-                                    error!(error = ?err, "Error with MQTT connection");
-                                    return Err(err);
-                                }
-                            }
-                        }
-                        // This weird looking bit is a back-door type annotation for the return type of the
-                        // async closure. It's unreachable, but necessary (for now).
-                        #[allow(unreachable_code)]
-                        Ok::<(), anyhow::Error>(())
-                    }
-                    .instrument(debug_span!("mqtt_event_loop")),
-                )
-                .map(flatten_join_result),
-            );
-            tasks.push(loop_task);
-            Some(client)
-        } else {
-            None
-        };
+        debug!("Opening connection to MQTT broker");
+        let (client, eventloop) = mqtt::MqttClient::connect(config.mqtt)?;
+        let (update_channel, loop_task, client_task) = connect_mqtt(client, eventloop).await?;
+        tasks.push(loop_task);
+        tasks.push(client_task);
         let mut app = Self {
             camera,
             frame_source,
             rendered_source,
-            mqtt_client,
+            update_channel,
             tasks,
         };
         app.create_streams(config.streams)?;
         app.create_tracker(config.tracker)?;
-        app.connect_mqtt().await?;
         Ok(app)
     }
 
@@ -169,29 +132,27 @@ impl Pipeline {
 
     fn create_tracker(&mut self, settings: TrackerSettings) -> anyhow::Result<()> {
         let tracker = Tracker::from(&settings);
-        let logged_count_stream = tracker
+
+        let command_channel = self.update_channel.clone();
+        let update_count_stream = tracker
             .count_stream()
             .instrument(info_span!("occupancy_count_stream"))
-            .inspect(|count| {
-                info!(occupancy_count = count, "occupancy count changed");
-            });
+            .then(move |count| {
+                debug!(occupancy_count = count, "occupancy count changed");
+                let count_channel = command_channel.clone();
+                async move {
+                    count_channel
+                        .send(mqtt::ClientMessage::UpdateOccupancy(count))
+                        .await
+                }
+            })
+            .err_into::<anyhow::Error>()
+            .forward(Drain::new())
+            .boxed_local();
+        self.tasks.push(update_count_stream);
         let frame_stream = self.frame_source.stream();
-        self.tasks.push(Box::new(
-            ok_stream(logged_count_stream)
-                .forward(futures::sink::drain())
-                .err_into(),
-        ));
-        self.tasks.push(Box::new(
-            ok_stream(frame_stream).forward(tracker).err_into(),
-        ));
-        Ok(())
-    }
-
-    async fn connect_mqtt(&mut self) -> anyhow::Result<()> {
-        // Bail out early if there's no MQTT config
-        if let Some(mqtt_client) = &mut self.mqtt_client {
-            mqtt_client.publish_initial().await?;
-        }
+        self.tasks
+            .push(ok_stream(frame_stream).forward(tracker).err_into().boxed());
         Ok(())
     }
 }
@@ -242,6 +203,52 @@ fn create_renderer(
     let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
     let task = tokio::spawn(render_future).map(flatten_join_result).boxed();
     Ok((rendered_multiplexer, task))
+}
+
+async fn connect_mqtt(
+    mut client: mqtt::MqttClient,
+    mut eventloop: EventLoop,
+) -> anyhow::Result<(mpsc::Sender<mqtt::ClientMessage>, InnerTask, InnerTask)> {
+    // Wait until we get a ConnAck packet from the broker before continuing with setup.
+    loop {
+        let event = eventloop.poll().await?;
+        if let Event::Incoming(Packet::ConnAck(conn_ack)) = event {
+            if conn_ack.code == ConnectReturnCode::Success {
+                debug!("Connected to MQTT broker");
+                break;
+            } else {
+                error!(response_code = ?conn_ack.code, "Connection to MQTT broker refused.");
+                return Err(anyhow!("Connection to MQTT broker refused"));
+            }
+        }
+    }
+    // Create a task to run the event loop
+    let loop_task: InnerTask = tokio::spawn(
+        async move {
+            loop {
+                match eventloop.poll().await.context("polling MQTT event loop") {
+                    Ok(event) => debug!(?event, "MQTT event processed"),
+                    Err(err) => {
+                        error!(error = ?err, "Error with MQTT connection");
+                        return Err(err);
+                    }
+                }
+            }
+            // This weird looking bit is a back-door type annotation for the return type of the
+            // async closure. It's unreachable, but necessary (for now).
+            #[allow(unreachable_code)]
+            Ok::<(), anyhow::Error>(())
+        }
+        .instrument(debug_span!("mqtt_event_loop")),
+    )
+    .map(flatten_join_result)
+    .boxed();
+    let update_channel = client.command_channel();
+    // Publish the initial messages before pushing the client onto the task list, as after that
+    // the only access is through the command channel. The actual packets will be stored in a queue
+    // until the event loop is up and running.
+    client.publish_initial().await?;
+    Ok((update_channel, loop_task, client.boxed()))
 }
 
 /// A drain with a generic error.
