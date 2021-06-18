@@ -2,7 +2,6 @@
 use anyhow::{anyhow, Context as _};
 use bytes::{BufMut, BytesMut};
 use futures::{ready, Future};
-use pin_project::pin_project;
 use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions as RuMqttOptions, QoS};
 use serde::{Deserialize, Serialize};
 use tokio::sync::{mpsc, Mutex};
@@ -186,7 +185,7 @@ impl MqttClient {
 
     fn unique_id_for(&self, topic: Topic) -> String {
         let entity_kind = match topic {
-            // Status doesn't really need a unique_id, buyt just in case I add it later
+            // Status doesn't really need a unique_id, but just in case I add it later
             Topic::Status => "status",
             Topic::Temperature => "temperature",
             Topic::Occupancy => "occupied",
@@ -266,10 +265,8 @@ impl MqttClient {
         }
         let device = self.create_hass_device();
 
-        let mut temperature_config = hass::AnalogSensor::new_with_state_topic_and_device(
-            self.temperature.topic(),
-            &device,
-        );
+        let mut temperature_config =
+            hass::AnalogSensor::new_with_state_topic_and_device(self.temperature.topic(), &device);
         temperature_config.add_availability_topic(self.status.topic().into());
         temperature_config.set_device_class(hass::AnalogSensorClass::Temperature);
         temperature_config.set_name(format!("{} Temperature", self.name));
@@ -285,10 +282,8 @@ impl MqttClient {
         )
         .await?;
 
-        let mut count_config = hass::AnalogSensor::new_with_state_topic_and_device(
-            self.count.topic(),
-            &device,
-        );
+        let mut count_config =
+            hass::AnalogSensor::new_with_state_topic_and_device(self.count.topic(), &device);
         count_config.add_availability_topic(self.status.topic().into());
         count_config.set_name(format!("{} Occupancy Count", self.name));
         count_config.set_unit_of_measurement(Some("people".to_string()));
@@ -302,10 +297,8 @@ impl MqttClient {
         )
         .await?;
 
-        let mut occupancy_config = hass::BinarySensor::new_with_state_topic_and_device(
-            self.occupied.topic(),
-            &device,
-        );
+        let mut occupancy_config =
+            hass::BinarySensor::new_with_state_topic_and_device(self.occupied.topic(), &device);
         occupancy_config.add_availability_topic(self.status.topic().into());
         occupancy_config.set_device_class(hass::BinarySensorClass::Occupancy);
         occupancy_config.set_name(format!("{} Occupancy", self.name));

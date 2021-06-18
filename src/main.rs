@@ -7,7 +7,6 @@ use tracing::{debug, debug_span, error, instrument, Instrument};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Registry};
 
-use std::convert::TryFrom;
 use std::path::PathBuf;
 
 #[macro_use]
