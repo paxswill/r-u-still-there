@@ -5,6 +5,7 @@ use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use futures::sink::Sink;
 use http::Response;
 use rumqttc::{ConnectReturnCode, Event, Packet};
+use pin_project::pin_project;
 use tokio::task::JoinError;
 use tracing::{debug, debug_span, error, info, info_span, trace_span};
 use tracing_futures::Instrument;
@@ -30,7 +31,7 @@ where
     in_stream.map(Result::<T, E>::Ok)
 }
 
-type InnerTask = Box<dyn Future<Output = anyhow::Result<()>> + Unpin>;
+type InnerTask = Pin<Box<dyn Future<Output = anyhow::Result<()>>>>;
 type TaskList = FuturesUnordered<InnerTask>;
 
 fn flatten_join_result<E>(join_result: Result<Result<(), E>, JoinError>) -> anyhow::Result<()>
@@ -50,11 +51,13 @@ where
     }
 }
 
+#[pin_project]
 pub struct Pipeline {
     camera: Camera,
     frame_source: spmc::Sender<ThermalImage>,
     rendered_source: spmc::Sender<BytesImage>,
     mqtt_client: Option<mqtt::MqttClient>,
+    #[pin]
     tasks: TaskList,
 }
 
@@ -146,9 +149,11 @@ impl Pipeline {
                 .boxed();
             routes.push(mjpeg_route);
             // Stream out rendered frames via MJPEG
-            self.tasks.push(Box::new(
-                tokio::spawn(mjpeg.instrument(trace_span!("mjpeg_encoder"))).err_into(),
-            ));
+            self.tasks.push(
+                tokio::spawn(mjpeg.instrument(trace_span!("mjpeg_encoder")))
+                    .err_into()
+                    .boxed(),
+            );
         }
         let combined_route = routes
             .into_iter()
@@ -157,9 +162,8 @@ impl Pipeline {
         let bind_address: std::net::SocketAddr = settings.into();
         debug!(address = ?bind_address, "creating warp server");
         let server = warp::serve(combined_route).bind(bind_address);
-        self.tasks.push(Box::new(
-            server.instrument(info_span!("warp_server")).map(Ok),
-        ));
+        self.tasks
+            .push(server.instrument(info_span!("warp_server")).map(Ok).boxed());
         Ok(())
     }
 
@@ -197,7 +201,7 @@ impl Future for Pipeline {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
-            match self.tasks.poll_next_unpin(cx) {
+            match self.as_mut().project().tasks.poll_next(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(option) => match option {
                     None => return Poll::Ready(()),
@@ -216,7 +220,7 @@ fn create_frame_source(camera: &Camera) -> anyhow::Result<(spmc::Sender<ThermalI
     let frame_stream = camera.frame_stream();
     let frame_multiplexer = spmc::Sender::default();
     let frame_future = frame_stream.forward(frame_multiplexer.clone());
-    Ok((frame_multiplexer, Box::new(frame_future)))
+    Ok((frame_multiplexer, frame_future.boxed()))
 }
 
 fn create_renderer(
@@ -236,7 +240,7 @@ fn create_renderer(
         .map(move |temperatures| renderer.render_buffer(&temperatures));
     let rendered_multiplexer = spmc::Sender::default();
     let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
-    let task = Box::new(tokio::spawn(render_future).map(flatten_join_result));
+    let task = tokio::spawn(render_future).map(flatten_join_result).boxed();
     Ok((rendered_multiplexer, task))
 }
 
