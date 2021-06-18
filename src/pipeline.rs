@@ -2,6 +2,7 @@
 use anyhow::{anyhow, Context as _};
 use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
+use futures::sink::Sink;
 use http::Response;
 use rumqttc::{ConnectReturnCode, Event, Packet};
 use tokio::task::JoinError;
@@ -10,6 +11,7 @@ use tracing_futures::Instrument;
 use warp::Filter;
 
 use std::convert::TryInto;
+use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 use std::vec::Vec;
@@ -236,4 +238,38 @@ fn create_renderer(
     let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
     let task = Box::new(tokio::spawn(render_future).map(flatten_join_result));
     Ok((rendered_multiplexer, task))
+}
+
+/// A drain with a generic error.
+///
+/// [futures::sink::drain] has [std::convert::Infallible] as its `Error` type, which precludes it
+/// being used with other types of errors, which can be desired when
+/// [forwarding][futures::stream::StreamExt::forward] a [Stream][futures::stream::Stream] to a
+/// [Sink][futures::sink::Sink].
+struct Drain<E>(PhantomData<E>);
+
+impl<E> Drain<E> {
+    fn new() -> Self {
+        Drain(PhantomData)
+    }
+}
+
+impl<E> Sink<()> for Drain<E> {
+    type Error = E;
+
+    fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: Pin<&mut Self>, _: ()) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
 }
