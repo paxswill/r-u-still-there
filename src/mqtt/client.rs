@@ -93,14 +93,6 @@ pub enum Topic {
     Count,
 }
 
-/// The status of a device as known to the MQTT server.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum Status {
-    Online,
-    Offline,
-}
-
 /// The length of the internal buffer of MQTT packets used by the `rumqttc` event loop.
 const EVENT_LOOP_CAPACITY: usize = 20;
 
@@ -109,14 +101,12 @@ impl MqttClient {
         let device_uid = settings.unique_id();
         // Create rumqttc client and event loop task
         let mut client_options = RuMqttOptions::try_from(&settings)?;
-        let payload = serialize(&Status::Offline)
-            .expect("a static Status enum to encode cleanly into JSON");
         // TODO: add a setting to override the base topic
         let base_topic = "r-u-still-there";
         let status_topic = [base_topic, &device_uid, "status"].join("/");
         client_options.set_last_will(LastWill::new(
             &status_topic,
-            payload,
+            Status::Offline.to_string().as_bytes(),
             QoS::AtLeastOnce,
             true,
         ));
@@ -367,6 +357,14 @@ impl Future for MqttClient {
     }
 }
 
+/// The status of a device as known to the MQTT server.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Status {
+    Online,
+    Offline,
+}
+
 impl Default for Status {
     fn default() -> Self {
         Self::Online
@@ -379,6 +377,15 @@ impl From<bool> for Status {
             Self::Online
         } else {
             Self::Offline
+        }
+    }
+}
+
+impl ToString for Status {
+    fn to_string(&self) -> String {
+        match self {
+            Status::Online => "online".to_string(),
+            Status::Offline => "offline".to_string(),
         }
     }
 }
