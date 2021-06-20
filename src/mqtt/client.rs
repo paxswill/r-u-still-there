@@ -50,14 +50,6 @@ pub struct MqttClient {
     /// Defaults to "homeassistant"
     home_assistant_topic: String,
 
-    /// Retain Home Assistant MQTT discovery configuration on the MQTT broker.
-    ///
-    /// **In almost all cases this option should be enabled, and the default is to be enabled.**
-    ///
-    /// By disabling this, the entity configuration will not be stored on the MQTT broker, and Home
-    /// Assistant will only receive it when r-u-still-there starts up.
-    home_assistant_retain: bool,
-
     /// The MQTT client.
     client: Arc<Mutex<AsyncClient>>,
 
@@ -141,7 +133,6 @@ impl MqttClient {
                 device_uid,
                 home_assistant: settings.home_assistant,
                 home_assistant_topic: settings.home_assistant_topic,
-                home_assistant_retain: settings.home_assistant_retain,
                 client: Arc::new(Mutex::new(client)),
                 status,
                 temperature,
@@ -253,15 +244,13 @@ impl MqttClient {
             hass::Component::from(config).to_string(),
             unique_id
         );
-        self.publish_serialize(topic, QoS::AtLeastOnce, self.home_assistant_retain, config)
+        // Always retain discovery messages.
+        self.publish_serialize(topic, QoS::AtLeastOnce, true, config)
             .await
             .context("serializing MQTT discovery config")
     }
 
     pub async fn publish_home_assistant(&mut self) -> anyhow::Result<()> {
-        if !self.home_assistant_retain {
-            warn!("Publishing Home Assistant discovery data without the retain flag");
-        }
         let device = self.create_hass_device();
 
         let mut temperature_config =

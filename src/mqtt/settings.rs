@@ -75,15 +75,6 @@ pub struct MqttSettings {
     /// Defaults to "homeassistant"
     #[serde(default = "MqttSettings::default_home_assistant_topic")]
     pub(super) home_assistant_topic: String,
-
-    /// Retain Home Assistant MQTT discovery configuration on the MQTT broker.
-    ///
-    /// **In almost all cases this option should be enabled, and the default is to be enabled.**
-    ///
-    /// By disabling this, the entity configuration will not be stored on the MQTT broker, and Home
-    /// Assistant will only receive it when r-u-still-there starts up.
-    #[serde(default = "MqttSettings::default_home_assistant_retain")]
-    pub(super) home_assistant_retain: bool,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -150,11 +141,6 @@ impl MqttSettings {
         "homeassistant".into()
     }
 
-    /// The default value for whether or not to retain Home Assistant MQTT discovery configuration.
-    fn default_home_assistant_retain() -> bool {
-        true
-    }
-
     /// Access the server URL.
     pub fn server_url(&self) -> &Url {
         &self.server.0
@@ -218,7 +204,6 @@ impl fmt::Debug for MqttSettings {
             .field("keep_alive", &self.keep_alive)
             .field("home_assistant", &self.home_assistant)
             .field("home_assistant_topic", &self.home_assistant_topic)
-            .field("home_assistant_retain", &self.home_assistant_retain)
             .finish()
     }
 }
@@ -292,7 +277,6 @@ mod test {
             keep_alive: None,
             home_assistant: false,
             home_assistant_topic: "homeassistant".into(),
-            home_assistant_retain: true,
         };
         assert_eq!(parsed, expected);
     }
