@@ -60,7 +60,7 @@ pub struct MqttClient {
     temperature: State<Option<f32>>,
 
     /// Whether or not the camera detects a person.
-    occupied: State<bool>,
+    occupied: State<Occupancy>,
 
     /// The number of people the camera detects.
     count: State<usize>,
@@ -281,6 +281,8 @@ impl MqttClient {
         occupancy_config.set_device_class(hass::BinarySensorClass::Occupancy);
         occupancy_config.set_name(format!("{} Occupancy", self.name));
         occupancy_config.set_unique_id(Some(self.unique_id_for(Topic::Occupancy)));
+        occupancy_config.set_payload_on(Occupancy::Occupied.to_string().into());
+        occupancy_config.set_payload_off(Occupancy::Unoccupied.to_string().into());
         self.publish_discovery_config(
             &occupancy_config
                 .unique_id()
@@ -332,7 +334,7 @@ impl Future for MqttClient {
                             self.in_progress_future = Some(Box::pin(async move {
                                 let mut client_guard = client.lock().await;
                                 binary_state
-                                    .publish_if_update(count != 0, &mut client_guard)
+                                    .publish_if_update(count.into(), &mut client_guard)
                                     .await?;
                                 count_state
                                     .publish_if_update(count, &mut client_guard)
@@ -389,3 +391,48 @@ impl ToString for Status {
         }
     }
 }
+
+/// The occupancy status of a location.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Occupancy {
+    Occupied,
+    Unoccupied,
+}
+
+impl Default for Occupancy {
+    fn default() -> Self {
+        Self::Unoccupied
+    }
+}
+
+impl From<bool> for Occupancy {
+    fn from(occupied: bool) -> Self {
+        if occupied {
+            Self::Occupied
+        } else {
+            Self::Unoccupied
+        }
+    }
+}
+
+impl From<usize> for Occupancy {
+    fn from(occupancy_count: usize) -> Self {
+        if occupancy_count > 0 {
+            Self::Occupied
+        } else {
+            Self::Unoccupied
+        }
+    }
+}
+
+impl ToString for Occupancy {
+    fn to_string(&self) -> String {
+        match self {
+            Occupancy::Occupied => "occupied".to_string(),
+            Occupancy::Unoccupied => "unoccupied".to_string(),
+        }
+    }
+}
+
+
