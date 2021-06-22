@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use std::cell::{Ref, RefCell, RefMut};
+use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::iter::Iterator;
-use std::rc::Rc;
 
 use serde::{Deserialize, Serialize};
 
@@ -53,9 +52,16 @@ default_newtype!(SensorQoS, u8, 0);
 default_newtype!(ForceUpdate, bool, false);
 default_newtype!(EnabledByDefault, bool, true);
 
-/// Settings common to any MQTT device
+/// Settings common to any MQTT device.
+///
+/// This type is generic over the type of owning reference (I think that's the right term) to a
+/// [Device] it has. The default is to own a [Device] outright, but the intention os to allow [Rc],
+/// [Arc], or any other type that implements [Borrow] to be used as required.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct EntityConfig {
+pub struct EntityConfig<P = Device>
+where
+    P: Borrow<Device> + Default + PartialEq,
+{
     #[serde(alias = "avty", default, skip_serializing_if = "is_default")]
     availability: HashSet<AvailabilityTopic>,
 
@@ -67,7 +73,7 @@ pub struct EntityConfig {
     // ref counting is to try to keep memory usage/allocations down when doing a one-time
     // configuration on start up.
     #[serde(alias = "dev", default, skip_serializing_if = "is_default")]
-    device: Rc<RefCell<Device>>,
+    device: P,
 
     #[serde(default, skip_serializing_if = "is_default")]
     pub enabled_by_default: EnabledByDefault,
@@ -107,20 +113,26 @@ pub struct EntityConfig {
     pub value_template: Option<String>,
 }
 
-impl EntityConfig {
-    pub fn new_with_state_topic<P: Into<String>>(state_topic: P) -> Self {
-        let device = Rc::new(RefCell::new(Device::default()));
-        Self::new_with_state_and_device(state_topic, &device)
+impl<P> EntityConfig<P>
+where
+    P: Borrow<Device> + Default + PartialEq,
+{
+    pub fn new_with_state_topic<S>(state_topic: S) -> Self
+    where
+        S: Into<String>,
+    {
+        let device = P::default();
+        Self::new_with_state_and_device(state_topic, device)
     }
 
-    pub fn new_with_state_and_device<P>(state_topic: P, device: &Rc<RefCell<Device>>) -> Self
+    pub fn new_with_state_and_device<S>(state_topic: S, device: P) -> Self
     where
-        P: Into<String>,
+        S: Into<String>,
     {
         Self {
             availability: HashSet::default(),
             availability_mode: AvailabilityMode::default(),
-            device: Rc::clone(device),
+            device,
             enabled_by_default: EnabledByDefault::default(),
             expire_after: None,
             force_update: ForceUpdate::default(),
@@ -185,15 +197,11 @@ impl EntityConfig {
         self.availability.iter()
     }
 
-    pub fn device(&self) -> Ref<'_, Device> {
+    pub fn device(&self) -> &Device {
         self.device.borrow()
     }
 
-    pub fn device_mut(&self) -> RefMut<'_, Device> {
-        self.device.borrow_mut()
-    }
-
-    pub fn set_device(&mut self, device: &Rc<RefCell<Device>>) {
-        self.device = Rc::clone(device);
+    pub fn set_device(&mut self, device: P) {
+        self.device = device;
     }
 }

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use std::cell::{Ref, RefCell, RefMut};
-use std::rc::Rc;
+use std::borrow::Borrow;
 
 use delegate::delegate;
 use paste::paste;
@@ -94,9 +93,8 @@ macro_rules! expose_common {
                     N: Into<PayloadNotAvailable>;
                 pub fn set_availability_topic( &mut self, topic: String);
                 pub fn availability_topics(&self) -> impl Iterator<Item = &AvailabilityTopic>;
-                pub fn device(&self) -> Ref<'_, Device>;
-                pub fn device_mut(&self) -> RefMut<'_, Device>;
-                pub fn set_device(&mut self, device: &Rc<RefCell<Device>>);
+                pub fn device(&self) -> &Device;
+                pub fn set_device(&mut self, device: P);
             }
         }
 
@@ -138,9 +136,12 @@ default_string!(PayloadOff, "OFF");
 default_string!(PayloadOn, "ON");
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct BinarySensor {
+pub struct BinarySensor<P>
+where
+    P: Borrow<Device> + Default + PartialEq,
+{
     #[serde(flatten)]
-    mqtt: EntityConfig,
+    mqtt: EntityConfig<P>,
 
     #[serde(alias = "dev_cla", default, skip_serializing_if = "is_default")]
     device_class: BinarySensorClass,
@@ -159,16 +160,19 @@ pub struct BinarySensor {
 }
 
 #[allow(dead_code)]
-impl BinarySensor {
+impl<P> BinarySensor<P>
+where
+    P: Borrow<Device> + Default + PartialEq,
+{
     expose_common!();
     expose_inner!(device_class, BinarySensorClass);
     expose_inner!(off_delay, Option<u32>);
     expose_inner!(payload_off, PayloadOff);
     expose_inner!(payload_on, PayloadOn);
 
-    pub fn new_with_state_topic_and_device<P>(state_topic: P, device: &Rc<RefCell<Device>>) -> Self
+    pub fn new_with_state_topic_and_device<S>(state_topic: S, device: P) -> Self
     where
-        P: Into<String>,
+        S: Into<String>,
     {
         Self {
             mqtt: EntityConfig::new_with_state_and_device(state_topic, device),
@@ -193,8 +197,11 @@ impl BinarySensor {
     }
 }
 
-impl From<&BinarySensor> for Component {
-    fn from(_: &BinarySensor) -> Self {
+impl<P> From<&BinarySensor<P>> for Component
+where
+    P: Borrow<Device> + Default + PartialEq,
+{
+    fn from(_: &BinarySensor<P>) -> Self {
         Self::BinarySensor
     }
 }
@@ -217,9 +224,12 @@ impl Default for AnalogSensorClass {
 default_string!(AnalogSensorName, "MQTT Sensor");
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct AnalogSensor {
+pub struct AnalogSensor<P>
+where
+    P: Borrow<Device> + Default + PartialEq,
+{
     #[serde(flatten)]
-    mqtt: EntityConfig,
+    mqtt: EntityConfig<P>,
 
     #[serde(alias = "dev_cla", default, skip_serializing_if = "is_default")]
     device_class: AnalogSensorClass,
@@ -232,14 +242,17 @@ pub struct AnalogSensor {
 }
 
 #[allow(dead_code)]
-impl AnalogSensor {
+impl<P> AnalogSensor<P>
+where
+    P: Borrow<Device> + Default + PartialEq,
+{
     expose_common!();
     expose_inner!(device_class, AnalogSensorClass);
     expose_inner!(unit_of_measurement, Option<String>);
 
-    pub fn new_with_state_topic_and_device<P>(state_topic: P, device: &Rc<RefCell<Device>>) -> Self
+    pub fn new_with_state_topic_and_device<S>(state_topic: S, device: P) -> Self
     where
-        P: Into<String>,
+        S: Into<String>,
     {
         Self {
             mqtt: EntityConfig::new_with_state_and_device(state_topic, device),
@@ -258,8 +271,11 @@ impl AnalogSensor {
     }
 }
 
-impl From<&AnalogSensor> for Component {
-    fn from(_: &AnalogSensor) -> Self {
+impl<P> From<&AnalogSensor<P>> for Component
+where
+    P: Borrow<Device> + Default + PartialEq,
+{
+    fn from(_: &AnalogSensor<P>) -> Self {
         Self::Sensor
     }
 }
