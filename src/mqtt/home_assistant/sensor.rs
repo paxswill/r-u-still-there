@@ -7,8 +7,8 @@ use paste::paste;
 use serde::{Deserialize, Serialize};
 
 use super::common::{
-    AvailabilityMode, AvailabilityTopic, EntityConfig, ForceUpdate, PayloadAvailable,
-    PayloadNotAvailable, SensorQoS,
+    AvailabilityMode, AvailabilityTopic, EnabledByDefault, EntityConfig, ForceUpdate,
+    PayloadAvailable, PayloadNotAvailable, SensorQoS,
 };
 use super::device::Device;
 use super::util::is_default;
@@ -101,6 +101,7 @@ macro_rules! expose_common {
         }
 
         expose_mqtt_config!(availability_mode, AvailabilityMode);
+        expose_mqtt_config!(enabled_by_default, EnabledByDefault);
         expose_mqtt_config!(expire_after, Option<u32>);
         expose_mqtt_config!(force_update, ForceUpdate);
         expose_mqtt_config!(icon, Option<String>);

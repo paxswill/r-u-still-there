@@ -51,6 +51,7 @@ impl Default for AvailabilityMode {
 // TODO: encode this as a enum of numbers (and duplicate mqttbytes::QoS in the process)
 default_newtype!(SensorQoS, u8, 0);
 default_newtype!(ForceUpdate, bool, false);
+default_newtype!(EnabledByDefault, bool, true);
 
 /// Settings common to any MQTT device
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -67,6 +68,9 @@ pub struct EntityConfig {
     // configuration on start up.
     #[serde(alias = "dev", default, skip_serializing_if = "is_default")]
     device: Rc<RefCell<Device>>,
+
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub enabled_by_default: EnabledByDefault,
 
     #[serde(alias = "exp_aft", default, skip_serializing_if = "is_default")]
     pub expire_after: Option<u32>,
@@ -117,6 +121,7 @@ impl EntityConfig {
             availability: HashSet::default(),
             availability_mode: AvailabilityMode::default(),
             device: Rc::clone(device),
+            enabled_by_default: EnabledByDefault::default(),
             expire_after: None,
             force_update: ForceUpdate::default(),
             icon: None,

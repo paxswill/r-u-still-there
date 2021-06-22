@@ -80,7 +80,6 @@ impl<T> State<T> {
     pub(crate) fn topic(&self) -> &str {
         &self.inner.topic
     }
-
 }
 
 impl<T> State<T>
@@ -209,9 +208,7 @@ where
         );
         let inner = Arc::clone(&self.inner);
         // Capture inner in an async closure
-        let in_progress = async move {
-            inner.publish_if_update(new_value).await
-        };
+        let in_progress = async move { inner.publish_if_update(new_value).await };
         self.in_progress_future = Some(Box::pin(in_progress));
         Ok(())
     }

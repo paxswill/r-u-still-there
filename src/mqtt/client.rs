@@ -314,31 +314,29 @@ impl Future for MqttClient {
                 }
             }
             match ready!(self.command_rx.poll_recv(cx)) {
-                Some(msg) => {
-                    match msg {
-                        ClientMessage::UpdateTemperature(temperature) => {
-                            let state = self.temperature.clone();
-                            self.in_progress_future = Some(Box::pin(async move {
-                                state.publish_if_update(temperature).await
-                            }));
-                        }
-                        ClientMessage::UpdateOccupancy(count) => {
-                            let binary_state = self.occupied.clone();
-                            let count_state = self.count.clone();
-                            self.in_progress_future = Some(Box::pin(async move {
-                                binary_state.publish_if_update(count.into()).await?;
-                                count_state.publish_if_update(count).await
-                            }));
-                        }
-                        ClientMessage::UpdateStatus(status) => {
-                            let new_status = Status::from(status);
-                            let state = self.status.clone();
-                            self.in_progress_future = Some(Box::pin(async move {
-                                state.publish_if_update(new_status).await
-                            }));
-                        }
+                Some(msg) => match msg {
+                    ClientMessage::UpdateTemperature(temperature) => {
+                        let state = self.temperature.clone();
+                        self.in_progress_future = Some(Box::pin(async move {
+                            state.publish_if_update(temperature).await
+                        }));
                     }
-                }
+                    ClientMessage::UpdateOccupancy(count) => {
+                        let binary_state = self.occupied.clone();
+                        let count_state = self.count.clone();
+                        self.in_progress_future = Some(Box::pin(async move {
+                            binary_state.publish_if_update(count.into()).await?;
+                            count_state.publish_if_update(count).await
+                        }));
+                    }
+                    ClientMessage::UpdateStatus(status) => {
+                        let new_status = Status::from(status);
+                        let state = self.status.clone();
+                        self.in_progress_future = Some(Box::pin(async move {
+                            state.publish_if_update(new_status).await
+                        }));
+                    }
+                },
                 None => {
                     return Poll::Ready(Err(anyhow!("Client command channel closed unexpectedly")))
                 }
