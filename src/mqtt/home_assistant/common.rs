@@ -54,7 +54,7 @@ default_newtype!(ForceUpdate, bool, false);
 
 /// Settings common to any MQTT device
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-pub struct MqttConfig {
+pub struct EntityConfig {
     #[serde(alias = "avty", default, skip_serializing_if = "is_default")]
     availability: HashSet<AvailabilityTopic>,
 
@@ -103,7 +103,7 @@ pub struct MqttConfig {
     pub value_template: Option<String>,
 }
 
-impl MqttConfig {
+impl EntityConfig {
     pub fn new_with_state_topic<P: Into<String>>(state_topic: P) -> Self {
         let device = Rc::new(RefCell::new(Device::default()));
         Self::new_with_state_and_device(state_topic, &device)

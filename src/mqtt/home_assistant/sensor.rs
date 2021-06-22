@@ -7,7 +7,7 @@ use paste::paste;
 use serde::{Deserialize, Serialize};
 
 use super::common::{
-    AvailabilityMode, AvailabilityTopic, ForceUpdate, MqttConfig, PayloadAvailable,
+    AvailabilityMode, AvailabilityTopic, EntityConfig, ForceUpdate, PayloadAvailable,
     PayloadNotAvailable, SensorQoS,
 };
 use super::device::Device;
@@ -139,7 +139,7 @@ default_string!(PayloadOn, "ON");
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct BinarySensor {
     #[serde(flatten)]
-    mqtt: MqttConfig,
+    mqtt: EntityConfig,
 
     #[serde(alias = "dev_cla", default, skip_serializing_if = "is_default")]
     device_class: BinarySensorClass,
@@ -170,7 +170,7 @@ impl BinarySensor {
         P: Into<String>,
     {
         Self {
-            mqtt: MqttConfig::new_with_state_and_device(state_topic, device),
+            mqtt: EntityConfig::new_with_state_and_device(state_topic, device),
             device_class: BinarySensorClass::default(),
             name: BinarySensorName::default(),
             off_delay: None,
@@ -218,7 +218,7 @@ default_string!(AnalogSensorName, "MQTT Sensor");
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct AnalogSensor {
     #[serde(flatten)]
-    mqtt: MqttConfig,
+    mqtt: EntityConfig,
 
     #[serde(alias = "dev_cla", default, skip_serializing_if = "is_default")]
     device_class: AnalogSensorClass,
@@ -241,7 +241,7 @@ impl AnalogSensor {
         P: Into<String>,
     {
         Self {
-            mqtt: MqttConfig::new_with_state_and_device(state_topic, device),
+            mqtt: EntityConfig::new_with_state_and_device(state_topic, device),
             device_class: AnalogSensorClass::default(),
             name: AnalogSensorName::default(),
             unit_of_measurement: None,
