@@ -75,7 +75,7 @@ pub struct EntityConfig {
     #[serde(alias = "exp_aft", default, skip_serializing_if = "is_default")]
     pub expire_after: Option<u32>,
 
-    #[serde(alias = "exp_aft", default, skip_serializing_if = "is_default")]
+    #[serde(alias = "frc_upd", default, skip_serializing_if = "is_default")]
     pub force_update: ForceUpdate,
 
     #[serde(alias = "ic", default, skip_serializing_if = "is_default")]
