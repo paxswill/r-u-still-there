@@ -111,19 +111,29 @@ impl MqttClient {
             true,
         ));
         let (client, eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
+        let client = Arc::new(Mutex::new(client));
         let (command_tx, command_rx) = mpsc::channel(30);
         // Create the states early, as they use a reference to device_uid
-        let status = State::new_default_at(status_topic);
-        let temperature = State::new_default_at([base_topic, &device_uid, "temperature"].join("/"));
-        let occupied = State::new_default_at([base_topic, &device_uid, "occupied"].join("/"));
-        let count = State::new_default_at([base_topic, &device_uid, "occupancy_count"].join("/"));
+        let status = State::new_default(Arc::clone(&client), status_topic);
+        let temperature = State::new_default(
+            Arc::clone(&client),
+            [base_topic, &device_uid, "temperature"].join("/"),
+        );
+        let occupied = State::new_default(
+            Arc::clone(&client),
+            [base_topic, &device_uid, "occupied"].join("/"),
+        );
+        let count = State::new_default(
+            Arc::clone(&client),
+            [base_topic, &device_uid, "occupancy_count"].join("/"),
+        );
         Ok((
             Self {
                 name: settings.name,
                 device_uid,
                 home_assistant: settings.home_assistant,
                 home_assistant_topic: settings.home_assistant_topic,
-                client: Arc::new(Mutex::new(client)),
+                client,
                 status,
                 temperature,
                 occupied,
@@ -145,22 +155,10 @@ impl MqttClient {
             self.publish_home_assistant().await?;
         }
         // Only keep the lock as long as required for each client.
-        {
-            let mut client = self.client.lock().await;
-            self.status.publish(&mut client).await?;
-        }
-        {
-            let mut client = self.client.lock().await;
-            self.temperature.publish(&mut client).await?;
-        }
-        {
-            let mut client = self.client.lock().await;
-            self.occupied.publish(&mut client).await?;
-        }
-        {
-            let mut client = self.client.lock().await;
-            self.count.publish(&mut client).await?;
-        }
+        self.status.publish().await?;
+        self.temperature.publish().await?;
+        self.occupied.publish().await?;
+        self.count.publish().await?;
         Ok(())
     }
 
@@ -317,36 +315,26 @@ impl Future for MqttClient {
             }
             match ready!(self.command_rx.poll_recv(cx)) {
                 Some(msg) => {
-                    let client = Arc::clone(&self.client);
                     match msg {
                         ClientMessage::UpdateTemperature(temperature) => {
-                            let mut state = self.temperature.clone();
+                            let state = self.temperature.clone();
                             self.in_progress_future = Some(Box::pin(async move {
-                                let mut client_guard = client.lock().await;
-                                state
-                                    .publish_if_update(temperature, &mut client_guard)
-                                    .await
+                                state.publish_if_update(temperature).await
                             }));
                         }
                         ClientMessage::UpdateOccupancy(count) => {
-                            let mut binary_state = self.occupied.clone();
-                            let mut count_state = self.count.clone();
+                            let binary_state = self.occupied.clone();
+                            let count_state = self.count.clone();
                             self.in_progress_future = Some(Box::pin(async move {
-                                let mut client_guard = client.lock().await;
-                                binary_state
-                                    .publish_if_update(count.into(), &mut client_guard)
-                                    .await?;
-                                count_state
-                                    .publish_if_update(count, &mut client_guard)
-                                    .await
+                                binary_state.publish_if_update(count.into()).await?;
+                                count_state.publish_if_update(count).await
                             }));
                         }
                         ClientMessage::UpdateStatus(status) => {
                             let new_status = Status::from(status);
-                            let mut state = self.status.clone();
+                            let state = self.status.clone();
                             self.in_progress_future = Some(Box::pin(async move {
-                                let mut client_guard = client.lock().await;
-                                state.publish_if_update(new_status, &mut client_guard).await
+                                state.publish_if_update(new_status).await
                             }));
                         }
                     }
@@ -434,5 +422,3 @@ impl ToString for Occupancy {
         }
     }
 }
-
-
