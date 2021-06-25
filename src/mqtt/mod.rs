@@ -8,3 +8,4 @@ mod state;
 
 pub use client::{ClientMessage, MqttClient};
 pub use settings::MqttSettings;
+pub(crate) use state::State;

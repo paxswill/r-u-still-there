@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::borrow::Borrow;
 use std::fmt;
 use std::ops::Deref;
-use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
-use futures::{ready, Future, Sink};
+use futures::sink::{unfold, Sink};
+use futures::Future;
 use rumqttc::{AsyncClient, QoS};
 use serde::{Serialize, Serializer};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
 use tracing::debug;
 
+use super::home_assistant as hass;
 use super::serialize::serialize;
 
-struct InnerState<T> {
+#[derive(Debug)]
+pub(crate) struct InnerState<T>
+where
+    T: fmt::Debug + Send + Sync,
+{
     client: Arc<Mutex<AsyncClient>>,
     value: RwLock<T>,
     topic: String,
@@ -23,12 +28,14 @@ struct InnerState<T> {
 
 impl<T> InnerState<T>
 where
-    T: Send + Sync,
-    T: Serialize,
+    T: fmt::Debug + Send + Sync,
+    T: Serialize + PartialEq,
 {
+    /// Publish the current state.
     async fn publish(&self) -> anyhow::Result<()> {
         let value = SerializeRwLockGuard::from(self.value.read().await);
         let payload_data = serialize(&value)?;
+        debug!(?value, ?self.topic, "Publishing value to topic");
         self.client
             .lock()
             .await
@@ -36,14 +43,10 @@ where
             .await
             .map_err(anyhow::Error::from)
     }
-}
 
-impl<T> InnerState<T>
-where
-    T: Send + Sync,
-    T: PartialEq,
-{
-    pub(crate) async fn update(&self, new_value: T) -> bool {
+    /// Update the state of this topic, returning whether or not the new value is different than
+    /// the old one.
+    async fn update(&self, new_value: T) -> bool {
         let mut current_value = self.value.write().await;
         if *current_value != new_value {
             *current_value = new_value;
@@ -52,183 +55,235 @@ where
             false
         }
     }
-}
 
-impl<T> InnerState<T>
-where
-    T: Send + Sync,
-    T: fmt::Debug + PartialEq + Serialize,
-{
+    /// Combine [update] and [publish] into a single function.
     async fn publish_if_update(&self, value: T) -> anyhow::Result<bool> {
         if self.update(value).await {
             self.publish().await.and(Ok(true))
         } else {
-            debug!(value = ?self.value, "Skipping update of unchanged value");
+            let value = self.value.read().await;
+            debug!(?value, ?self.topic, "Skipped publishing update to topic");
             Ok(false)
         }
     }
 }
 
-/// A container for managing MQTT topic state.
-pub(crate) struct State<T> {
-    inner: Arc<InnerState<T>>,
-    in_progress_future: Option<Pin<Box<dyn Future<Output = anyhow::Result<bool>> + Send + Sync>>>,
-}
-
-impl<T> State<T> {
-    /// The full topic path for this state.
-    pub(crate) fn topic(&self) -> &str {
-        &self.inner.topic
-    }
-}
-
-impl<T> State<T>
+#[derive(Clone)]
+pub(crate) enum State<T, D>
 where
-    T: Send + Sync,
+    T: DiscoveryValue<D> + fmt::Debug + PartialEq,
+    D: Borrow<hass::Device> + Default + PartialEq,
+    D: Send + Sync,
 {
-    pub(crate) fn new<S>(
+    Basic {
+        inner: Arc<InnerState<T>>,
+    },
+    Discoverable {
+        inner: Arc<InnerState<T>>,
+        name: String,
+        prefix: String,
+        device: D,
+    },
+}
+
+impl<T, D> State<T, D>
+where
+    T: DiscoveryValue<D> + fmt::Debug + PartialEq,
+    D: Borrow<hass::Device> + Clone + Default + PartialEq,
+    D: Send + Sync,
+{
+    fn topic_for(prefix: &str, device_name: &str, entity_name: &str) -> String {
+        [prefix.deref(), device_name.deref(), entity_name.deref()].join("/")
+    }
+
+    pub(crate) fn new(
         client: Arc<Mutex<AsyncClient>>,
-        value: T,
-        topic: S,
+        prefix: &str,
+        device_name: &str,
+        entity_name: &str,
         retain: bool,
         qos: QoS,
     ) -> Self
-    where
-        S: Into<String>,
-    {
-        Self {
+where {
+        Self::Basic {
             inner: Arc::new(InnerState {
                 client,
-                value: RwLock::new(value),
-                topic: topic.into(),
+                value: RwLock::new(T::default()),
+                topic: Self::topic_for(prefix, device_name, entity_name),
                 retain,
                 qos,
             }),
-            in_progress_future: None,
         }
     }
 
-    /// Get a reference to the current value
-    pub(crate) async fn current<'a>(&'a self) -> SerializeRwLockGuard<'a, T> {
-        self.inner.value.read().await.into()
+    pub(crate) fn new_discoverable(
+        client: Arc<Mutex<AsyncClient>>,
+        device: D,
+        prefix: &str,
+        entity_name: &str,
+        retain: bool,
+        qos: QoS,
+    ) -> Self {
+        let name = entity_name.to_string();
+        let prefix = prefix.to_string();
+        let device_name = device.borrow().name.clone().unwrap_or_else(|| {
+            device
+                .borrow()
+                .identifiers()
+                .next()
+                .expect("The device to have at least one ID")
+                .to_string()
+        });
+        Self::Discoverable {
+            inner: Arc::new(InnerState {
+                client,
+                value: RwLock::new(T::default()),
+                topic: Self::topic_for(&prefix, &device_name, &name),
+                retain,
+                qos,
+            }),
+            name,
+            prefix,
+            device,
+        }
     }
-}
 
-impl<T> State<T>
-where
-    T: Send + Sync,
-    T: Default,
-{
-    pub(crate) fn new_default<S>(client: Arc<Mutex<AsyncClient>>, topic: S) -> Self
-    where
-        S: Into<String>,
-    {
-        Self::new(client, T::default(), topic, true, QoS::AtLeastOnce)
+    fn inner(&self) -> &Arc<InnerState<T>> {
+        match self {
+            State::Basic { inner, .. } => &inner,
+            State::Discoverable { inner, .. } => &inner,
+        }
     }
-}
 
-impl<T> State<T>
-where
-    T: Send + Sync,
-    T: PartialEq,
-{
+    // Trying to implement Sink on State itself is such a pain in the ass, I'm punting and having a
+    // separate function do all the magic.
+    pub(crate) fn sink(&self) -> impl Sink<T, Error = anyhow::Error> {
+        unfold(Arc::clone(&self.inner()), |inner, value| async move {
+            inner.publish_if_update(value).await?;
+            Ok(inner)
+        })
+    }
+
+    /// The full topic path for this state.
+    pub(crate) fn topic(&self) -> &str {
+        &self.inner().topic
+    }
+
+    /// Publish the current state.
+    pub(crate) async fn publish(&self) -> anyhow::Result<()> {
+        self.inner().publish().await
+    }
+
     /// Update the state of this topic, returning whether or not the new value is different than
     /// the old one.
     pub(crate) async fn update(&self, new_value: T) -> bool {
-        self.inner.update(new_value).await
+        self.inner().update(new_value).await
     }
-}
 
-impl<T> State<T>
-where
-    T: Send + Sync,
-    T: Serialize,
-{
-    /// Publish the current state.
-    pub(crate) async fn publish(&self) -> anyhow::Result<()> {
-        self.inner.publish().await
-    }
-}
-
-impl<T> State<T>
-where
-    T: Send + Sync,
-    T: fmt::Debug + PartialEq + Serialize,
-{
     /// Combine [update] and [publish] into a single function.
     pub(crate) async fn publish_if_update(&self, value: T) -> anyhow::Result<bool> {
-        self.inner.publish_if_update(value).await
+        self.inner().publish_if_update(value).await
     }
-}
 
-impl<T> Clone for State<T>
-// Note: no bound on `T: Clone`, as the value is stored within an `Arc`.
-{
-    /// Clone the [State]. The new [State] can act like a new [Sink] and the old [State] can
-    /// continue on as well.
-    fn clone(&self) -> Self {
-        Self {
-            inner: Arc::clone(&self.inner),
-            in_progress_future: None,
+    pub(crate) async fn publish_home_assistant_discovery<S, A>(
+        &self,
+        home_assistant_prefix: S,
+        availability_topic: A,
+    ) -> anyhow::Result<()>
+    where
+        S: Into<String>,
+        A: Into<String>,
+    {
+        match self {
+            State::Basic { .. } => Ok(()),
+            State::Discoverable {
+                inner,
+                name,
+                device,
+                ..
+            } => {
+                let entity_name = device.borrow().name.as_deref().map_or_else(
+                    || name.clone(),
+                    |device_name| [device_name.borrow(), name.borrow()].join(" "),
+                );
+                let unique_id = self.unique_id().unwrap();
+                let home_assistant_prefix = home_assistant_prefix.into();
+                let config_topic = [
+                    &home_assistant_prefix,
+                    &T::component_type().to_string(),
+                    &unique_id,
+                    "config",
+                ]
+                .join("/");
+                let config = T::home_assistant_config(
+                    D::clone(&device),
+                    self.topic().into(),
+                    availability_topic.into(),
+                    entity_name,
+                    unique_id,
+                );
+                let payload = serialize(&config)?;
+                inner
+                    .client
+                    .lock()
+                    .await
+                    // Discovery messages should be retained
+                    .publish(config_topic, QoS::AtLeastOnce, true, payload)
+                    .await
+                    .map_err(anyhow::Error::from)
+            }
         }
     }
+
+    fn unique_id(&self) -> Option<String> {
+        match self {
+            State::Basic { .. } => None,
+            State::Discoverable {
+                device,
+                name,
+                prefix,
+                ..
+            } => device
+                .borrow()
+                .identifiers()
+                .next()
+                .and_then(|id| Some([id, &Self::machine_name(&name), &prefix].join("_"))),
+        }
+    }
+
+    fn machine_name(name: &str) -> String {
+        let lowercased = name.to_lowercase();
+        let components: Vec<_> = lowercased.split_whitespace().collect();
+        components.join("_").replace('/', "_")
+    }
 }
 
-impl<T> fmt::Debug for State<T>
+impl<T, D> fmt::Debug for State<T, D>
 where
-    T: fmt::Debug,
+    T: DiscoveryValue<D> + fmt::Debug + PartialEq,
+    D: Borrow<hass::Device> + Clone + Default + PartialEq,
+    D: Send + Sync,
+    D: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("State")
-            .field("client", &self.inner.client)
-            .field("value", &self.inner.value)
-            .field("topic", &self.topic())
-            .field("retain", &self.inner.retain)
-            .field("qos", &self.inner.qos)
-            .finish()
-    }
-}
-
-impl<T> Sink<T> for State<T>
-where
-    T: 'static,
-    T: Clone + fmt::Debug + PartialEq + Serialize,
-    T: Send + Sync,
-{
-    type Error = anyhow::Error;
-
-    fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.poll_flush(cx)
-    }
-
-    fn start_send(mut self: Pin<&mut Self>, new_value: T) -> Result<(), Self::Error> {
-        assert!(
-            self.in_progress_future.is_none(),
-            "self.in_progress_future should be None is poll_flush() returned Ready(Ok())"
-        );
-        let inner = Arc::clone(&self.inner);
-        // Capture inner in an async closure
-        let in_progress = async move { inner.publish_if_update(new_value).await };
-        self.in_progress_future = Some(Box::pin(in_progress));
-        Ok(())
-    }
-
-    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        if let Some(fut) = &mut self.in_progress_future {
-            match ready!(fut.as_mut().poll(cx)) {
-                Err(e) => Poll::Ready(Err(e)),
-                Ok(_) => {
-                    self.in_progress_future = None;
-                    Poll::Ready(Ok(()))
-                }
-            }
-        } else {
-            Poll::Ready(Ok(()))
+        match self {
+            State::Basic { inner } => f
+                .debug_struct("State::Basic")
+                .field("inner", &inner)
+                .finish(),
+            State::Discoverable {
+                inner,
+                name,
+                prefix,
+                device,
+            } => f
+                .debug_struct("State::Discoverable")
+                .field("inner", &inner)
+                .field("name", &name)
+                .field("prefix", &prefix)
+                .field("device", &device)
+                .finish(),
         }
-    }
-
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.poll_flush(cx)
     }
 }
 
@@ -283,4 +338,26 @@ where
     {
         self.0.serialize(serializer)
     }
+}
+
+// Making DiscoveryValue implement those traits so I don't have to keep adding them to where clauses.
+pub(crate) trait DiscoveryValue<D = hass::Device>:
+    Default + Serialize + Send + Sync
+where
+    D: Borrow<hass::Device> + Default + PartialEq,
+{
+    type Config: Serialize;
+
+    /// If the value should be retained when published.
+    fn retained() -> bool;
+
+    fn component_type() -> hass::Component;
+
+    fn home_assistant_config(
+        device: D,
+        state_topic: String,
+        availability_topic: String,
+        name: String,
+        unique_id: String,
+    ) -> Self::Config;
 }
