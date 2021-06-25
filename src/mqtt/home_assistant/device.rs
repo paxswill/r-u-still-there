@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::iter::Iterator;
 use std::mem::discriminant;
+use std::ops::Deref;
 
 use mac_address::MacAddress;
 use serde::de::{Deserializer, Error as _, MapAccess, SeqAccess, Visitor};
@@ -190,7 +191,7 @@ impl Device {
 
     // Skipping the UPnP and ZigBee access methods as I'm not planning on using them.
 
-    /// Iteratoe over the MAC addresses currently associated with this device.
+    /// Iterate over the MAC addresses currently associated with this device.
     pub fn mac_addresses(&self) -> impl Iterator<Item = &MacAddress> {
         self.connections.iter().filter_map(|con| match con {
             Connection::MacAddress(mac) => Some(mac),
@@ -205,7 +206,8 @@ impl Device {
         self.identifiers.insert(id.into());
     }
 
-    pub fn identifiers(&self) -> impl Iterator<Item = &String> {
-        self.identifiers.iter()
+    /// Iterate over the unique IDs associated with this device.
+    pub fn identifiers(&self) -> impl Iterator<Item = &str> {
+        self.identifiers.iter().map(Deref::deref)
     }
 }
