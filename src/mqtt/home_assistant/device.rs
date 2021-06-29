@@ -29,7 +29,7 @@ pub enum Connection {
 }
 // MacAddress doesn't implement Eq or Hash, so we get to implement (or mark) those ourselves.
 impl std::cmp::Eq for Connection {}
-#[allow(clippy::clippy::derive_hash_xor_eq)]
+#[allow(clippy::derive_hash_xor_eq)]
 impl Hash for Connection {
     fn hash<H: Hasher>(&self, state: &mut H) {
         discriminant(self).hash(state);
