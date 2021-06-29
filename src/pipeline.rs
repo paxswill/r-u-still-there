@@ -10,6 +10,8 @@ use rumqttc::{
 };
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinError;
+use tokio::time::{self, Duration};
+use tokio_stream::wrappers::IntervalStream;
 use tracing::{debug, debug_span, error, info, info_span, trace_span, warn};
 use tracing_futures::Instrument;
 use warp::Filter;
@@ -23,7 +25,9 @@ use std::vec::Vec;
 
 use crate::camera::Camera;
 use crate::image_buffer::{BytesImage, ThermalImage};
-use crate::mqtt::{home_assistant as hass, MqttSettings, Occupancy, OccupancyCount, State, Status};
+use crate::mqtt::{
+    home_assistant as hass, serialize, MqttSettings, Occupancy, OccupancyCount, State, Status,
+};
 use crate::occupancy::Tracker;
 use crate::render::Renderer as _;
 use crate::settings::{RenderSettings, Settings, StreamSettings, TrackerSettings};
@@ -100,6 +104,7 @@ impl Pipeline {
         };
         app.create_streams(config.streams)?;
         app.create_tracker(config.tracker).await?;
+        app.create_thermometer().await?;
         Ok(app)
     }
 
@@ -218,6 +223,45 @@ impl Pipeline {
         let frame_stream = self.frame_source.stream();
         self.tasks
             .push(ok_stream(frame_stream).forward(tracker).err_into().boxed());
+        Ok(())
+    }
+
+    async fn create_thermometer(&mut self) -> anyhow::Result<()> {
+        // Only add a thermometer if the camera can return them
+        if self.camera.get_temperature().is_none() {
+            return Ok(());
+        }
+        // Clone the camera so that the interval closure has an owned reference to it.
+        let camera = self.camera.clone();
+        // Just sticking this on a 1Hz cycle, but I might change it later.
+        let temperature_stream =
+            IntervalStream::new(time::interval(Duration::from_secs(1))).map(move |_| {
+                camera
+                    .get_temperature()
+                    .ok_or(anyhow!("Unable to retrieve camera ambient temperature"))
+            });
+        let state = State::<f32, _>::new_discoverable(
+            Arc::clone(&self.mqtt_client),
+            Arc::clone(&self.hass_device),
+            &MQTT_BASE_TOPIC,
+            "temperature",
+            true,
+            QoS::AtLeastOnce,
+        );
+        if self.mqtt_config.home_assistant {
+            let mut config = state.discovery_config(self.status.topic())?;
+            config.set_device_class(hass::AnalogSensorClass::Temperature);
+            config.set_unit_of_measurement(Some("C".to_string()));
+            let config_topic = state.discovery_topic(&self.mqtt_config.home_assistant_topic)?;
+            self.mqtt_client
+                .lock()
+                .await
+                .publish(config_topic, QoS::AtLeastOnce, true, serialize(&config)?)
+                .await?;
+        }
+        let temperature_sink = state.sink();
+        self.tasks
+            .push(temperature_stream.forward(temperature_sink).boxed());
         Ok(())
     }
 }

@@ -3,7 +3,7 @@ use serde::Serialize;
 
 /// Very similar to [serde_json::to_writer], except that bare strings aren't quoted, bare null
 /// values are skipped, and it creates it's own buffer.
-pub(super) fn serialize<T>(value: &T) -> serde_json::Result<Vec<u8>>
+pub(crate) fn serialize<T>(value: &T) -> serde_json::Result<Vec<u8>>
 where
     T: Serialize,
 {
