@@ -2,28 +2,34 @@
 use anyhow::{anyhow, Context as _};
 use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::sink::Sink;
-use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream, TryStreamExt};
+use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
 use pin_project::pin_project;
-use rumqttc::{ConnectReturnCode, Event, EventLoop, Packet};
-use tokio::sync::mpsc;
+use rumqttc::{
+    AsyncClient, ConnectReturnCode, Event, LastWill, MqttOptions as RuMqttOptions, Packet, QoS,
+};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinError;
-use tracing::{debug, debug_span, error, info, info_span, trace_span};
+use tracing::{debug, debug_span, error, info, info_span, trace_span, warn};
 use tracing_futures::Instrument;
 use warp::Filter;
 
-use std::convert::TryInto;
+use std::convert::{TryFrom, TryInto};
 use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::vec::Vec;
 
 use crate::camera::Camera;
 use crate::image_buffer::{BytesImage, ThermalImage};
+use crate::mqtt::{home_assistant as hass, MqttSettings, Occupancy, OccupancyCount, State, Status};
 use crate::occupancy::Tracker;
 use crate::render::Renderer as _;
 use crate::settings::{RenderSettings, Settings, StreamSettings, TrackerSettings};
-use crate::{mqtt, render, spmc, stream};
+use crate::{render, spmc, stream};
+
+const MQTT_BASE_TOPIC: &str = "r-u-still-there";
 
 fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
 where
@@ -32,6 +38,8 @@ where
     in_stream.map(Result::<T, E>::Ok)
 }
 
+type MqttClient = Arc<AsyncMutex<AsyncClient>>;
+type ArcDevice = Arc<hass::Device>;
 type InnerTask = Pin<Box<dyn Future<Output = anyhow::Result<()>>>>;
 type TaskList = FuturesUnordered<InnerTask>;
 
@@ -57,7 +65,11 @@ pub struct Pipeline {
     camera: Camera,
     frame_source: spmc::Sender<ThermalImage>,
     rendered_source: spmc::Sender<BytesImage>,
-    update_channel: mpsc::Sender<mqtt::ClientMessage>,
+    mqtt_client: MqttClient,
+    status: State<Status, ArcDevice>,
+    hass_device: ArcDevice,
+    // Keep the MQTT config around as we might need to use it when reconnecting.
+    mqtt_config: MqttSettings,
     #[pin]
     tasks: TaskList,
 }
@@ -71,20 +83,49 @@ impl Pipeline {
         // Once IntoIterator is implemented for arrays, this line can be simplified
         let tasks: TaskList = std::array::IntoIter::new([frame_task, render_task]).collect();
         debug!("Opening connection to MQTT broker");
-        let (client, eventloop) = mqtt::MqttClient::connect(config.mqtt)?;
-        let (update_channel, loop_task, client_task) = connect_mqtt(client, eventloop).await?;
+        let (mqtt_client, loop_task, status) = connect_mqtt(&config.mqtt).await?;
         tasks.push(loop_task);
-        tasks.push(client_task);
+        // Create a device for HAss integration. It's still used even if the HAss messages aren;t
+        // being sent.
+        let hass_device = Self::create_device(&config.mqtt.name, config.mqtt.unique_id());
         let mut app = Self {
             camera,
             frame_source,
             rendered_source,
-            update_channel,
+            mqtt_client,
+            status,
+            hass_device,
+            mqtt_config: config.mqtt,
             tasks,
         };
         app.create_streams(config.streams)?;
-        app.create_tracker(config.tracker)?;
+        app.create_tracker(config.tracker).await?;
         Ok(app)
+    }
+
+    fn create_device(device_name: &str, unique_id: String) -> ArcDevice {
+        let mut device = hass::Device::default();
+        // Add all the MAC addresses to our device, it'll update whatever Home Assistant has.
+        let mac_addresses = match mac_address::MacAddressIterator::new() {
+            Ok(address_iterator) => Some(address_iterator),
+            Err(e) => {
+                warn!("unable to access MAC addresses: {:?}", e);
+                None
+            }
+        };
+        if let Some(address_iterator) = mac_addresses {
+            // Filter out all-zero MAC addresses (like from a loopback interface)
+            let filtered_addresses = address_iterator.filter(|a| a.bytes() != [0u8; 6]);
+            for address in filtered_addresses {
+                device.add_mac_connection(address);
+            }
+        }
+        device.name = Some(device_name.to_string());
+        device.add_identifier(unique_id);
+        // TODO: investigate using the 'built' crate to also get Git hash
+        device.sw_version =
+            option_env!("CARGO_PKG_VERSION").map(|vers| format!("r-u-still-there v{}", vers));
+        Arc::new(device)
     }
 
     fn create_streams(&mut self, settings: StreamSettings) -> anyhow::Result<()> {
@@ -130,26 +171,50 @@ impl Pipeline {
         Ok(())
     }
 
-    fn create_tracker(&mut self, settings: TrackerSettings) -> anyhow::Result<()> {
+    async fn create_tracker(&mut self, settings: TrackerSettings) -> anyhow::Result<()> {
         let tracker = Tracker::from(&settings);
-
-        let command_channel = self.update_channel.clone();
-        let update_count_stream = tracker
-            .count_stream()
-            .instrument(info_span!("occupancy_count_stream"))
-            .then(move |count| {
-                debug!(occupancy_count = count, "occupancy count changed");
-                let count_channel = command_channel.clone();
-                async move {
-                    count_channel
-                        .send(mqtt::ClientMessage::UpdateOccupancy(count))
-                        .await
-                }
-            })
-            .err_into::<anyhow::Error>()
-            .forward(Drain::new())
-            .boxed_local();
+        let count = State::new_discoverable(
+            Arc::clone(&self.mqtt_client),
+            Arc::clone(&self.hass_device),
+            &MQTT_BASE_TOPIC,
+            "count",
+            true,
+            QoS::AtLeastOnce,
+        );
+        let occupied = State::new_discoverable(
+            Arc::clone(&self.mqtt_client),
+            Arc::clone(&self.hass_device),
+            &MQTT_BASE_TOPIC,
+            "occupied",
+            true,
+            QoS::AtLeastOnce,
+        );
+        if self.mqtt_config.home_assistant {
+            count
+                .publish_home_assistant_discovery(
+                    &self.mqtt_config.home_assistant_topic,
+                    self.status.topic(),
+                )
+                .await?;
+            occupied
+                .publish_home_assistant_discovery(
+                    &self.mqtt_config.home_assistant_topic,
+                    self.status.topic(),
+                )
+                .await?;
+        }
+        let count_sink = count.sink();
+        let update_count_stream = ok_stream(tracker.count_stream().map(OccupancyCount::from))
+            //.instrument(info_span!("occupancy_count_stream"))
+            .forward(count_sink)
+            .boxed();
         self.tasks.push(update_count_stream);
+        let occupied_sink = occupied.sink();
+        let update_occupied_stream = ok_stream(tracker.count_stream().map(Occupancy::from))
+            //.instrument(info_span!("occupancy_count_stream"))
+            .forward(occupied_sink)
+            .boxed();
+        self.tasks.push(update_occupied_stream);
         let frame_stream = self.frame_source.stream();
         self.tasks
             .push(ok_stream(frame_stream).forward(tracker).err_into().boxed());
@@ -205,10 +270,22 @@ fn create_renderer(
     Ok((rendered_multiplexer, task))
 }
 
+const EVENT_LOOP_CAPACITY: usize = 20;
+
 async fn connect_mqtt(
-    mut client: mqtt::MqttClient,
-    mut eventloop: EventLoop,
-) -> anyhow::Result<(mpsc::Sender<mqtt::ClientMessage>, InnerTask, InnerTask)> {
+    settings: &MqttSettings,
+) -> anyhow::Result<(MqttClient, InnerTask, State<Status, ArcDevice>)> {
+    let base_topic = "r-u-still-there";
+    let status_topic = [MQTT_BASE_TOPIC, &settings.name, "status"].join("/");
+    let mut client_options = RuMqttOptions::try_from(settings)?;
+    client_options.set_last_will(LastWill::new(
+        &status_topic,
+        Status::Offline.to_string().as_bytes(),
+        QoS::AtLeastOnce,
+        true,
+    ));
+    let (client, mut eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
+    let client = Arc::new(AsyncMutex::new(client));
     // Wait until we get a ConnAck packet from the broker before continuing with setup.
     loop {
         let event = eventloop.poll().await?;
@@ -222,6 +299,18 @@ async fn connect_mqtt(
             }
         }
     }
+    // Create a status State for use during setup.
+    let status = State::new(
+        Arc::clone(&client),
+        base_topic,
+        &settings.name,
+        "status",
+        true,
+        QoS::AtLeastOnce,
+    );
+    // This won't get actually sent to the broker until the loop task starts getting run (see
+    // below). Instead it gets added to the queue of messages to be sent.
+    status.publish().await?;
     // Create a task to run the event loop
     let loop_task: InnerTask = tokio::spawn(
         async move {
@@ -243,12 +332,7 @@ async fn connect_mqtt(
     )
     .map(flatten_join_result)
     .boxed();
-    let update_channel = client.command_channel();
-    // Publish the initial messages before pushing the client onto the task list, as after that
-    // the only access is through the command channel. The actual packets will be stored in a queue
-    // until the event loop is up and running.
-    client.publish_initial().await?;
-    Ok((update_channel, loop_task, client.boxed()))
+    Ok((client, loop_task, status))
 }
 
 /// A drain with a generic error.
