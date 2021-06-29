@@ -2,14 +2,12 @@
 use anyhow::{anyhow, Context as _};
 use futures::{ready, Future};
 use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions as RuMqttOptions, QoS};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::sync::{mpsc, Mutex};
 use tracing::warn;
 
-use std::cell::RefCell;
 use std::convert::TryFrom;
 use std::pin::Pin;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
@@ -17,6 +15,7 @@ use super::home_assistant as hass;
 use super::serialize::serialize;
 use super::settings::MqttSettings;
 use super::state::State;
+use super::state_values::{Occupancy, OccupancyCount, Status};
 
 #[derive(Clone, Copy, Debug)]
 pub enum ClientMessage {
@@ -54,16 +53,16 @@ pub struct MqttClient {
     client: Arc<Mutex<AsyncClient>>,
 
     /// The state of this device (online or offline).
-    status: State<Status>,
+    status: State<Status, hass::Device>,
 
     /// The temperature as detected by the camera
-    temperature: State<Option<f32>>,
+    temperature: State<f32, hass::Device>,
 
     /// Whether or not the camera detects a person.
-    occupied: State<Occupancy>,
+    occupied: State<Occupancy, hass::Device>,
 
     /// The number of people the camera detects.
-    count: State<usize>,
+    count: State<OccupancyCount, hass::Device>,
 
     // TODO: Consider adding last_update field, as well as adding the coordinates of all detected objects.
     /// Send side of a channel used to send commands to the client while it's running. Kept so that
@@ -103,6 +102,7 @@ impl MqttClient {
         let mut client_options = RuMqttOptions::try_from(&settings)?;
         // TODO: add a setting to override the base topic
         let base_topic = "r-u-still-there";
+        let device_name = settings.name;
         let status_topic = [base_topic, &device_uid, "status"].join("/");
         client_options.set_last_will(LastWill::new(
             &status_topic,
@@ -114,22 +114,41 @@ impl MqttClient {
         let client = Arc::new(Mutex::new(client));
         let (command_tx, command_rx) = mpsc::channel(30);
         // Create the states early, as they use a reference to device_uid
-        let status = State::new_default(Arc::clone(&client), status_topic);
-        let temperature = State::new_default(
+        let status = State::new(
             Arc::clone(&client),
-            [base_topic, &device_uid, "temperature"].join("/"),
+            base_topic,
+            &device_name,
+            "status",
+            true,
+            QoS::AtLeastOnce,
         );
-        let occupied = State::new_default(
+        let temperature = State::new(
             Arc::clone(&client),
-            [base_topic, &device_uid, "occupied"].join("/"),
+            base_topic,
+            &device_name,
+            "temperature",
+            true,
+            QoS::AtLeastOnce,
         );
-        let count = State::new_default(
+        let occupied = State::new(
             Arc::clone(&client),
-            [base_topic, &device_uid, "occupancy_count"].join("/"),
+            base_topic,
+            &device_name,
+            "occupied",
+            true,
+            QoS::AtLeastOnce,
+        );
+        let count = State::new(
+            Arc::clone(&client),
+            base_topic,
+            &device_name,
+            "occupancy_count",
+            true,
+            QoS::AtLeastOnce,
         );
         Ok((
             Self {
-                name: settings.name,
+                name: device_name,
                 device_uid,
                 home_assistant: settings.home_assistant,
                 home_assistant_topic: settings.home_assistant_topic,
@@ -173,7 +192,7 @@ impl MqttClient {
         format!("{}_{}_r-u-still-there", self.device_uid, entity_kind)
     }
     /// Create the device description common to all entities in Home Assistant.
-    fn create_hass_device(&self) -> Rc<RefCell<hass::Device>> {
+    fn create_hass_device(&self) -> Arc<hass::Device> {
         let mut device = hass::Device::default();
         // Add all the MAC addresses to our device, it'll update whatever Home Assistant has.
         let mac_addresses = match mac_address::MacAddressIterator::new() {
@@ -195,7 +214,7 @@ impl MqttClient {
         // TODO: investigate using the 'built' crate to also get Git hash
         device.sw_version =
             option_env!("CARGO_PKG_VERSION").map(|vers| format!("r-u-still-there v{}", vers));
-        Rc::new(RefCell::new(device))
+        Arc::new(device)
     }
 
     async fn publish_serialize<T>(
@@ -241,8 +260,10 @@ impl MqttClient {
     pub async fn publish_home_assistant(&mut self) -> anyhow::Result<()> {
         let device = self.create_hass_device();
 
-        let mut temperature_config =
-            hass::AnalogSensor::new_with_state_topic_and_device(self.temperature.topic(), &device);
+        let mut temperature_config = hass::AnalogSensor::new_with_state_topic_and_device(
+            self.temperature.topic(),
+            Arc::clone(&device),
+        );
         temperature_config.add_availability_topic(self.status.topic().into());
         temperature_config.set_device_class(hass::AnalogSensorClass::Temperature);
         temperature_config.set_name(format!("{} Temperature", self.name));
@@ -258,8 +279,10 @@ impl MqttClient {
         )
         .await?;
 
-        let mut count_config =
-            hass::AnalogSensor::new_with_state_topic_and_device(self.count.topic(), &device);
+        let mut count_config = hass::AnalogSensor::new_with_state_topic_and_device(
+            self.count.topic(),
+            Arc::clone(&device),
+        );
         count_config.add_availability_topic(self.status.topic().into());
         count_config.set_name(format!("{} Occupancy Count", self.name));
         count_config.set_unit_of_measurement(Some("people".to_string()));
@@ -273,8 +296,10 @@ impl MqttClient {
         )
         .await?;
 
-        let mut occupancy_config =
-            hass::BinarySensor::new_with_state_topic_and_device(self.occupied.topic(), &device);
+        let mut occupancy_config = hass::BinarySensor::new_with_state_topic_and_device(
+            self.occupied.topic(),
+            Arc::clone(&device),
+        );
         occupancy_config.add_availability_topic(self.status.topic().into());
         occupancy_config.set_device_class(hass::BinarySensorClass::Occupancy);
         occupancy_config.set_name(format!("{} Occupancy", self.name));
@@ -318,7 +343,7 @@ impl Future for MqttClient {
                     ClientMessage::UpdateTemperature(temperature) => {
                         let state = self.temperature.clone();
                         self.in_progress_future = Some(Box::pin(async move {
-                            state.publish_if_update(temperature).await
+                            state.publish_if_update(temperature.unwrap_or(0.0)).await
                         }));
                     }
                     ClientMessage::UpdateOccupancy(count) => {
@@ -326,7 +351,7 @@ impl Future for MqttClient {
                         let count_state = self.count.clone();
                         self.in_progress_future = Some(Box::pin(async move {
                             binary_state.publish_if_update(count.into()).await?;
-                            count_state.publish_if_update(count).await
+                            count_state.publish_if_update(count.into()).await
                         }));
                     }
                     ClientMessage::UpdateStatus(status) => {
@@ -341,82 +366,6 @@ impl Future for MqttClient {
                     return Poll::Ready(Err(anyhow!("Client command channel closed unexpectedly")))
                 }
             }
-        }
-    }
-}
-
-/// The status of a device as known to the MQTT server.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum Status {
-    Online,
-    Offline,
-}
-
-impl Default for Status {
-    fn default() -> Self {
-        Self::Online
-    }
-}
-
-impl From<bool> for Status {
-    fn from(online: bool) -> Self {
-        if online {
-            Self::Online
-        } else {
-            Self::Offline
-        }
-    }
-}
-
-impl ToString for Status {
-    fn to_string(&self) -> String {
-        match self {
-            Status::Online => "online".to_string(),
-            Status::Offline => "offline".to_string(),
-        }
-    }
-}
-
-/// The occupancy status of a location.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum Occupancy {
-    Occupied,
-    Unoccupied,
-}
-
-impl Default for Occupancy {
-    fn default() -> Self {
-        Self::Unoccupied
-    }
-}
-
-impl From<bool> for Occupancy {
-    fn from(occupied: bool) -> Self {
-        if occupied {
-            Self::Occupied
-        } else {
-            Self::Unoccupied
-        }
-    }
-}
-
-impl From<usize> for Occupancy {
-    fn from(occupancy_count: usize) -> Self {
-        if occupancy_count > 0 {
-            Self::Occupied
-        } else {
-            Self::Unoccupied
-        }
-    }
-}
-
-impl ToString for Occupancy {
-    fn to_string(&self) -> String {
-        match self {
-            Occupancy::Occupied => "occupied".to_string(),
-            Occupancy::Unoccupied => "unoccupied".to_string(),
         }
     }
 }
