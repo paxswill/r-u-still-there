@@ -24,7 +24,7 @@ const APPLICATION_KEY: &[u8; 16] =
 #[derive(Deserialize, PartialEq)]
 pub struct MqttSettings {
     /// A name for the base topic for this device.
-    pub(super) name: String,
+    pub(crate) name: String,
 
     /// Provide a persistent unique identifier for this device.
     ///
@@ -68,13 +68,13 @@ pub struct MqttSettings {
     /// Do note that the MJPEG stream is *not* able to be automatically added in this way, you will
     /// need to add it manually.
     #[serde(default = "MqttSettings::default_home_assistant")]
-    pub(super) home_assistant: bool,
+    pub(crate) home_assistant: bool,
 
     /// The topic prefix used for Home Assistant MQTT discovery.
     ///
     /// Defaults to "homeassistant"
     #[serde(default = "MqttSettings::default_home_assistant_topic")]
-    pub(super) home_assistant_topic: String,
+    pub(crate) home_assistant_topic: String,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
