@@ -12,7 +12,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinError;
 use tokio::time::{self, Duration};
 use tokio_stream::wrappers::IntervalStream;
-use tracing::{debug, debug_span, error, info, info_span, trace_span, warn};
+use tracing::{debug, debug_span, error, info, info_span, trace, trace_span, warn};
 use tracing_futures::Instrument;
 use warp::Filter;
 
@@ -360,7 +360,7 @@ async fn connect_mqtt(
         async move {
             loop {
                 match eventloop.poll().await.context("polling MQTT event loop") {
-                    Ok(event) => debug!(?event, "MQTT event processed"),
+                    Ok(event) => trace!(?event, "MQTT event processed"),
                     Err(err) => {
                         error!(error = ?err, "Error with MQTT connection");
                         return Err(err);
