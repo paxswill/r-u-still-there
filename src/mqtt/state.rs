@@ -4,6 +4,7 @@ use std::fmt;
 use std::ops::Deref;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use futures::sink::{unfold, Sink};
 use rumqttc::{AsyncClient, QoS};
 use serde::{Serialize, Serializer};
@@ -184,6 +185,51 @@ where {
         self.inner().publish_if_update(value).await
     }
 
+    pub(crate) fn discovery_config<A>(&self, availability_topic: A) -> anyhow::Result<T::Config>
+    where
+        A: Into<String>,
+    {
+        match self {
+            State::Basic { .. } => Err(anyhow!("Basic states don't have discovery configurations")),
+            State::Discoverable { name, device, .. } => {
+                let entity_name = device.borrow().name.as_deref().map_or_else(
+                    || name.clone(),
+                    |device_name| [device_name.borrow(), name.borrow()].join(" "),
+                );
+                let unique_id = self.unique_id().unwrap();
+                let config = T::home_assistant_config(
+                    D::clone(&device),
+                    self.topic().into(),
+                    availability_topic.into(),
+                    entity_name,
+                    unique_id,
+                );
+                Ok(config)
+            }
+        }
+    }
+
+    pub(crate) fn discovery_topic<S>(&self, home_assistant_prefix: S) -> anyhow::Result<String>
+    where
+        S: Into<String>,
+    {
+        match self {
+            State::Basic { .. } => Err(anyhow!("Basic states don't have discovery topics")),
+            State::Discoverable { .. } => {
+                let unique_id = self.unique_id().unwrap();
+                let home_assistant_prefix = home_assistant_prefix.into();
+                let config_topic = [
+                    &home_assistant_prefix,
+                    &T::component_type().to_string(),
+                    &unique_id,
+                    "config",
+                ]
+                .join("/");
+                Ok(config_topic)
+            }
+        }
+    }
+
     pub(crate) async fn publish_home_assistant_discovery<S, A>(
         &self,
         home_assistant_prefix: S,
@@ -195,32 +241,9 @@ where {
     {
         match self {
             State::Basic { .. } => Ok(()),
-            State::Discoverable {
-                inner,
-                name,
-                device,
-                ..
-            } => {
-                let entity_name = device.borrow().name.as_deref().map_or_else(
-                    || name.clone(),
-                    |device_name| [device_name.borrow(), name.borrow()].join(" "),
-                );
-                let unique_id = self.unique_id().unwrap();
-                let home_assistant_prefix = home_assistant_prefix.into();
-                let config_topic = [
-                    &home_assistant_prefix,
-                    &T::component_type().to_string(),
-                    &unique_id,
-                    "config",
-                ]
-                .join("/");
-                let config = T::home_assistant_config(
-                    D::clone(&device),
-                    self.topic().into(),
-                    availability_topic.into(),
-                    entity_name,
-                    unique_id,
-                );
+            State::Discoverable { inner, .. } => {
+                let config_topic = self.discovery_topic(home_assistant_prefix)?;
+                let config = self.discovery_config(availability_topic)?;
                 let payload = serialize(&config)?;
                 inner
                     .client
