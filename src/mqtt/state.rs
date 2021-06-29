@@ -5,7 +5,6 @@ use std::ops::Deref;
 use std::sync::Arc;
 
 use futures::sink::{unfold, Sink};
-use futures::Future;
 use rumqttc::{AsyncClient, QoS};
 use serde::{Serialize, Serializer};
 use tokio::sync::{Mutex, RwLock, RwLockReadGuard};
@@ -247,7 +246,7 @@ where {
                 .borrow()
                 .identifiers()
                 .next()
-                .and_then(|id| Some([id, &Self::machine_name(&name), &prefix].join("_"))),
+                .map(|id| [id, &Self::machine_name(&name), &prefix].join("_")),
         }
     }
 
