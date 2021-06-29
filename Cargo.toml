@@ -8,29 +8,45 @@ version = "0.1.0"
 
 [dependencies]
 anyhow = "1.0"
+base64 = "0.13"
 bytes = "1.0.1"
 colorous = "1.0.5"
+delegate = "0.5"
 futures = "0.3.13"
+hex = { version = "0.4", features = ["serde"] }
+hmac = "0.11"
 http = "0.2.4"
 i2cdev = "0.4.4"
 imageproc = "0.22.0"
 lazy_static = "1.4.0"
 linux-embedded-hal = "=0.4.0-alpha.0"
+mac_address = { version = "1.1", features = ["serde"] }
+machine-uid = "0.2"
 mozjpeg = { version = "0.8.24", optional = true }
 ndarray = "0.15.1"
 num-traits = "0.2.14"
+paste = "1"
+pin-project = "1"
 pin-utils = "0.1.0"
 resvg = { version = "0.14.0", optional = true }
-serde = { version = "1.0", features = ["derive"] }
+rumqttc = "0.8"
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 serde_repr = "0.1"
 serde_yaml = "0.8.17"
+sha2 = "0.9"
 structopt = "0.3.21"
 svg = { version = "0.9.1", optional = true }
 tiny-skia = { version = "0.5.0", optional = true }
 tracing = "0.1"
+tokio-rustls = "0.22"
 toml = "0.5"
+uuid = { version = "0.8", features = ["serde"] }
+url = { version = "2", features = ["serde"] }
 usvg = { version = "0.14.0", optional = true }
+# Note: keep this in sync with the version of webpki used by tokio-rustls. If
+# you don't, the build errors will be very confusing.
+webpki-roots = "0.21"
 
 [dependencies.figment]
 features = ["env", "toml", "yaml"]
@@ -51,7 +67,7 @@ branch = "main"
 git = "https://git.sr.ht/~paxswill/rust-thermal-camera"
 
 [dependencies.tokio]
-features = ["macros", "rt-multi-thread", "time"]
+features = ["io-util", "macros", "net", "rt-multi-thread", "time"]
 version = "1"
 
 [dependencies.tokio-stream]
@@ -81,4 +97,5 @@ render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
 [dev-dependencies]
 float-cmp = "0.8.0"
 fontdb = "0.5.1"
+tempfile = "3"
 ttf-parser = "0.12.0"

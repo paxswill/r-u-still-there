@@ -8,6 +8,7 @@ mod stream;
 mod tracker;
 
 use crate::camera::CameraSettings;
+use crate::mqtt::MqttSettings;
 pub use cli::Args;
 pub use render::RenderSettings;
 pub use stream::StreamSettings;
@@ -29,6 +30,10 @@ pub struct Settings {
     #[serde(default)]
     pub render: RenderSettings,
 
+    /// Occupancy tracker settings.
     #[serde(default)]
     pub tracker: TrackerSettings,
+
+    /// MQTT server connection settings.
+    pub mqtt: MqttSettings,
 }

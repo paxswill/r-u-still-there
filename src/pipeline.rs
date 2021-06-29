@@ -1,24 +1,39 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use futures::future::{Future, FutureExt, TryFutureExt};
+use futures::sink::Sink;
 use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
+use pin_project::pin_project;
+use rumqttc::{
+    AsyncClient, ConnectReturnCode, Event, LastWill, MqttOptions as RuMqttOptions, Packet, QoS,
+};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinError;
-use tracing::{debug, info, info_span, trace_span};
+use tokio::time::{self, Duration};
+use tokio_stream::wrappers::IntervalStream;
+use tracing::{debug, debug_span, error, info, info_span, trace, trace_span, warn};
 use tracing_futures::Instrument;
 use warp::Filter;
 
 use std::convert::{TryFrom, TryInto};
+use std::marker::PhantomData;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::vec::Vec;
 
 use crate::camera::Camera;
 use crate::image_buffer::{BytesImage, ThermalImage};
+use crate::mqtt::{
+    home_assistant as hass, serialize, MqttSettings, Occupancy, OccupancyCount, State, Status,
+};
 use crate::occupancy::Tracker;
 use crate::render::Renderer as _;
 use crate::settings::{RenderSettings, Settings, StreamSettings, TrackerSettings};
 use crate::{render, spmc, stream};
+
+const MQTT_BASE_TOPIC: &str = "r-u-still-there";
 
 fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
 where
@@ -27,7 +42,9 @@ where
     in_stream.map(Result::<T, E>::Ok)
 }
 
-type InnerTask = Box<dyn Future<Output = anyhow::Result<()>> + Unpin>;
+type MqttClient = Arc<AsyncMutex<AsyncClient>>;
+type ArcDevice = Arc<hass::Device>;
+type InnerTask = Pin<Box<dyn Future<Output = anyhow::Result<()>>>>;
 type TaskList = FuturesUnordered<InnerTask>;
 
 fn flatten_join_result<E>(join_result: Result<Result<(), E>, JoinError>) -> anyhow::Result<()>
@@ -47,14 +64,75 @@ where
     }
 }
 
+#[pin_project]
 pub struct Pipeline {
     camera: Camera,
     frame_source: spmc::Sender<ThermalImage>,
     rendered_source: spmc::Sender<BytesImage>,
+    mqtt_client: MqttClient,
+    status: State<Status, ArcDevice>,
+    hass_device: ArcDevice,
+    // Keep the MQTT config around as we might need to use it when reconnecting.
+    mqtt_config: MqttSettings,
+    #[pin]
     tasks: TaskList,
 }
 
 impl Pipeline {
+    pub async fn new(config: Settings) -> anyhow::Result<Self> {
+        let camera_settings = &config.camera;
+        let camera: Camera = camera_settings.try_into()?;
+        let (frame_source, frame_task) = create_frame_source(&camera)?;
+        let (rendered_source, render_task) = create_renderer(&frame_source, config.render)?;
+        // Once IntoIterator is implemented for arrays, this line can be simplified
+        let tasks: TaskList = std::array::IntoIter::new([frame_task, render_task]).collect();
+        debug!("Opening connection to MQTT broker");
+        let (mqtt_client, loop_task, status) = connect_mqtt(&config.mqtt).await?;
+        tasks.push(loop_task);
+        // Create a device for HAss integration. It's still used even if the HAss messages aren;t
+        // being sent.
+        let hass_device = Self::create_device(&config.mqtt.name, config.mqtt.unique_id());
+        let mut app = Self {
+            camera,
+            frame_source,
+            rendered_source,
+            mqtt_client,
+            status,
+            hass_device,
+            mqtt_config: config.mqtt,
+            tasks,
+        };
+        app.create_streams(config.streams)?;
+        app.create_tracker(config.tracker).await?;
+        app.create_thermometer().await?;
+        Ok(app)
+    }
+
+    fn create_device(device_name: &str, unique_id: String) -> ArcDevice {
+        let mut device = hass::Device::default();
+        // Add all the MAC addresses to our device, it'll update whatever Home Assistant has.
+        let mac_addresses = match mac_address::MacAddressIterator::new() {
+            Ok(address_iterator) => Some(address_iterator),
+            Err(e) => {
+                warn!("unable to access MAC addresses: {:?}", e);
+                None
+            }
+        };
+        if let Some(address_iterator) = mac_addresses {
+            // Filter out all-zero MAC addresses (like from a loopback interface)
+            let filtered_addresses = address_iterator.filter(|a| a.bytes() != [0u8; 6]);
+            for address in filtered_addresses {
+                device.add_mac_connection(address);
+            }
+        }
+        device.name = Some(device_name.to_string());
+        device.add_identifier(unique_id);
+        // TODO: investigate using the 'built' crate to also get Git hash
+        device.sw_version =
+            option_env!("CARGO_PKG_VERSION").map(|vers| format!("r-u-still-there v{}", vers));
+        Arc::new(device)
+    }
+
     fn create_streams(&mut self, settings: StreamSettings) -> anyhow::Result<()> {
         // Bail out if there aren't any stream sources enabled.
         // For now there's just MJPEG, but HLS is planned for the future.
@@ -80,9 +158,11 @@ impl Pipeline {
                 .boxed();
             routes.push(mjpeg_route);
             // Stream out rendered frames via MJPEG
-            self.tasks.push(Box::new(
-                tokio::spawn(mjpeg.instrument(trace_span!("mjpeg_encoder"))).err_into(),
-            ));
+            self.tasks.push(
+                tokio::spawn(mjpeg.instrument(trace_span!("mjpeg_encoder")))
+                    .err_into()
+                    .boxed(),
+            );
         }
         let combined_route = routes
             .into_iter()
@@ -91,29 +171,97 @@ impl Pipeline {
         let bind_address: std::net::SocketAddr = settings.into();
         debug!(address = ?bind_address, "creating warp server");
         let server = warp::serve(combined_route).bind(bind_address);
-        self.tasks.push(Box::new(
-            server.instrument(info_span!("warp_server")).map(Ok),
-        ));
+        self.tasks
+            .push(server.instrument(info_span!("warp_server")).map(Ok).boxed());
         Ok(())
     }
 
-    fn create_tracker(&mut self, settings: TrackerSettings) -> anyhow::Result<()> {
+    async fn create_tracker(&mut self, settings: TrackerSettings) -> anyhow::Result<()> {
         let tracker = Tracker::from(&settings);
-        let logged_count_stream = tracker
-            .count_stream()
-            .instrument(info_span!("occupancy_count_stream"))
-            .inspect(|count| {
-                info!(occupancy_count = count, "occupancy count changed");
-            });
+        let count = State::new_discoverable(
+            Arc::clone(&self.mqtt_client),
+            Arc::clone(&self.hass_device),
+            &MQTT_BASE_TOPIC,
+            "count",
+            true,
+            QoS::AtLeastOnce,
+        );
+        let occupied = State::new_discoverable(
+            Arc::clone(&self.mqtt_client),
+            Arc::clone(&self.hass_device),
+            &MQTT_BASE_TOPIC,
+            "occupied",
+            true,
+            QoS::AtLeastOnce,
+        );
+        if self.mqtt_config.home_assistant {
+            count
+                .publish_home_assistant_discovery(
+                    &self.mqtt_config.home_assistant_topic,
+                    self.status.topic(),
+                )
+                .await?;
+            occupied
+                .publish_home_assistant_discovery(
+                    &self.mqtt_config.home_assistant_topic,
+                    self.status.topic(),
+                )
+                .await?;
+        }
+        let count_sink = count.sink();
+        let update_count_stream = ok_stream(tracker.count_stream().map(OccupancyCount::from))
+            //.instrument(info_span!("occupancy_count_stream"))
+            .forward(count_sink)
+            .boxed();
+        self.tasks.push(update_count_stream);
+        let occupied_sink = occupied.sink();
+        let update_occupied_stream = ok_stream(tracker.count_stream().map(Occupancy::from))
+            //.instrument(info_span!("occupancy_count_stream"))
+            .forward(occupied_sink)
+            .boxed();
+        self.tasks.push(update_occupied_stream);
         let frame_stream = self.frame_source.stream();
-        self.tasks.push(Box::new(
-            ok_stream(logged_count_stream)
-                .forward(futures::sink::drain())
-                .err_into(),
-        ));
-        self.tasks.push(Box::new(
-            ok_stream(frame_stream).forward(tracker).err_into(),
-        ));
+        self.tasks
+            .push(ok_stream(frame_stream).forward(tracker).err_into().boxed());
+        Ok(())
+    }
+
+    async fn create_thermometer(&mut self) -> anyhow::Result<()> {
+        // Only add a thermometer if the camera can return them
+        if self.camera.get_temperature().is_none() {
+            return Ok(());
+        }
+        // Clone the camera so that the interval closure has an owned reference to it.
+        let camera = self.camera.clone();
+        // Just sticking this on a 1Hz cycle, but I might change it later.
+        let temperature_stream =
+            IntervalStream::new(time::interval(Duration::from_secs(1))).map(move |_| {
+                camera
+                    .get_temperature()
+                    .ok_or(anyhow!("Unable to retrieve camera ambient temperature"))
+            });
+        let state = State::<f32, _>::new_discoverable(
+            Arc::clone(&self.mqtt_client),
+            Arc::clone(&self.hass_device),
+            &MQTT_BASE_TOPIC,
+            "temperature",
+            true,
+            QoS::AtLeastOnce,
+        );
+        if self.mqtt_config.home_assistant {
+            let mut config = state.discovery_config(self.status.topic())?;
+            config.set_device_class(hass::AnalogSensorClass::Temperature);
+            config.set_unit_of_measurement(Some("C".to_string()));
+            let config_topic = state.discovery_topic(&self.mqtt_config.home_assistant_topic)?;
+            self.mqtt_client
+                .lock()
+                .await
+                .publish(config_topic, QoS::AtLeastOnce, true, serialize(&config)?)
+                .await?;
+        }
+        let temperature_sink = state.sink();
+        self.tasks
+            .push(temperature_stream.forward(temperature_sink).boxed());
         Ok(())
     }
 }
@@ -123,36 +271,18 @@ impl Future for Pipeline {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
-            match self.tasks.poll_next_unpin(cx) {
+            match self.as_mut().project().tasks.poll_next(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(option) => match option {
                     None => return Poll::Ready(()),
-                    Some(_) => (),
+                    Some(res) => {
+                        if let Err(err) = res {
+                            error!(error = ?err, "error in task");
+                        }
+                    }
                 },
             }
         }
-    }
-}
-
-impl TryFrom<Settings> for Pipeline {
-    type Error = anyhow::Error;
-
-    fn try_from(config: Settings) -> anyhow::Result<Self> {
-        let camera_settings = &config.camera;
-        let camera: Camera = camera_settings.try_into()?;
-        let (frame_source, frame_task) = create_frame_source(&camera)?;
-        let (rendered_source, render_task) = create_renderer(&frame_source, config.render)?;
-        // Once IntoIterator is implemented for arrays, this line can be simplified
-        let tasks: TaskList = std::array::IntoIter::new([frame_task, render_task]).collect();
-        let mut app = Self {
-            camera,
-            frame_source,
-            rendered_source,
-            tasks,
-        };
-        app.create_streams(config.streams)?;
-        app.create_tracker(config.tracker)?;
-        Ok(app)
     }
 }
 
@@ -160,7 +290,7 @@ fn create_frame_source(camera: &Camera) -> anyhow::Result<(spmc::Sender<ThermalI
     let frame_stream = camera.frame_stream();
     let frame_multiplexer = spmc::Sender::default();
     let frame_future = frame_stream.forward(frame_multiplexer.clone());
-    Ok((frame_multiplexer, Box::new(frame_future)))
+    Ok((frame_multiplexer, frame_future.boxed()))
 }
 
 fn create_renderer(
@@ -180,6 +310,105 @@ fn create_renderer(
         .map(move |temperatures| renderer.render_buffer(&temperatures));
     let rendered_multiplexer = spmc::Sender::default();
     let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
-    let task = Box::new(tokio::spawn(render_future).map(flatten_join_result));
+    let task = tokio::spawn(render_future).map(flatten_join_result).boxed();
     Ok((rendered_multiplexer, task))
+}
+
+const EVENT_LOOP_CAPACITY: usize = 20;
+
+async fn connect_mqtt(
+    settings: &MqttSettings,
+) -> anyhow::Result<(MqttClient, InnerTask, State<Status, ArcDevice>)> {
+    let base_topic = "r-u-still-there";
+    let status_topic = [MQTT_BASE_TOPIC, &settings.name, "status"].join("/");
+    let mut client_options = RuMqttOptions::try_from(settings)?;
+    client_options.set_last_will(LastWill::new(
+        &status_topic,
+        Status::Offline.to_string().as_bytes(),
+        QoS::AtLeastOnce,
+        true,
+    ));
+    let (client, mut eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
+    let client = Arc::new(AsyncMutex::new(client));
+    // Wait until we get a ConnAck packet from the broker before continuing with setup.
+    loop {
+        let event = eventloop.poll().await?;
+        if let Event::Incoming(Packet::ConnAck(conn_ack)) = event {
+            if conn_ack.code == ConnectReturnCode::Success {
+                debug!("Connected to MQTT broker");
+                break;
+            } else {
+                error!(response_code = ?conn_ack.code, "Connection to MQTT broker refused.");
+                return Err(anyhow!("Connection to MQTT broker refused"));
+            }
+        }
+    }
+    // Create a status State for use during setup.
+    let status = State::new(
+        Arc::clone(&client),
+        base_topic,
+        &settings.name,
+        "status",
+        true,
+        QoS::AtLeastOnce,
+    );
+    // This won't get actually sent to the broker until the loop task starts getting run (see
+    // below). Instead it gets added to the queue of messages to be sent.
+    status.publish().await?;
+    // Create a task to run the event loop
+    let loop_task: InnerTask = tokio::spawn(
+        async move {
+            loop {
+                match eventloop.poll().await.context("polling MQTT event loop") {
+                    Ok(event) => trace!(?event, "MQTT event processed"),
+                    Err(err) => {
+                        error!(error = ?err, "Error with MQTT connection");
+                        return Err(err);
+                    }
+                }
+            }
+            // This weird looking bit is a back-door type annotation for the return type of the
+            // async closure. It's unreachable, but necessary (for now).
+            #[allow(unreachable_code)]
+            Ok::<(), anyhow::Error>(())
+        }
+        .instrument(debug_span!("mqtt_event_loop")),
+    )
+    .map(flatten_join_result)
+    .boxed();
+    Ok((client, loop_task, status))
+}
+
+/// A drain with a generic error.
+///
+/// [futures::sink::drain] has [std::convert::Infallible] as its `Error` type, which precludes it
+/// being used with other types of errors, which can be desired when
+/// [forwarding][futures::stream::StreamExt::forward] a [Stream][futures::stream::Stream] to a
+/// [Sink][futures::sink::Sink].
+struct Drain<E>(PhantomData<E>);
+
+impl<E> Drain<E> {
+    fn new() -> Self {
+        Drain(PhantomData)
+    }
+}
+
+impl<E> Sink<()> for Drain<E> {
+    type Error = E;
+
+    fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn start_send(self: Pin<&mut Self>, _: ()) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
+
+    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        Poll::Ready(Ok(()))
+    }
 }

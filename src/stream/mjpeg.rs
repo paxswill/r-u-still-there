@@ -5,7 +5,7 @@ use futures::stream::{Stream, StreamExt};
 use futures::{ready, Future};
 use hyper::Body;
 use image::codecs::jpeg::JpegEncoder;
-use pin_utils::unsafe_pinned;
+use pin_project::pin_project;
 use tracing::{debug, debug_span, info, trace};
 
 #[cfg(feature = "mozjpeg")]
@@ -20,17 +20,17 @@ use crate::spmc::Sender;
 
 type StreamBox = Arc<Mutex<dyn Stream<Item = BytesImage> + Send + Sync + Unpin>>;
 
+#[pin_project]
 #[derive(Clone)]
 pub struct MjpegStream {
     boundary: String,
+    #[pin]
     sender: Sender<Bytes>,
     render_stream: StreamBox,
     temp_image: Option<BytesImage>,
 }
 
 impl MjpegStream {
-    unsafe_pinned!(sender: Sender<Bytes>);
-
     pub fn new(render_source: &Sender<BytesImage>) -> Self {
         // TODO: randomize boundary
         let boundary = "mjpeg_rs_boundary".to_string();
@@ -60,14 +60,14 @@ impl MjpegStream {
         let span = debug_span!("send_mjpeg_image");
         let _enter = span.enter();
         let jpeg_buf = encode_jpeg(&buf);
-        debug!(jpeg_size = %(jpeg_buf.len()), "encoded image to JPEG");
+        trace!(jpeg_size = %(jpeg_buf.len()), "encoded image to JPEG");
         let header = Bytes::from(format!(
             "\r\n--{}\r\nContent-Type: image/jpeg\r\n\r\n",
             self.boundary
         ));
         // TODO: this is doing some extra copies.
         let total_length = header.len() + jpeg_buf.len();
-        debug!(total_size = total_length, "total frame data length");
+        trace!(total_size = total_length, "total frame data length");
         let owned = header.chain(jpeg_buf).copy_to_bytes(total_length);
         // This is alright to call like this, as this method is *only* called from the start_send()
         // method of the Sink trait, and *that* method is required to be called *after*
@@ -107,7 +107,8 @@ impl Sink<BytesImage> for MjpegStream {
     type Error = anyhow::Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.sender().poll_ready(cx)
+        let this = self.project();
+        this.sender.poll_ready(cx)
     }
 
     fn start_send(mut self: Pin<&mut Self>, buf: BytesImage) -> Result<(), Self::Error> {

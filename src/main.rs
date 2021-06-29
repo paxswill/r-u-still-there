@@ -3,11 +3,10 @@ use anyhow::anyhow;
 use figment::providers::{Env, Format, Toml, Yaml};
 use figment::Figment;
 use structopt::StructOpt;
-use tracing::{debug, debug_span, error, instrument};
+use tracing::{debug, debug_span, error, instrument, Instrument};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Registry};
 
-use std::convert::TryFrom;
 use std::path::PathBuf;
 
 #[macro_use]
@@ -16,6 +15,7 @@ extern crate lazy_static;
 mod camera;
 mod image_buffer;
 mod moving_average;
+mod mqtt;
 mod occupancy;
 mod pipeline;
 mod pubsub;
@@ -106,12 +106,9 @@ async fn main() {
         debug!(?config, "final config");
         config
     };
-    let app = {
-        let _enter = span.enter();
-        Pipeline::try_from(config)
-    };
+    let app = Pipeline::new(config).instrument(span).await;
     match app {
         Ok(app) => app.await,
-        Err(e) => error!("{}", e),
+        Err(e) => error!("{:?}", e),
     }
 }

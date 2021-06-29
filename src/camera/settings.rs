@@ -140,7 +140,7 @@ impl<'de> Deserialize<'de> for CameraSettings {
                     rotation,
                     flip_horizontal,
                     flip_vertical,
-                    frame_rate: frame_rate.clone().unwrap_or(1),
+                    frame_rate: frame_rate.unwrap_or(1),
                 };
                 debug!(?options);
                 match kind.as_ref() {

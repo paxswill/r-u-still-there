@@ -3,7 +3,7 @@ use std::pin::Pin;
 
 use futures::task::{Context, Poll};
 use futures::{ready, Future, Sink, Stream};
-use pin_utils::unsafe_pinned;
+use pin_project::pin_project;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
@@ -14,15 +14,16 @@ use super::{CountedStream, TreeCount};
 ///
 /// This channel implements [futures.Sink], but will only accept items when there are consumers.
 /// Whether or not there are consumers is tracked using [TreeCount] and [CountedStream].
+#[pin_project]
 #[derive(Clone, Debug)]
 pub struct Sender<T: 'static + Clone + Send> {
     inner: broadcast::Sender<T>,
+
+    #[pin]
     count: TreeCount,
 }
 
 impl<T: 'static + Clone + Send> Sender<T> {
-    unsafe_pinned!(count: TreeCount);
-
     /// Create a new [Sender] with a [TreeCount] set up as a child of this `Sender`'s `TreeCount`.
     pub fn new_child<U>(&self) -> Sender<U>
     where
@@ -58,7 +59,8 @@ impl<T: 'static + Clone + Send> Sink<T> for Sender<T> {
     type Error = anyhow::Error;
 
     fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        ready!(self.count().poll(cx));
+        let this = self.project();
+        ready!(this.count.poll(cx));
         // If we reach here, that means ready!() didn't return early.
         Poll::Ready(Ok(()))
     }

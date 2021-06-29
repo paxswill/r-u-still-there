@@ -23,7 +23,7 @@ use crate::image_buffer::ThermalImage;
 #[derive(Clone)]
 pub enum Camera {
     I2cCamera {
-        camera: Arc<Mutex<dyn ThermalCamera<Error = LinuxI2CError>>>,
+        camera: Arc<Mutex<dyn ThermalCamera<Error = LinuxI2CError> + Send>>,
         settings: CommonSettings,
     },
 }
