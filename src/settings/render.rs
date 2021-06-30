@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use structopt::StructOpt;
 
-use std::str::FromStr;
-
 use crate::render::{Limit, TemperatureDisplay};
+use crate::temperature::TemperatureUnit;
 
 fn default_grid_size() -> usize {
     50
@@ -14,33 +13,11 @@ fn default_colors() -> colorous::Gradient {
     colorous::TURBO
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TemperatureUnit {
-    Celsius,
-    Fahrenheit,
-}
-
 impl From<Option<TemperatureUnit>> for TemperatureDisplay {
     fn from(optional_unit: Option<TemperatureUnit>) -> Self {
         match optional_unit {
             None => Self::Disabled,
-            Some(unit) => match unit {
-                TemperatureUnit::Celsius => Self::Celsius,
-                TemperatureUnit::Fahrenheit => Self::Fahrenheit,
-            },
-        }
-    }
-}
-
-impl FromStr for TemperatureUnit {
-    type Err = &'static str;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match &s.to_ascii_lowercase() as &str {
-            "celsius" | "c" => Ok(TemperatureUnit::Celsius),
-            "fahrenheit" | "f" => Ok(TemperatureUnit::Fahrenheit),
-            _ => Err("unknown temperature unit"),
+            Some(unit) => TemperatureDisplay::Absolute(unit),
         }
     }
 }
@@ -62,7 +39,7 @@ mod from_test {
     fn celsius() {
         assert_eq!(
             TemperatureDisplay::from(Some(TemperatureUnit::Celsius)),
-            TemperatureDisplay::Celsius
+            TemperatureDisplay::Absolute(TemperatureUnit::Celsius)
         );
     }
 
@@ -70,7 +47,7 @@ mod from_test {
     fn fahrenheit() {
         assert_eq!(
             TemperatureDisplay::from(Some(TemperatureUnit::Fahrenheit)),
-            TemperatureDisplay::Fahrenheit
+            TemperatureDisplay::Absolute(TemperatureUnit::Fahrenheit)
         );
     }
 }

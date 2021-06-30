@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::cmp;
 use std::fmt;
+use std::str::FromStr;
 
 use num_traits::Float;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum TemperatureUnit {
+pub enum TemperatureUnit {
     Celsius,
     Fahrenheit,
 }
@@ -20,6 +21,19 @@ impl fmt::Display for TemperatureUnit {
         })
     }
 }
+
+impl FromStr for TemperatureUnit {
+    type Err = &'static str;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match &s.to_ascii_lowercase() as &str {
+            "celsius" | "c" => Ok(TemperatureUnit::Celsius),
+            "fahrenheit" | "f" => Ok(TemperatureUnit::Fahrenheit),
+            _ => Err("unknown temperature unit"),
+        }
+    }
+}
+
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]

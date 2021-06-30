@@ -10,8 +10,8 @@ use std::num::ParseIntError;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use super::render::TemperatureUnit;
 use crate::camera::Bus;
+use crate::temperature::TemperatureUnit;
 
 #[derive(Clone, Debug, Deserialize, Serialize, StructOpt)]
 #[serde(rename_all = "lowercase")]
