@@ -35,11 +35,8 @@ pub enum TemperatureDisplay {
     /// Don't show the temperature.
     Disabled,
 
-    /// Display the temperature in Celsius.
-    Celsius,
-
-    /// Display the temperature in fahrenheit.
-    Fahrenheit,
+    /// Display the absolute temperature in the given units.
+    Absolute(TemperatureUnit),
 }
 
 impl Default for TemperatureDisplay {
@@ -100,17 +97,19 @@ impl Renderer {
             enlarged_height = full_height,
             "enlarged source image"
         );
-        if self.display_temperature != TemperatureDisplay::Disabled {
-            svg::render_text(
-                self.grid_size,
-                self.display_temperature,
-                &image,
-                &temperature_colors,
-                &mut rgba_image,
-            ).expect("Rendering text to work");
-            debug!("rendered temperatures onto image");
-        } else {
-            debug!("not rendering temperatures");
+        match self.display_temperature {
+            TemperatureDisplay::Disabled => debug!("not rendering temperatures"),
+            // Look at the size of it!
+            TemperatureDisplay::Absolute(units) => {
+                svg::render_text(
+                    self.grid_size,
+                    units,
+                    &image,
+                    &temperature_colors,
+                    &mut rgba_image,
+                ).expect("Rendering text to work");
+                debug!("rendered temperatures onto image");
+            }
         }
         let buf = Bytes::from(rgba_image.into_raw());
         BytesImage::from_raw(full_width, full_height, buf).unwrap()

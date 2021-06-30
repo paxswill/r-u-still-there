@@ -9,8 +9,9 @@ use tracing::instrument;
 use usvg::{FitTo, Tree};
 
 use crate::image_buffer::ThermalImage;
+use crate::temperature::{Temperature, TemperatureUnit};
 
-use super::{color, font, TemperatureDisplay};
+use super::{color, font};
 
 lazy_static! {
     /// A basic SVG options structure configured to use the bundled DejaVu Sans font.
@@ -76,10 +77,10 @@ mod font_tests {
 }
 
 /// Create an SVG document to render the temperatures of a thermal image.
-pub fn create_document(
+fn create_document(
     // Using u32 as that's what resvg/tiny_skia use for sizes.
     grid_size: u32,
-    display_temperature: TemperatureDisplay,
+    units: TemperatureUnit,
     temperatures: &ThermalImage,
     temperature_colors: &image::RgbaImage,
 ) -> Document {
@@ -104,29 +105,25 @@ pub fn create_document(
                 .set("x", col * grid_size)
                 .set("y", row * grid_size);
             let group = Group::new().add(grid_cell);
-            // TODO: rework the matching here to remove the unreachable! later on.
-            if display_temperature == TemperatureDisplay::Disabled {
-                group
-            } else {
-                // unwrap the actual temperature from the Luma pixel
-                let temperature = temperature_pixel.0[0];
-                let mapped_temperature = match display_temperature {
-                    TemperatureDisplay::Celsius => temperature,
-                    TemperatureDisplay::Fahrenheit => temperature * 1.8 + 32.0,
-                    TemperatureDisplay::Disabled => unreachable!(),
-                };
-                group.add(
-                    TextElement::new()
-                        .set("fill", format!("{:X}", text_color))
-                        .set("text-anchor", "middle")
-                        // resvg doesn't support dominant-baseline yet, so it gets rendered
-                        // incorrectly for the time being.
-                        .set("dominant-baseline", "middle")
-                        .set("x", col * grid_size + (grid_size / 2))
-                        .set("y", row * grid_size + (grid_size / 2))
-                        .add(TextNode::new(format!("{:.2}", mapped_temperature))),
-                )
-            }
+            // unwrap the actual temperature from the Luma pixel
+            let temperature = temperature_pixel.0[0];
+            let mapped_temperature = match units {
+                TemperatureUnit::Celsius => temperature,
+                TemperatureUnit::Fahrenheit => {
+                    Temperature::Celsius(temperature).in_fahrenheit()
+                }
+            };
+            group.add(
+                TextElement::new()
+                    .set("fill", format!("{:X}", text_color))
+                    .set("text-anchor", "middle")
+                    // resvg doesn't support dominant-baseline yet, so it gets rendered
+                    // incorrectly for the time being.
+                    .set("dominant-baseline", "middle")
+                    .set("x", col * grid_size + (grid_size / 2))
+                    .set("y", row * grid_size + (grid_size / 2))
+                    .add(TextNode::new(format!("{:.2}", mapped_temperature))),
+            )
         })
         .fold(Document::new(), |doc, group| doc.add(group))
         .set("width", temperatures.width() * grid_size)
@@ -134,10 +131,10 @@ pub fn create_document(
 }
 
 /// Draw the text for temperatures on top of an existing grid.
-#[instrument(level = "trace", skip(grid_size, display_temperature, temperatures, temperature_colors, grid_image))]
+#[instrument(level = "trace", skip(grid_size, units, temperatures, temperature_colors, grid_image))]
 pub(crate) fn render_text(
     grid_size: usize,
-    display_temperature: TemperatureDisplay,
+    units: TemperatureUnit,
     temperatures: &ThermalImage,
     temperature_colors: &image::RgbaImage,
     grid_image: &mut RgbaImage,
@@ -149,7 +146,7 @@ pub(crate) fn render_text(
         .ok_or(anyhow!("Unable to access a mutable slice of the grid image data"))?;
     let pixmap = PixmapMut::from_bytes(image_slice, width, height).
         ok_or(anyhow!("Unable to create Pixmap for SVG text rendering"))?;
-    let svg = create_document(grid_size as u32, display_temperature, temperatures, temperature_colors);
+    let svg = create_document(grid_size as u32, units, temperatures, temperature_colors);
     let tree = Tree::from_str(&svg.to_string(), &SVG_OPTS)?;
     resvg::render(&tree, FitTo::Original, pixmap)
         .ok_or(anyhow!("Unable to render SVG for text rendering."))?;
