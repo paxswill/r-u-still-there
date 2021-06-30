@@ -22,6 +22,7 @@ mod pubsub;
 mod render;
 mod settings;
 mod stream;
+mod temperature;
 
 use crate::pipeline::Pipeline;
 use crate::pubsub::spmc;
