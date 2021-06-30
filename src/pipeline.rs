@@ -29,7 +29,6 @@ use crate::mqtt::{
     home_assistant as hass, serialize, MqttSettings, Occupancy, OccupancyCount, State, Status,
 };
 use crate::occupancy::Tracker;
-use crate::render::Renderer as _;
 use crate::settings::{RenderSettings, Settings, StreamSettings, TrackerSettings};
 use crate::{render, spmc, stream};
 
@@ -297,7 +296,7 @@ fn create_renderer(
     frame_source: &spmc::Sender<ThermalImage>,
     settings: RenderSettings,
 ) -> anyhow::Result<(spmc::Sender<BytesImage>, InnerTask)> {
-    let renderer = render::SvgRenderer::new(
+    let renderer = render::Renderer::new(
         settings.lower_limit,
         settings.upper_limit,
         render::TemperatureDisplay::from(settings.units),
