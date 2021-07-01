@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::cmp;
 use std::fmt;
+use std::hash::Hash;
+use std::mem::discriminant;
 use std::str::FromStr;
 
 use num_traits::Float;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Hash, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TemperatureUnit {
     Celsius,
@@ -34,7 +36,6 @@ impl FromStr for TemperatureUnit {
     }
 }
 
-
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Temperature<T = f32>
@@ -55,9 +56,9 @@ where
     /// Get the temperature in Celsius.
     pub(crate) fn in_celsius(&self) -> T {
         match self {
-            Self::Celsius(c) => *c,
-            Self::Fahrenheit(f) => {
-                (*f - T::from(32).expect("32 to be able to be represented by a float"))
+            Self::Celsius(_) => self.value(),
+            Self::Fahrenheit(_) => {
+                (self.value() - T::from(32).expect("32 to be able to be represented by a float"))
                     * T::from(5).expect("5 to be able to be represented by a float")
                     / T::from(9).expect("9 to be able to be represented by a float")
             }
@@ -67,11 +68,11 @@ where
     /// Get the temperature in Fahrenheit.
     pub(crate) fn in_fahrenheit(&self) -> T {
         match self {
-            Self::Celsius(c) => {
-                *c * T::from(1.8).expect("1.8 to be able to be represented by a float")
+            Self::Celsius(_) => {
+                self.value() * T::from(1.8).expect("1.8 to be able to be represented by a float")
                     + T::from(32).expect("32 to be able to be represented by a float")
             }
-            Self::Fahrenheit(f) => *f,
+            Self::Fahrenheit(_) => self.value(),
         }
     }
 
@@ -98,9 +99,16 @@ where
     }
 
     fn value(&self) -> T {
-        match self {
+        let value = match self {
             Temperature::Celsius(c) => *c,
-            Temperature::Fahrenheit(f) => *f
+            Temperature::Fahrenheit(f) => *f,
+        };
+        // Normalize the value, so that Eq and Hash can be implemented on Temperature.
+        // NaN and negative zero are normalized to positive zero.
+        if value.is_nan() || (value.is_zero() && value.is_sign_negative()) {
+            T::zero()
+        } else {
+            value
         }
     }
 }
@@ -112,6 +120,18 @@ where
     fn eq(&self, other: &Self) -> bool {
         // Always compare in celsius.
         self.in_celsius().eq(&other.in_celsius())
+    }
+}
+
+impl<T> cmp::Eq for Temperature<T> where T: Float {}
+
+impl<T> Hash for Temperature<T>
+where
+    T: Float,
+{
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        discriminant(self).hash(state);
+        self.value().integer_decode().hash(state);
     }
 }
 
@@ -135,8 +155,8 @@ where
 
 #[cfg(test)]
 mod test {
-    use float_cmp::{approx_eq, F32Margin};
     use super::Temperature;
+    use float_cmp::{approx_eq, F32Margin};
 
     #[test]
     fn self_in_self() {
