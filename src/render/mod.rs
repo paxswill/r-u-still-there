@@ -9,6 +9,8 @@ use crate::temperature::TemperatureUnit;
 
 pub mod color;
 pub mod font;
+mod settings;
+pub(crate) use settings::RenderSettings;
 
 #[cfg(feature = "render_fontdue")]
 mod cheese;

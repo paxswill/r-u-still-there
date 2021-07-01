@@ -4,6 +4,7 @@ use structopt::StructOpt;
 
 use crate::render::{Limit, TemperatureDisplay};
 use crate::temperature::TemperatureUnit;
+use crate::settings::gradient;
 
 fn default_grid_size() -> usize {
     50
@@ -71,10 +72,10 @@ pub struct RenderSettings {
     #[serde(default)]
     pub lower_limit: Limit,
 
-    #[structopt(short = "C", long, parse(try_from_str = super::gradient::from_str), default_value = "turbo")]
+    #[structopt(short = "C", long, parse(try_from_str = gradient::from_str), default_value = "turbo")]
     #[serde(
         default = "default_colors",
-        deserialize_with = "super::gradient::deserialize"
+        deserialize_with = "gradient::deserialize"
     )]
     pub colors: colorous::Gradient,
 }

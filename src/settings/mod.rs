@@ -2,15 +2,14 @@
 use serde::Deserialize;
 
 mod cli;
-mod gradient;
-mod render;
+pub(crate) mod gradient;
 mod stream;
 mod tracker;
 
 use crate::camera::CameraSettings;
 use crate::mqtt::MqttSettings;
+use crate::render::RenderSettings;
 pub use cli::Args;
-pub use render::RenderSettings;
 pub use stream::StreamSettings;
 pub use tracker::TrackerSettings;
 

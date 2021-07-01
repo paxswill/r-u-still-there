@@ -29,7 +29,7 @@ use crate::mqtt::{
     home_assistant as hass, serialize, MqttSettings, Occupancy, OccupancyCount, State, Status,
 };
 use crate::occupancy::Tracker;
-use crate::settings::{RenderSettings, Settings, StreamSettings, TrackerSettings};
+use crate::settings::{Settings, StreamSettings, TrackerSettings};
 use crate::{render, spmc, stream};
 
 const MQTT_BASE_TOPIC: &str = "r-u-still-there";
@@ -294,7 +294,7 @@ fn create_frame_source(camera: &Camera) -> anyhow::Result<(spmc::Sender<ThermalI
 
 fn create_renderer(
     frame_source: &spmc::Sender<ThermalImage>,
-    settings: RenderSettings,
+    settings: render::RenderSettings,
 ) -> anyhow::Result<(spmc::Sender<BytesImage>, InnerTask)> {
     let renderer = render::Renderer::new(
         settings.lower_limit,
