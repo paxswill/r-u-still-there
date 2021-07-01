@@ -83,6 +83,13 @@ where
         Self::Fahrenheit(self.in_fahrenheit())
     }
 
+    pub(crate) fn as_unit(self, unit: &TemperatureUnit) -> Self {
+        match unit {
+            TemperatureUnit::Celsius => self.as_celsius(),
+            TemperatureUnit::Fahrenheit => self.as_fahrenheit(),
+        }
+    }
+
     pub(crate) fn unit(&self) -> TemperatureUnit {
         match self {
             Temperature::Celsius(_) => TemperatureUnit::Celsius,
