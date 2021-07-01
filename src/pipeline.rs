@@ -302,6 +302,7 @@ fn create_renderer(
         render::TemperatureDisplay::from(settings.units),
         settings.grid_size,
         settings.colors,
+        render::font::default_renderer(),
     );
     let rendered_stream = frame_source
         .stream()

@@ -53,6 +53,7 @@ pub struct Renderer {
     display_temperature: TemperatureDisplay,
     grid_size: usize,
     gradient: colorous::Gradient,
+    font_renderer: Box<dyn font::FontRenderer + Send + Sync>,
 }
 
 impl Renderer {
@@ -66,6 +67,7 @@ impl Renderer {
         display_temperature: TemperatureDisplay,
         grid_size: usize,
         gradient: colorous::Gradient,
+        font_renderer: Box<dyn font::FontRenderer + Send + Sync>,
     ) -> Self {
         Renderer {
             scale_min,
@@ -73,6 +75,7 @@ impl Renderer {
             display_temperature,
             grid_size,
             gradient,
+            font_renderer,
         }
     }
 
@@ -103,13 +106,15 @@ impl Renderer {
             TemperatureDisplay::Disabled => debug!("not rendering temperatures"),
             // Look at the size of it!
             TemperatureDisplay::Absolute(units) => {
-                svg::render_text(
-                    self.grid_size,
-                    units,
-                    &image,
-                    &temperature_colors,
-                    &mut rgba_image,
-                ).expect("Rendering text to work");
+                self.font_renderer
+                    .render_text(
+                        self.grid_size,
+                        units,
+                        &image,
+                        &temperature_colors,
+                        &mut rgba_image,
+                    )
+                    .expect("Rendering text to work");
                 debug!("rendered temperatures onto image");
             }
         }
@@ -192,13 +197,14 @@ impl Default for Renderer {
             TemperatureDisplay::default(),
             50,
             colorous::TURBO,
+            font::default_renderer(),
         )
     }
 }
 
 #[cfg(test)]
 mod color_map_tests {
-    use super::{color, Limit, Renderer, TemperatureDisplay};
+    use super::{cheese, color, Limit, Renderer, TemperatureDisplay};
     use crate::image_buffer::ThermalImage;
 
     lazy_static! {
@@ -276,6 +282,7 @@ mod color_map_tests {
             TemperatureDisplay::Disabled,
             10,
             colorous::GREYS,
+            Box::new(cheese::FontdueRenderer::new()),
         );
         // Ensure values outside of the static limits (0 and 100) are tested.
         let map_func = renderer.color_map(&TEST_IMAGE);
