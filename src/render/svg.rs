@@ -129,29 +129,35 @@ fn create_document(
         .set("height", temperatures.height() * grid_size)
 }
 
-/// Draw the text for temperatures on top of an existing grid.
-#[instrument(
-    level = "trace",
-    skip(grid_size, units, temperatures, temperature_colors, grid_image)
-)]
-pub(crate) fn render_text(
-    grid_size: usize,
-    units: TemperatureUnit,
-    temperatures: &ThermalImage,
-    temperature_colors: &RgbaImage,
-    grid_image: &mut RgbaImage,
-) -> anyhow::Result<()> {
-    let width = grid_image.width();
-    let height = grid_image.height();
-    let mut samples = grid_image.as_flat_samples_mut();
-    let image_slice = samples.image_mut_slice().ok_or(anyhow!(
-        "Unable to access a mutable slice of the grid image data"
-    ))?;
-    let pixmap = PixmapMut::from_bytes(image_slice, width, height)
-        .ok_or(anyhow!("Unable to create Pixmap for SVG text rendering"))?;
-    let svg = create_document(grid_size as u32, units, temperatures, temperature_colors);
-    let tree = Tree::from_str(&svg.to_string(), &SVG_OPTS)?;
-    resvg::render(&tree, FitTo::Original, pixmap)
-        .ok_or(anyhow!("Unable to render SVG for text rendering."))?;
-    Ok(())
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct SvgRenderer();
+
+impl font::FontRenderer for SvgRenderer {
+    /// Draw the text for temperatures on top of an existing grid.
+    #[instrument(
+        level = "trace",
+        skip(grid_size, units, temperatures, temperature_colors, grid_image)
+    )]
+    fn render_text(
+        &self,
+        grid_size: usize,
+        units: TemperatureUnit,
+        temperatures: &ThermalImage,
+        temperature_colors: &RgbaImage,
+        grid_image: &mut RgbaImage,
+    ) -> anyhow::Result<()> {
+        let width = grid_image.width();
+        let height = grid_image.height();
+        let mut samples = grid_image.as_flat_samples_mut();
+        let image_slice = samples.image_mut_slice().ok_or(anyhow!(
+            "Unable to access a mutable slice of the grid image data"
+        ))?;
+        let pixmap = PixmapMut::from_bytes(image_slice, width, height)
+            .ok_or(anyhow!("Unable to create Pixmap for SVG text rendering"))?;
+        let svg = create_document(grid_size as u32, units, temperatures, temperature_colors);
+        let tree = Tree::from_str(&svg.to_string(), &SVG_OPTS)?;
+        resvg::render(&tree, FitTo::Original, pixmap)
+            .ok_or(anyhow!("Unable to render SVG for text rendering."))?;
+        Ok(())
+    }
 }
