@@ -12,6 +12,7 @@ base64 = "0.13"
 bytes = "1.0.1"
 colorous = "1.0.5"
 delegate = "0.5"
+fontdue = { version = "0.5.2", optional = true }
 futures = "0.3.13"
 hex = { version = "0.4", features = ["serde"] }
 hmac = "0.11"
@@ -90,9 +91,10 @@ version = "0.3.1"
 [features]
 # Use mozjpeg by default. mozjpeg is the difference 10 FPS taking <50% CPU on a
 # Beaglebone and lagging because the CPU is pegged.
-default = ["mjpeg", "mozjpeg", "render_svg"]
+default = ["mjpeg", "mozjpeg", "render_svg", "render_fontdue"]
 mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
 render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
+render_fontdue = ["fontdue"]
 
 [dev-dependencies]
 float-cmp = "0.8.0"
