@@ -117,6 +117,7 @@ fn create_document(
                 TextElement::new()
                     .set("fill", format!("{:X}", text_color))
                     .set("text-anchor", "middle")
+                    .set("font-size", format!("{}px", font::FONT_SIZE))
                     // resvg doesn't support dominant-baseline yet, so it gets rendered
                     // incorrectly for the time being.
                     .set("dominant-baseline", "middle")
