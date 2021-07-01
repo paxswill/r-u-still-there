@@ -21,6 +21,7 @@ i2cdev = "0.4.4"
 imageproc = "0.22.0"
 lazy_static = "1.4.0"
 linux-embedded-hal = "=0.4.0-alpha.0"
+lru = { version = "0.6.5", optional = true }
 mac_address = { version = "1.1", features = ["serde"] }
 machine-uid = "0.2"
 mozjpeg = { version = "0.8.24", optional = true }
@@ -94,7 +95,7 @@ version = "0.3.1"
 default = ["mjpeg", "mozjpeg", "render_svg", "render_fontdue"]
 mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
 render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
-render_fontdue = ["fontdue"]
+render_fontdue = ["fontdue", "lru"]
 
 [dev-dependencies]
 float-cmp = "0.8.0"

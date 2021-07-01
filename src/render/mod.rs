@@ -12,6 +12,8 @@ pub mod font;
 
 #[cfg(feature = "render_svg")]
 mod svg;
+#[cfg(feature = "render_fontdue")]
+mod cheese;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
