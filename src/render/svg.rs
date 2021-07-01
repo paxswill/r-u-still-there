@@ -109,9 +109,7 @@ fn create_document(
             let temperature = temperature_pixel.0[0];
             let mapped_temperature = match units {
                 TemperatureUnit::Celsius => temperature,
-                TemperatureUnit::Fahrenheit => {
-                    Temperature::Celsius(temperature).in_fahrenheit()
-                }
+                TemperatureUnit::Fahrenheit => Temperature::Celsius(temperature).in_fahrenheit(),
             };
             group.add(
                 TextElement::new()
@@ -132,21 +130,25 @@ fn create_document(
 }
 
 /// Draw the text for temperatures on top of an existing grid.
-#[instrument(level = "trace", skip(grid_size, units, temperatures, temperature_colors, grid_image))]
+#[instrument(
+    level = "trace",
+    skip(grid_size, units, temperatures, temperature_colors, grid_image)
+)]
 pub(crate) fn render_text(
     grid_size: usize,
     units: TemperatureUnit,
     temperatures: &ThermalImage,
-    temperature_colors: &image::RgbaImage,
+    temperature_colors: &RgbaImage,
     grid_image: &mut RgbaImage,
 ) -> anyhow::Result<()> {
     let width = grid_image.width();
     let height = grid_image.height();
     let mut samples = grid_image.as_flat_samples_mut();
-    let image_slice = samples.image_mut_slice()
-        .ok_or(anyhow!("Unable to access a mutable slice of the grid image data"))?;
-    let pixmap = PixmapMut::from_bytes(image_slice, width, height).
-        ok_or(anyhow!("Unable to create Pixmap for SVG text rendering"))?;
+    let image_slice = samples.image_mut_slice().ok_or(anyhow!(
+        "Unable to access a mutable slice of the grid image data"
+    ))?;
+    let pixmap = PixmapMut::from_bytes(image_slice, width, height)
+        .ok_or(anyhow!("Unable to create Pixmap for SVG text rendering"))?;
     let svg = create_document(grid_size as u32, units, temperatures, temperature_colors);
     let tree = Tree::from_str(&svg.to_string(), &SVG_OPTS)?;
     resvg::render(&tree, FitTo::Original, pixmap)
