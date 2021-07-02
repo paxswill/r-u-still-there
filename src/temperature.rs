@@ -37,15 +37,12 @@ impl FromStr for TemperatureUnit {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(from = "DeserializedTemperature<T>", into = "SerializedTemperature<T>")]
 pub enum Temperature<T = f32>
 where
     T: Float,
 {
-    #[serde(alias = "c", alias = "C")]
     Celsius(T),
-
-    #[serde(alias = "f", alias = "F")]
     Fahrenheit(T),
 }
 
@@ -153,8 +150,83 @@ where
     }
 }
 
+impl<T> From<T> for Temperature<T>
+where
+    T: Float,
+{
+    fn from(value: T) -> Self {
+        Self::Celsius(value)
+    }
+}
+
+// This little dance is to avoid manually implementing Deserialize on Temperature ourselves so that
+// it can accept either a raw number or a map of a unit to a number.
+#[derive(Copy, Clone, Debug, Deserialize)]
+#[serde(untagged)]
+enum DeserializedTemperature<T>
+where
+    T: Float,
+{
+    Number(T),
+    Wrapped(SerializedTemperature<T>),
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum SerializedTemperature<T = f32>
+where
+    T: Float,
+{
+    #[serde(alias = "c", alias = "C")]
+    Celsius(T),
+
+    #[serde(alias = "f", alias = "F")]
+    Fahrenheit(T),
+}
+
+impl<T> From<DeserializedTemperature<T>> for Temperature<T>
+where
+    T: Float,
+{
+    fn from(maybe_wrapped: DeserializedTemperature<T>) -> Self {
+        match maybe_wrapped {
+            DeserializedTemperature::Number(temperature) => temperature.into(),
+            DeserializedTemperature::Wrapped(temperature) => temperature.into(),
+        }
+    }
+}
+
+impl<T> From<SerializedTemperature<T>> for Temperature<T>
+where
+    T: Float,
+{
+    fn from(value: SerializedTemperature<T>) -> Self {
+        match value {
+            SerializedTemperature::Celsius(c) => Self::Celsius(c),
+            SerializedTemperature::Fahrenheit(f) => Self::Fahrenheit(f),
+        }
+    }
+}
+
+impl<T> From<Temperature<T>> for SerializedTemperature<T>
+where
+    T: Float,
+{
+    fn from(value: Temperature<T>) -> Self {
+        match value {
+            Temperature::Celsius(c) => Self::Celsius(c),
+            Temperature::Fahrenheit(f) => Self::Fahrenheit(f),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use num_traits::Float;
+    use serde::{Deserialize, Serialize};
+
+    use crate::temperature::TemperatureUnit;
+
     use super::Temperature;
     use float_cmp::{approx_eq, F32Margin};
 
@@ -208,5 +280,50 @@ mod test {
             212.0,
             F32Margin::default()
         ));
+    }
+
+    #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
+    struct TemperatureTest<T>
+    where
+        T: Float,
+    {
+        temp: Temperature<T>,
+    }
+
+    #[test]
+    fn deserialize_float() {
+        let wrapper: TemperatureTest<f64> =
+            toml::from_str("temp = 1.5").expect("A float to be deserialized as a temperature");
+        let t = wrapper.temp;
+        assert_eq!(t.value(), 1.5f64);
+        assert_eq!(t.unit(), TemperatureUnit::Celsius);
+    }
+
+    #[test]
+    fn deserialize_integer() {
+        // What could reasonably be called an integer
+        let wrapper: TemperatureTest<f64> =
+            toml::from_str("temp = 0").expect("An integer be deserialized as a temperature");
+        let t = wrapper.temp;
+        assert_eq!(t.value(), 0f64);
+        assert_eq!(t.unit(), TemperatureUnit::Celsius);
+    }
+
+    #[test]
+    fn deserialize_celsius() {
+        let wrapper: TemperatureTest<f64> = toml::from_str(r#"temp = { "celsius" = -40.0 }"#)
+            .expect("A map of Celsius to a float to deserialize");
+        let t = wrapper.temp;
+        assert_eq!(t.value(), -40f64);
+        assert_eq!(t.unit(), TemperatureUnit::Celsius);
+    }
+
+    #[test]
+    fn deserialize_fahrenheit() {
+        let wrapper: TemperatureTest<f64> = toml::from_str(r#"temp = { "fahrenheit" = -40.0 }"#)
+            .expect("A map of Fahrenheit to a float to deserialize");
+        let t = wrapper.temp;
+        assert_eq!(t.value(), -40f64);
+        assert_eq!(t.unit(), TemperatureUnit::Fahrenheit);
     }
 }
