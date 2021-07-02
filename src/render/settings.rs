@@ -73,10 +73,7 @@ pub(crate) struct RenderSettings {
     pub(crate) lower_limit: Limit,
 
     #[structopt(short = "C", long, parse(try_from_str = gradient::from_str), default_value = "turbo")]
-    #[serde(
-        default = "default_colors",
-        deserialize_with = "gradient::deserialize"
-    )]
+    #[serde(default = "default_colors", deserialize_with = "gradient::deserialize")]
     pub(crate) colors: colorous::Gradient,
 }
 

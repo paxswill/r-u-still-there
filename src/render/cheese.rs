@@ -2,7 +2,6 @@
 //! This module is a font renderer using the [fontdue] crate. Naming the module 'fontdue' would've
 //! been my first choice, but then there'd be a conflict between the module and the crate.
 use std::fmt;
-use std::ops::DerefMut;
 use std::sync::{Arc, Mutex};
 
 use bytes::Bytes;
@@ -118,7 +117,7 @@ impl font::FontRenderer for FontdueRenderer {
                         info!(?temperature, "cache miss");
                         let text_color = color::Color::from(color_pixel).foreground_color();
                         let mask = self.render_cell(temperature, text_color, grid_size);
-                        cache.put((temperature, grid_size), mask.clone());
+                        cache.put((temperature, grid_size), mask);
                         cached_cell = cache.get(&(temperature, grid_size));
                     }
                     cached_cell.unwrap().clone()

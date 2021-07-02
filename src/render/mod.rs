@@ -206,6 +206,8 @@ impl Default for Renderer {
 
 #[cfg(test)]
 mod color_map_tests {
+    use lazy_static::lazy_static;
+
     use super::{cheese, color, Limit, Renderer, TemperatureDisplay};
     use crate::image_buffer::ThermalImage;
 

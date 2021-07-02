@@ -237,7 +237,7 @@ impl Pipeline {
             IntervalStream::new(time::interval(Duration::from_secs(1))).map(move |_| {
                 camera
                     .get_temperature()
-                    .ok_or(anyhow!("Unable to retrieve camera ambient temperature"))
+                    .ok_or_else(|| anyhow!("Unable to retrieve camera ambient temperature"))
             });
         let state = State::<f32, _>::new_discoverable(
             Arc::clone(&self.mqtt_client),

@@ -118,7 +118,7 @@ impl Blob {
         // Short circuit the easy cases
         match self.points.len() {
             0 => None,
-            1 => Some(self.points[0].clone()),
+            1 => Some(self.points[0]),
             _ => {
                 let mut min_x = u32::MAX;
                 let mut min_y = u32::MAX;

@@ -9,9 +9,6 @@ use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Registry};
 
 use std::path::PathBuf;
 
-#[macro_use]
-extern crate lazy_static;
-
 mod camera;
 mod image_buffer;
 mod moving_average;
