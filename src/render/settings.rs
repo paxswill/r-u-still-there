@@ -177,49 +177,16 @@ mod render_test {
     }
 
     #[test]
-    fn static_limit_inline() {
-        let parsed: Result<RenderSettings, _> = toml::from_str("upper_limit = {\"static\" = 10}");
+    fn static_limit() {
+        let parsed: Result<RenderSettings, _> = toml::from_str("upper_limit = 10");
         assert!(
             parsed.is_ok(),
-            "Failed to parse inline static limit: {}",
+            "Failed to parse static limit: {}",
             parsed.unwrap_err()
         );
         let parsed = parsed.unwrap();
         let expected = RenderSettings {
-            upper_limit: Limit::Static(10f32),
-            ..RenderSettings::default()
-        };
-        assert_eq!(parsed, expected);
-    }
-
-    #[test]
-    #[ignore]
-    fn static_limit_dotted() {
-        let parsed: Result<RenderSettings, _> = toml::from_str("upper_limit.static = 10");
-        assert!(
-            parsed.is_ok(),
-            "Failed to parse dotted static limit: {}",
-            parsed.unwrap_err()
-        );
-        let parsed = parsed.unwrap();
-        let expected = RenderSettings {
-            upper_limit: Limit::Static(10f32),
-            ..RenderSettings::default()
-        };
-        assert_eq!(parsed, expected);
-    }
-
-    #[test]
-    fn dynamic_limit() {
-        let parsed: Result<RenderSettings, _> = toml::from_str("upper_limit = \"dynamic\"");
-        assert!(
-            parsed.is_ok(),
-            "Failed to parse dotted static limit: {}",
-            parsed.unwrap_err()
-        );
-        let parsed = parsed.unwrap();
-        let expected = RenderSettings {
-            upper_limit: Limit::Dynamic,
+            upper_limit: Limit::Static(10f32.into()),
             ..RenderSettings::default()
         };
         assert_eq!(parsed, expected);

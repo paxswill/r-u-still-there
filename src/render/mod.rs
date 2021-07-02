@@ -5,7 +5,7 @@ use serde::Deserialize;
 use tracing::{debug, instrument, trace};
 
 use crate::image_buffer::{BytesImage, ThermalImage};
-use crate::temperature::TemperatureUnit;
+use crate::temperature::{Temperature, TemperatureUnit};
 
 pub(crate) mod color;
 pub(crate) mod font;
@@ -18,13 +18,13 @@ mod cheese;
 mod svg;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
+#[serde(untagged)]
 pub(crate) enum Limit {
     /// Set the maximum (or minimum) to the largest (or smallest) value in the current image.
     Dynamic,
 
     /// Set the maximum (or minimum) to the given value.
-    Static(f32),
+    Static(Temperature),
 }
 
 impl Default for Limit {
@@ -126,8 +126,8 @@ impl Renderer {
 
     fn color_map(&self, image: &ThermalImage) -> Box<dyn Fn(&f32) -> color::Color> {
         let scale_min = match self.scale_min {
-            Limit::Static(n) => n,
-            Limit::Dynamic => {
+            Limit::Static(n) => n.in_celsius(),
+            _ => {
                 *(image
                     .iter()
                     .filter(|n| !n.is_nan())
@@ -136,8 +136,8 @@ impl Renderer {
             }
         };
         let scale_max = match self.scale_max {
-            Limit::Static(n) => n,
-            Limit::Dynamic => {
+            Limit::Static(n) => n.in_celsius(),
+            _ => {
                 *(image
                     .iter()
                     .filter(|n| !n.is_nan())
@@ -223,8 +223,8 @@ mod color_map_tests {
     fn both_static() {
         // range is from 0 to 100
         test_limits(
-            Limit::Static(0.0),
-            Limit::Static(100.0),
+            Limit::Static(0.0.into()),
+            Limit::Static(100.0.into()),
             [0.0, 0.0, 0.25, 0.5, 0.75, 1.0],
         );
     }
@@ -233,7 +233,7 @@ mod color_map_tests {
     fn upper_dynamic() {
         // range is from 0 to 150
         test_limits(
-            Limit::Static(0.0),
+            Limit::Static(0.0.into()),
             Limit::Dynamic,
             [0.0, 0.0, (1.0 / 6.0), (1.0 / 3.0), 0.5, 1.0],
         );
@@ -244,7 +244,7 @@ mod color_map_tests {
         test_limits(
             // Range is from -25 to 100
             Limit::Dynamic,
-            Limit::Static(100.0),
+            Limit::Static(100.0.into()),
             [0.0, 0.2, 0.4, 0.6, 0.8, 1.0],
         );
     }
@@ -271,8 +271,8 @@ mod color_map_tests {
     fn reversed_static() {
         // range is from 0 to 100
         test_limits(
-            Limit::Static(100.0),
-            Limit::Static(0.0),
+            Limit::Static(100.0.into()),
+            Limit::Static(0.0.into()),
             [1.0, 1.0, 0.75, 0.5, 0.25, 0.0],
         );
     }

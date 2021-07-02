@@ -1,6 +1,12 @@
 # All configuration options not commented out do not have a default value and
 # must be provided. Commented out values show the default value.
 
+# A temperature can be given in two formats in the config file. If a number is
+# given, it is assumed to be in Celsius. If you wish to be explicit as to the
+# unit, you can wrap it in a map, like so:
+# { "celsius": -40 }
+# { "fahrenheit": -40 }
+
 [camera]
 # The kind of camera being used. Currently only "grideye" is supported.
 kind = "grideye"
@@ -48,11 +54,15 @@ address = 0x69
 # [colorous]: https://docs.rs/colorous/1.0.5/colorous/
 #colors = "turbo"
 
-# The upper limit of the scale used to map temperatures to colors.
-#upper_limit = "dynamic"
+# The upper limit of the scale used to map temperatures to colors. If not given,
+# the limit of the scale will be dynamically chosen from the range in the
+# current image.
+#upper_limit = <temperature>
 
-# The lower limit of the scale used to map temperatures to colors.
-#lower_limit = "dynamic"
+# The lower limit of the scale used to map temperatures to colors. If not given,
+# the limit of the scale will be dynamically chosen from the range in the
+# current image.
+#lower_limit = <temperature>
 
 # The size (in pixels) each pixel of the thermal image will be elarged to.
 #grid_size = 50
