@@ -4,11 +4,12 @@ use num_traits::{Bounded, Zero};
 use serde::Deserialize;
 
 use crate::image_buffer::ThermalImage;
+use crate::temperature::Temperature;
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(untagged)]
 pub(crate) enum Threshold {
-    Static(f32),
+    Static(Temperature),
     Automatic,
 }
 
@@ -41,7 +42,7 @@ fn automatic_threshold(image: &ThermalImage, current_threshold: Option<f32>) -> 
 impl Threshold {
     fn calculate_level(&self, image: &ThermalImage) -> f32 {
         match self {
-            Self::Static(n) => *n,
+            Self::Static(n) => n.in_celsius(),
             Self::Automatic => automatic_threshold(image, None),
         }
     }
@@ -123,7 +124,7 @@ mod test {
     fn apply_static_threshold() {
         let image = image();
         // Choosing 22.5 as it's the midpoint between the mean hot and cold points.
-        let processed = Threshold::Static(22.5).threshold_image(&image);
+        let processed = Threshold::Static(22.5.into()).threshold_image(&image);
         assert_eq!(processed, expected_image());
     }
 

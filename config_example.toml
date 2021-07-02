@@ -74,10 +74,9 @@ address = 0x69
 #units = "celsius"
 
 [tracker]
-# The method for determining if a pixel is occupied or not.
-# Multiple examples are given, with the last the default.
-#threshold = { "static" = 26 }
-#threshold = "automatic"
+# The method for determining if a pixel is occupied or not. If not given, the
+# threshold will by dynamically chosen.
+#threshold = <temperature>
 
 [mqtt]
 # The name of this device for the MQTT broker. It cannot contain any of `/#+`,
