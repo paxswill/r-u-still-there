@@ -64,7 +64,7 @@ where
 }
 
 #[pin_project]
-pub struct Pipeline {
+pub(crate) struct Pipeline {
     camera: Camera,
     frame_source: spmc::Sender<ThermalImage>,
     rendered_source: spmc::Sender<BytesImage>,
@@ -78,7 +78,7 @@ pub struct Pipeline {
 }
 
 impl Pipeline {
-    pub async fn new(config: Settings) -> anyhow::Result<Self> {
+    pub(crate) async fn new(config: Settings) -> anyhow::Result<Self> {
         let camera_settings = &config.camera;
         let camera: Camera = camera_settings.try_into()?;
         let (frame_source, frame_task) = create_frame_source(&camera)?;

@@ -21,7 +21,7 @@ use crate::image_buffer::ThermalImage;
 ///
 /// Currently only GridEYEs are supported, but I hope to add others later on.
 #[derive(Clone)]
-pub enum Camera {
+pub(crate) enum Camera {
     I2cCamera {
         camera: Arc<Mutex<dyn ThermalCamera<Error = LinuxI2CError> + Send>>,
         settings: CommonSettings,
@@ -30,17 +30,17 @@ pub enum Camera {
 
 /// Settings common to all camera types.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct CommonSettings {
-    pub rotation: Rotation,
-    pub flip_horizontal: bool,
-    pub flip_vertical: bool,
-    pub frame_rate: u8,
+pub(crate) struct CommonSettings {
+    pub(crate) rotation: Rotation,
+    pub(crate) flip_horizontal: bool,
+    pub(crate) flip_vertical: bool,
+    pub(crate) frame_rate: u8,
 }
 
 // This enum is purely used to restrict the acceptable values for rotation
 #[derive(Clone, Copy, Deserialize_repr, PartialEq, Debug)]
 #[repr(u16)]
-pub enum Rotation {
+pub(crate) enum Rotation {
     Zero = 0,
     Ninety = 90,
     OneEighty = 180,
@@ -51,7 +51,7 @@ impl Camera {
     /// Retrieves a frame from the camera.
     ///
     /// The image has any transformations applied to it at this stage.
-    pub fn get_frame(&self) -> anyhow::Result<ThermalImage> {
+    pub(crate) fn get_frame(&self) -> anyhow::Result<ThermalImage> {
         // Only keep the lock as long as necessary
         let grid = {
             let camera = match self {
@@ -116,7 +116,7 @@ impl Camera {
     }
 
     /// Get the current temperature from the camera's thermal sensor (if it has one).
-    pub fn get_temperature(&self) -> Option<f32> {
+    pub(crate) fn get_temperature(&self) -> Option<f32> {
         match self {
             Self::I2cCamera {
                 camera,
@@ -135,8 +135,7 @@ impl Camera {
     }
 
     /// Create a [Stream] that yields a [ThermalImage] at the frame rate.
-    //pub fn frame_stream(&self) -> impl Stream<Item = Result<ThermalImage, Arc<anyhow::Error>>> {
-    pub fn frame_stream(
+    pub(crate) fn frame_stream(
         &self,
     ) -> impl TryStream<Ok = ThermalImage, Error = anyhow::Error, Item = anyhow::Result<ThermalImage>>
     {

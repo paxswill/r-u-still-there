@@ -22,7 +22,7 @@ type StreamBox = Arc<Mutex<dyn Stream<Item = BytesImage> + Send + Sync + Unpin>>
 
 #[pin_project]
 #[derive(Clone)]
-pub struct MjpegStream {
+pub(crate) struct MjpegStream {
     boundary: String,
     #[pin]
     sender: Sender<Bytes>,
@@ -31,7 +31,7 @@ pub struct MjpegStream {
 }
 
 impl MjpegStream {
-    pub fn new(render_source: &Sender<BytesImage>) -> Self {
+    pub(crate) fn new(render_source: &Sender<BytesImage>) -> Self {
         // TODO: randomize boundary
         let boundary = "mjpeg_rs_boundary".to_string();
         debug!(%boundary, "creating new MJPEG encoder");
@@ -43,7 +43,7 @@ impl MjpegStream {
         }
     }
 
-    pub fn body(&self) -> Body {
+    pub(crate) fn body(&self) -> Body {
         // The only kind of error BroadcastStream can send is when a receiver is lagged. In that
         // case just continue reading as the next recv() will work.
         let jpeg_stream = self.sender.stream();
@@ -52,7 +52,7 @@ impl MjpegStream {
         Body::wrap_stream(result_stream)
     }
 
-    pub fn content_type(&self) -> String {
+    pub(crate) fn content_type(&self) -> String {
         format!("multipart/x-mixed-replace; boundary={}", self.boundary)
     }
 

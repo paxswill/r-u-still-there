@@ -10,15 +10,15 @@ use std::str::FromStr;
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(untagged)]
-pub enum Bus {
+pub(crate) enum Bus {
     Number(u32),
     Path(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct I2cSettings {
-    pub bus: Bus,
-    pub address: u8,
+pub(crate) struct I2cSettings {
+    pub(crate) bus: Bus,
+    pub(crate) address: u8,
 }
 
 impl From<u32> for Bus {

@@ -20,7 +20,7 @@ const CAMERA_FIELDS: &[&str] = &[
 ];
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum CameraSettings {
+pub(crate) enum CameraSettings {
     GridEye {
         i2c: I2cSettings,
         options: CommonSettings,

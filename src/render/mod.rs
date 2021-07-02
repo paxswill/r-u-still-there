@@ -7,8 +7,8 @@ use tracing::{debug, instrument, trace};
 use crate::image_buffer::{BytesImage, ThermalImage};
 use crate::temperature::TemperatureUnit;
 
-pub mod color;
-pub mod font;
+pub(crate) mod color;
+pub(crate) mod font;
 mod settings;
 pub(crate) use settings::RenderSettings;
 
@@ -19,7 +19,7 @@ mod svg;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
-pub enum Limit {
+pub(crate) enum Limit {
     /// Set the maximum (or minimum) to the largest (or smallest) value in the current image.
     Dynamic,
 
@@ -35,7 +35,7 @@ impl Default for Limit {
 
 /// Control how the temperature of each pixel is displayed.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum TemperatureDisplay {
+pub(crate) enum TemperatureDisplay {
     /// Don't show the temperature.
     Disabled,
 
@@ -49,7 +49,7 @@ impl Default for TemperatureDisplay {
     }
 }
 #[derive(Debug)]
-pub struct Renderer {
+pub(crate) struct Renderer {
     scale_min: Limit,
     scale_max: Limit,
     display_temperature: TemperatureDisplay,

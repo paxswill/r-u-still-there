@@ -3,6 +3,6 @@ mod i2c;
 mod settings;
 mod shared_camera;
 
-pub use i2c::{Bus, I2cSettings};
-pub use settings::CameraSettings;
-pub use shared_camera::{Camera, CommonSettings, Rotation};
+pub(crate) use i2c::{Bus, I2cSettings};
+pub(crate) use settings::CameraSettings;
+pub(crate) use shared_camera::{Camera, CommonSettings, Rotation};

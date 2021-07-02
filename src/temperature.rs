@@ -38,7 +38,7 @@ impl FromStr for TemperatureUnit {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-pub(crate) enum Temperature<T = f32>
+pub enum Temperature<T = f32>
 where
     T: Float,
 {
@@ -54,7 +54,7 @@ where
     T: Float,
 {
     /// Get the temperature in Celsius.
-    pub(crate) fn in_celsius(&self) -> T {
+    pub fn in_celsius(&self) -> T {
         match self {
             Self::Celsius(_) => self.value(),
             Self::Fahrenheit(_) => {
@@ -66,7 +66,7 @@ where
     }
 
     /// Get the temperature in Fahrenheit.
-    pub(crate) fn in_fahrenheit(&self) -> T {
+    pub fn in_fahrenheit(&self) -> T {
         match self {
             Self::Celsius(_) => {
                 self.value() * T::from(1.8).expect("1.8 to be able to be represented by a float")
@@ -76,22 +76,22 @@ where
         }
     }
 
-    pub(crate) fn as_celsius(self) -> Self {
+    pub fn as_celsius(self) -> Self {
         Self::Celsius(self.in_celsius())
     }
 
-    pub(crate) fn as_fahrenheit(self) -> Self {
+    pub fn as_fahrenheit(self) -> Self {
         Self::Fahrenheit(self.in_fahrenheit())
     }
 
-    pub(crate) fn as_unit(self, unit: &TemperatureUnit) -> Self {
+    pub fn as_unit(self, unit: &TemperatureUnit) -> Self {
         match unit {
             TemperatureUnit::Celsius => self.as_celsius(),
             TemperatureUnit::Fahrenheit => self.as_fahrenheit(),
         }
     }
 
-    pub(crate) fn unit(&self) -> TemperatureUnit {
+    pub fn unit(&self) -> TemperatureUnit {
         match self {
             Temperature::Celsius(_) => TemperatureUnit::Celsius,
             Temperature::Fahrenheit(_) => TemperatureUnit::Fahrenheit,

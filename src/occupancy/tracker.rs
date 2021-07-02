@@ -17,7 +17,7 @@ use super::Threshold;
 use crate::image_buffer::ThermalImage;
 
 #[derive(Clone, Debug)]
-pub struct Tracker {
+pub(crate) struct Tracker {
     threshold: Threshold,
     blobs: Arc<RwLock<Vec<Blob>>>,
     old_count: Arc<AtomicUsize>,
@@ -31,7 +31,7 @@ struct Blob {
 }
 
 impl Tracker {
-    pub fn new(threshold: Threshold) -> Self {
+    pub(crate) fn new(threshold: Threshold) -> Self {
         let (sender, receiver) = watch::channel(0);
         Self {
             threshold,
@@ -42,11 +42,11 @@ impl Tracker {
         }
     }
 
-    pub fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.blobs.read().unwrap().len()
     }
 
-    pub fn update(&mut self, image: &ThermalImage) {
+    pub(crate) fn update(&mut self, image: &ThermalImage) {
         let thresholded: ImageBuffer<Luma<u8>, Vec<u8>> = self.threshold.threshold_image(image);
         let mut blob_points: HashMap<u32, Vec<Point<u32>>> = HashMap::new();
         let components = connected_components(&thresholded, Connectivity::Eight, Luma([0u8]));
@@ -77,7 +77,7 @@ impl Tracker {
         }
     }
 
-    pub fn count_stream(&self) -> impl Stream<Item = usize> {
+    pub(crate) fn count_stream(&self) -> impl Stream<Item = usize> {
         WatchStream::new(self.count_receiver.clone())
     }
 }
@@ -114,7 +114,7 @@ impl Sink<ThermalImage> for Tracker {
 }
 
 impl Blob {
-    pub fn center(&self) -> Option<Point<u32>> {
+    pub(crate) fn center(&self) -> Option<Point<u32>> {
         // Short circuit the easy cases
         match self.points.len() {
             0 => None,

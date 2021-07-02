@@ -4,7 +4,7 @@ use serde::Deserialize;
 use crate::occupancy::{Threshold, Tracker};
 
 #[derive(Debug, Default, Deserialize)]
-pub struct TrackerSettings {
+pub(crate) struct TrackerSettings {
     threshold: Threshold,
 }
 

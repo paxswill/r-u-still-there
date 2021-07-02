@@ -2,5 +2,5 @@
 mod threshold;
 mod tracker;
 
-pub use threshold::Threshold;
-pub use tracker::Tracker;
+pub(crate) use threshold::Threshold;
+pub(crate) use tracker::Tracker;

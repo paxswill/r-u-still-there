@@ -16,13 +16,13 @@ use super::external_value::ExternalValue;
 
 type HmacSha256 = Hmac<Sha256>;
 
-pub const DEFAULT_MQTT_PORT: u16 = 1883;
-pub const DEFAULT_MQTTS_PORT: u16 = 8883;
+const DEFAULT_MQTT_PORT: u16 = 1883;
+const DEFAULT_MQTTS_PORT: u16 = 8883;
 const APPLICATION_KEY: &[u8; 16] =
     b"\x64\x6c\x30\xc3\x41\xd7\x47\x40\x8b\x1e\xe0\x78\xf7\x4c\x73\xe0";
 
 #[derive(Deserialize, PartialEq)]
-pub struct MqttSettings {
+pub(crate) struct MqttSettings {
     /// A name for the base topic for this device.
     pub(crate) name: String,
 
@@ -79,7 +79,7 @@ pub struct MqttSettings {
 
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(try_from = "Url")]
-pub struct MqttUrl(Url);
+pub(crate) struct MqttUrl(Url);
 
 impl TryFrom<Url> for MqttUrl {
     type Error = anyhow::Error;
@@ -142,7 +142,7 @@ impl MqttSettings {
     }
 
     /// Access the server URL.
-    pub fn server_url(&self) -> &Url {
+    pub(crate) fn server_url(&self) -> &Url {
         &self.server.0
     }
 
@@ -151,7 +151,7 @@ impl MqttSettings {
     /// If one was provided, use that. If not, retrieve a machine-specific ID from the OS and hash
     /// it. If a machine-specific ID is not able to be found, the configured name is used instead
     /// (also hashed).
-    pub fn unique_id(&self) -> String {
+    pub(crate) fn unique_id(&self) -> String {
         match &self.unique_id {
             Some(uid) => uid.clone(),
             None => {

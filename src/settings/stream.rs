@@ -17,7 +17,7 @@ fn default_stream_enabled() -> bool {
 }
 
 #[derive(Debug, Deserialize, PartialEq, StructOpt)]
-pub struct StreamSettings {
+pub(crate) struct StreamSettings {
     /// The address to bind the server to. Defaults to `127.0.0.1`.
     #[structopt(short, long, default_value = "127.0.0.1")]
     #[serde(default = "default_address")]
@@ -31,7 +31,7 @@ pub struct StreamSettings {
     /// Whether or not the MJPEG video stream should be enabled.
     #[structopt(long, short = "M")]
     #[serde(default = "default_stream_enabled")]
-    pub mjpeg: bool,
+    pub(crate) mjpeg: bool,
 }
 
 impl From<StreamSettings> for net::SocketAddr {

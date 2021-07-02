@@ -15,55 +15,55 @@ use crate::temperature::TemperatureUnit;
 
 #[derive(Clone, Debug, Deserialize, Serialize, StructOpt)]
 #[serde(rename_all = "lowercase")]
-pub enum CameraKind {
+pub(crate) enum CameraKind {
     GridEye,
 }
 
 #[derive(Clone, Debug, StructOpt)]
 #[structopt(setting(AppSettings::DeriveDisplayOrder), group = ArgGroup::with_name("mjpeg"))]
-pub struct Args {
+pub(crate) struct Args {
     /// Path to a configuration file.
     #[structopt(short, long, parse(from_os_str))]
-    pub config_path: Option<PathBuf>,
+    pub(crate) config_path: Option<PathBuf>,
 
     /// The kind of camera being used.
     #[structopt(short = "C", long, possible_values(&["grideye"]))]
-    pub camera_kind: Option<CameraKind>,
+    pub(crate) camera_kind: Option<CameraKind>,
 
     /// The I2C bus the camera is connected to.
     #[structopt(short = "b", long)]
-    pub i2c_bus: Option<Bus>,
+    pub(crate) i2c_bus: Option<Bus>,
 
     /// The I2C address the camera is available at.
     #[structopt(short = "a", long, parse(try_from_str = parse_int_decimal_hex))]
-    pub i2c_address: Option<u32>,
+    pub(crate) i2c_address: Option<u32>,
 
     /// The camera frame rate to use.
     #[structopt(short, long)]
-    pub frame_rate: Option<u8>,
+    pub(crate) frame_rate: Option<u8>,
 
     /// The size of each camera pixel in the rendered image.
     #[structopt(short, long)]
-    pub grid_size: Option<u8>,
+    pub(crate) grid_size: Option<u8>,
 
     /// The unit to display the temperature in.
     #[structopt(short = "u", long = "units")]
-    pub temperature_units: Option<TemperatureUnit>,
+    pub(crate) temperature_units: Option<TemperatureUnit>,
 
     /// The color scheme to use when rendering the thermal image.
     // TODO: better typing. Blocking on Gradient not having an easy way to get the name of the
     // gradient from the instance.
     //#[structopt(short = "o", long, parse(try_from_str = super::gradient::from_str))]
     #[structopt(short = "o", long)]
-    pub colors: Option<String>,
+    pub(crate) colors: Option<String>,
 
     /// The IP address the streaming server should listen on.
     #[structopt(short = "l", long = "listen-address")]
-    pub listen_address: Option<net::IpAddr>,
+    pub(crate) listen_address: Option<net::IpAddr>,
 
     /// The port number to bind the streaming server to.
     #[structopt(short = "p", long = "listen-port")]
-    pub listen_port: Option<u16>,
+    pub(crate) listen_port: Option<u16>,
 
     /// Enable MJPEG streaming.
     #[structopt(short = "m", long = "mjpeg", group = "mjpeg")]
@@ -75,7 +75,7 @@ pub struct Args {
 }
 
 #[derive(Clone, Debug)]
-pub struct MatchedArgs<'a>(ArgMatches<'a>);
+pub(crate) struct MatchedArgs<'a>(ArgMatches<'a>);
 
 impl FromStr for CameraKind {
     type Err = String;

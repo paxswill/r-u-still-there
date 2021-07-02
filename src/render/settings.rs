@@ -3,8 +3,8 @@ use serde::Deserialize;
 use structopt::StructOpt;
 
 use crate::render::{Limit, TemperatureDisplay};
-use crate::temperature::TemperatureUnit;
 use crate::settings::gradient;
+use crate::temperature::TemperatureUnit;
 
 fn default_grid_size() -> usize {
     50
@@ -54,30 +54,30 @@ mod from_test {
 }
 
 #[derive(Debug, Deserialize, StructOpt)]
-pub struct RenderSettings {
+pub(crate) struct RenderSettings {
     /// The size (in pixels) each camera pixel should be rendered as.
     #[structopt(short, long, default_value = "50")]
     #[serde(default = "default_grid_size")]
-    pub grid_size: usize,
+    pub(crate) grid_size: usize,
 
     #[structopt(short, long)]
     #[serde(default)]
-    pub units: Option<TemperatureUnit>,
+    pub(crate) units: Option<TemperatureUnit>,
 
     #[structopt(skip)]
     #[serde(default)]
-    pub upper_limit: Limit,
+    pub(crate) upper_limit: Limit,
 
     #[structopt(skip)]
     #[serde(default)]
-    pub lower_limit: Limit,
+    pub(crate) lower_limit: Limit,
 
     #[structopt(short = "C", long, parse(try_from_str = gradient::from_str), default_value = "turbo")]
     #[serde(
         default = "default_colors",
         deserialize_with = "gradient::deserialize"
     )]
-    pub colors: colorous::Gradient,
+    pub(crate) colors: colorous::Gradient,
 }
 
 impl PartialEq for RenderSettings {

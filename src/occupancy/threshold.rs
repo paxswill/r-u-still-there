@@ -7,7 +7,7 @@ use crate::image_buffer::ThermalImage;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum Threshold {
+pub(crate) enum Threshold {
     Static(f32),
     Automatic,
 }
@@ -46,7 +46,7 @@ impl Threshold {
         }
     }
 
-    pub fn threshold_image<T>(&self, image: &ThermalImage) -> ImageBuffer<Luma<T>, Vec<T>>
+    pub(crate) fn threshold_image<T>(&self, image: &ThermalImage) -> ImageBuffer<Luma<T>, Vec<T>>
     where
         T: 'static + Bounded + Zero + Primitive,
     {
