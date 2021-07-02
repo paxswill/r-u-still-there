@@ -1,4 +1,5 @@
-# All configuration options not commented out do not have a default value and must be provided. Commented out values show the default value.
+# All configuration options not commented out do not have a default value and
+# must be provided. Commented out values show the default value.
 
 [camera]
 # The kind of camera being used. Currently only "grideye" is supported.
@@ -13,10 +14,13 @@ bus = 1
 address = 0x69
 
 # The frame rate the camera is run at.
-# For GridEYEs, only 1 and 10 are allowed. 10 FPS is obviously more responsive, but there the image is noisier. 1 FPS is conversely slower, but has less noise. 
+# For GridEYEs, only 1 and 10 are allowed. 10 FPS is obviously more responsive,
+# but there the image is noisier. 1 FPS is conversely slower, but has less
+# noise.
 #frame_rate = 10
 
-# Rotate the image to match how the camera is oriented. Rotation is specified in degrees clockwise, and only 0, 90, 180, and 270 are accepted.  
+# Rotate the image to match how the camera is oriented. Rotation is specified in
+# degrees clockwise, and only 0, 90, 180, and 270 are accepted.
 #rotation = 0
 
 # Mirror the image horizontally.
@@ -26,7 +30,9 @@ address = 0x69
 #flip_vertical = false
 
 [streams]
-# The address to bind to for serving MJPEG streams. The default isn't very useful, as it is only available on the device itself. If you want the MJPEG stream to be available on *all* addresses, "0.0.0.0" is the value to use.
+# The address to bind to for serving MJPEG streams. The default isn't very
+# useful, as it is only available on the device itself. If you want the MJPEG
+# stream to be available on *all* addresses, "0.0.0.0" is the value to used.
 #address = "127.0.0.1"
 
 # The port to serve the MJPEG stream from.
@@ -37,7 +43,8 @@ address = 0x69
 #mjpeg = true
 
 [render]
-# The color scheme to map temperatures to. Any gradient (in other words, non-sequential) name from [colorous] is valid.
+# The color scheme to map temperatures to. Any gradient (in other words,
+# non-sequential) name from [colorous] is valid.
 # [colorous]: https://docs.rs/colorous/1.0.5/colorous/
 #colors = "turbo"
 
@@ -51,8 +58,9 @@ address = 0x69
 #grid_size = 50
 
 # This is an exception to the rule on commented out values in this config file.
-# The absence of this key means the temperature of each grid square will not be drawn.
-# If the string "celsius" or "fahrenheit" are given, the temperature of each grid will be displayed in that temperature scale. 
+# The absence of this key means the temperature of each grid square will not be
+# drawn. If the string "celsius" or "fahrenheit" are given, the temperature of
+# each grid will be displayed in that temperature scale.
 #units = "celsius"
 
 [tracker]
@@ -62,11 +70,14 @@ address = 0x69
 #threshold = "automatic"
 
 [mqtt]
-# The name of this device for the MQTT broker. It cannot contain any of `/#+`, control characters, or Unicode non-characters, and must be at least one character long.
+# The name of this device for the MQTT broker. It cannot contain any of `/#+`,
+# control characters, or Unicode non-characters, and must be at least one
+# character long.
 name = "RPi 4B Development"
 
-# A URL for the MQTT broker. If connecting iver TLS, use `mqtts` as the scheme, otherwise use `mqtt`.
-# The default port for plain MQTT is 1833, and the default for MQTT over TLS is 8883.
+# A URL for the MQTT broker. If connecting iver TLS, use `mqtts` as the scheme,
+# otherwise use `mqtt`. The default port for plain MQTT is 1833, and the default
+# for MQTT over TLS is 8883.
 # NOTE: Connecting over TLS via an IP address isn't supported yet.
 # Multiple examples are shown below.
 #server = "mqtts://tls.mqtt.example.com"
@@ -74,26 +85,32 @@ name = "RPi 4B Development"
 #server = "mqtt://192.0.2.1"
 server = "mqtt://mqtt.example.com"
 
-# A username to authenticate to the MQTT broker with. If you don't need a username for your broker, don't define one.
+# A username to authenticate to the MQTT broker with. If you don't need a
+# username for your broker, don't define one.
 #username = "r-u-still-there"
 
-# The password to connect to the MQTT broker. If you don't need a password, don't define one.
-# You can specify the password euther as a string or as a path to a file that contains the password. Examples of both are given.
+# The password to connect to the MQTT broker. If you don't need a password,
+# don't define one.
+# You can specify the password euther as a string or as a path to a file that
+# contains the password. Leading and trailing whitespace (including newlines)
+# are trimmed from the contents of the file. Examples of both are given.
 #password = "hunter2"
-# Leading and trailing whitespace (including newlines) are trimmed from the contents of the file.
 #password = { file = "./mqtt-password" }
 
 # Enable Home Assistant MQTT discovery.
 #home_assistant = true
 
 # The discovery topic used for Home Assistant discovery.
-# The default for r-u-still-there matches the default for Home Assistant, so most users do not need to set this.
+# The default for r-u-still-there matches the default for Home Assistant, so
+# most users do not need to set this.
 #home_assistant_topic = "homeassistant"
 
 # A unique ID used to identify this device to Home Assistant (when enabled).
-# This is normally automatically generated, and most users do not need to define it.
+# This is normally automatically generated, and most users do not need to define
+# it.
 #unique_id =
 
 # The interval for sending broker keepalive messages in seconds.
-# When not given, a reasonable default is chosen. Explicitly setting it to 0 disables keepalive messages.
+# When not given, a reasonable default is chosen. Explicitly setting it to 0
+# disables keepalive messages.
 #keep_alive = 60
