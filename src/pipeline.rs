@@ -9,7 +9,7 @@ use rumqttc::{
     AsyncClient, ConnectReturnCode, Event, LastWill, MqttOptions as RuMqttOptions, Packet, QoS,
 };
 use tokio::sync::Mutex as AsyncMutex;
-use tokio::task::JoinError;
+use tokio::task::{spawn_blocking, JoinError};
 use tokio::time::{self, Duration};
 use tokio_stream::wrappers::IntervalStream;
 use tracing::{debug, debug_span, error, info, info_span, trace, trace_span, warn};
@@ -142,9 +142,17 @@ impl Pipeline {
         }
         let mut routes = Vec::new();
         if settings.mjpeg.enabled {
-            debug!("creating MJPEG encoder");
+            debug!("creating JPEG encoder");
+            let jpeg_sender = self.rendered_source.new_child();
+            let encoder_stream = self.rendered_source.uncounted_stream().then(|image| async move {
+                let res = spawn_blocking(move || {
+                    stream::encode_jpeg(&image)
+                }).await;
+                // Map the JoinError to an anyhow::Error
+                res.map_err(|err| anyhow!("Error with JPEG encoding thread: {:?}", err))
+            });
             // MJPEG sink
-            let mjpeg = stream::mjpeg::MjpegStream::new(&self.rendered_source);
+            let mjpeg = stream::MjpegStream::new(&jpeg_sender);
             let mjpeg_output = mjpeg.clone();
             let mjpeg_route = warp::path("mjpeg")
                 .and(warp::path::end())
@@ -156,9 +164,11 @@ impl Pipeline {
                 })
                 .boxed();
             routes.push(mjpeg_route);
-            // Stream out rendered frames via MJPEG
+            // Forward the encoded JPEG images to the MJPEG "encoder"
+            self.tasks.push(encoder_stream.forward(jpeg_sender).boxed());
+            // Run the MJPEG task that broadcasts the framed data to connected clients
             self.tasks.push(
-                tokio::spawn(mjpeg.instrument(trace_span!("mjpeg_encoder")))
+                tokio::spawn(mjpeg.instrument(trace_span!("mjpeg_framer")))
                     .err_into()
                     .boxed(),
             );
