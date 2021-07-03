@@ -29,7 +29,7 @@ use crate::mqtt::{
     home_assistant as hass, serialize, MqttSettings, Occupancy, OccupancyCount, State, Status,
 };
 use crate::occupancy::Tracker;
-use crate::settings::{Settings, StreamSettings, TrackerSettings};
+use crate::settings::{Settings, TrackerSettings};
 use crate::{render, spmc, stream};
 
 const MQTT_BASE_TOPIC: &str = "r-u-still-there";
@@ -132,7 +132,7 @@ impl Pipeline {
         Arc::new(device)
     }
 
-    fn create_streams(&mut self, settings: StreamSettings) -> anyhow::Result<()> {
+    fn create_streams(&mut self, settings: stream::StreamSettings) -> anyhow::Result<()> {
         // Bail out if there aren't any stream sources enabled.
         // For now there's just MJPEG, but HLS is planned for the future.
         if !settings.mjpeg {
