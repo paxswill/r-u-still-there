@@ -135,13 +135,13 @@ impl Pipeline {
     fn create_streams(&mut self, settings: stream::StreamSettings) -> anyhow::Result<()> {
         // Bail out if there aren't any stream sources enabled.
         // For now there's just MJPEG, but HLS is planned for the future.
-        if !settings.mjpeg {
+        if !settings.any_streams_enabled() {
             info!("video streams disabled, skipping setup");
             // It's Ok, there was just nothing to do.
             return Ok(());
         }
         let mut routes = Vec::new();
-        if settings.mjpeg {
+        if settings.mjpeg.enabled {
             debug!("creating MJPEG encoder");
             // MJPEG sink
             let mjpeg = stream::mjpeg::MjpegStream::new(&self.rendered_source);

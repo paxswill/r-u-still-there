@@ -25,9 +25,18 @@ pub(crate) struct StreamSettings {
     #[serde(default = "default_port")]
     port: u16,
 
-    /// Whether or not the MJPEG video stream should be enabled.
-    #[serde(default = "default_stream_enabled")]
-    pub(crate) mjpeg: bool,
+    /// MJPEG-specific settings.
+    #[serde(default)]
+    pub(crate) mjpeg: MjpegSettings,
+}
+
+impl StreamSettings {
+    /// Test if any streams are enabled.
+    pub(crate) fn any_streams_enabled(&self) -> bool {
+        // Right now there's only MJPEG streams, so this isn't a very useful check, but it'll be
+        // useful later.
+        self.mjpeg.enabled
+    }
 }
 
 impl From<StreamSettings> for net::SocketAddr {
@@ -39,19 +48,34 @@ impl From<StreamSettings> for net::SocketAddr {
     }
 }
 
-impl<'a> Default for StreamSettings {
+impl Default for StreamSettings {
     fn default() -> Self {
         Self {
             address: default_address(),
             port: default_port(),
-            mjpeg: default_stream_enabled(),
+            mjpeg: MjpegSettings::default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+pub(crate) struct MjpegSettings {
+    /// Whether or not the MJPEG video stream should be enabled.
+    #[serde(default = "default_stream_enabled")]
+    pub(crate) enabled: bool,
+}
+
+impl Default for MjpegSettings {
+    fn default() -> Self {
+        Self {
+            enabled: default_stream_enabled(),
         }
     }
 }
 
 #[cfg(test)]
 mod stream_test {
-    use super::{default_address, default_port, default_stream_enabled, StreamSettings};
+    use super::{default_address, default_port, MjpegSettings, StreamSettings};
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
     #[test]
@@ -71,7 +95,7 @@ mod stream_test {
         let expected = StreamSettings {
             address: IpAddr::from(Ipv4Addr::new(127, 0, 0, 1)),
             port: default_port(),
-            mjpeg: default_stream_enabled(),
+            mjpeg: MjpegSettings::default(),
         };
         assert_eq!(parsed, expected);
     }
@@ -84,7 +108,7 @@ mod stream_test {
         let expected = StreamSettings {
             address: IpAddr::from(Ipv4Addr::new(0, 0, 0, 0)),
             port: default_port(),
-            mjpeg: default_stream_enabled(),
+            mjpeg: MjpegSettings::default(),
         };
         assert_eq!(parsed, expected);
     }
@@ -98,7 +122,7 @@ mod stream_test {
         let expected = StreamSettings {
             address: IpAddr::from(Ipv4Addr::new(192, 0, 2, 20)),
             port: default_port(),
-            mjpeg: default_stream_enabled(),
+            mjpeg: MjpegSettings::default(),
         };
         assert_eq!(parsed, expected);
     }
@@ -111,7 +135,7 @@ mod stream_test {
         let expected = StreamSettings {
             address: IpAddr::from(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)),
             port: default_port(),
-            mjpeg: default_stream_enabled(),
+            mjpeg: MjpegSettings::default(),
         };
         assert_eq!(parsed, expected);
     }
@@ -124,7 +148,7 @@ mod stream_test {
         let expected = StreamSettings {
             address: IpAddr::from(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)),
             port: default_port(),
-            mjpeg: default_stream_enabled(),
+            mjpeg: MjpegSettings::default(),
         };
         assert_eq!(parsed, expected);
     }
@@ -139,7 +163,7 @@ mod stream_test {
         let expected = StreamSettings {
             address: IpAddr::from(Ipv6Addr::new(0x2001, 0xdb8, 0xdead, 0xbeef, 0, 0, 0, 1)),
             port: default_port(),
-            mjpeg: default_stream_enabled(),
+            mjpeg: MjpegSettings::default(),
         };
         assert_eq!(parsed, expected);
     }
@@ -152,7 +176,7 @@ mod stream_test {
         let expected = StreamSettings {
             address: default_address(),
             port: 1337u16,
-            mjpeg: default_stream_enabled(),
+            mjpeg: MjpegSettings::default(),
         };
         assert_eq!(parsed, expected);
     }
@@ -165,33 +189,33 @@ mod stream_test {
 
     #[test]
     fn mjpeg_on() {
-        let parsed: Result<StreamSettings, _> = toml::from_str("mjpeg = true");
+        let parsed: Result<StreamSettings, _> = toml::from_str("mjpeg.enabled = true");
         assert!(parsed.is_ok(), "Failed to parse MJPEG enabled");
         let parsed = parsed.unwrap();
         let expected = StreamSettings {
             address: default_address(),
             port: default_port(),
-            mjpeg: true,
+            mjpeg: MjpegSettings { enabled: true },
         };
         assert_eq!(parsed, expected);
     }
 
     #[test]
     fn mjpeg_off() {
-        let parsed: Result<StreamSettings, _> = toml::from_str("mjpeg = false");
+        let parsed: Result<StreamSettings, _> = toml::from_str("mjpeg.enabled = false");
         assert!(parsed.is_ok(), "Failed to parse MJPEG disabled");
         let parsed = parsed.unwrap();
         let expected = StreamSettings {
             address: default_address(),
             port: default_port(),
-            mjpeg: false,
+            mjpeg: MjpegSettings { enabled: false },
         };
         assert_eq!(parsed, expected);
     }
 
     #[test]
     fn mjpeg_invalid() {
-        let parsed: Result<StreamSettings, _> = toml::from_str("mjpeg = \"foo\"");
+        let parsed: Result<StreamSettings, _> = toml::from_str("mjpeg.enabled = \"foo\"");
         assert!(
             parsed.is_err(),
             "Incorrectly parsed bad MJPEG configuration"

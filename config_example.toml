@@ -46,7 +46,7 @@ address = 0x69
 
 # Whether or not to enable the MJPEG stream.
 # The stream is available from http://HOSTNAME:PORT/mjpeg
-#mjpeg = true
+#mjpeg.enable = true
 
 [render]
 # The color scheme to map temperatures to. Any gradient (in other words,
