@@ -26,6 +26,12 @@ impl StreamSettings {
         self.mjpeg.enabled
     }
 
+    /// Test if any streams that require the HTTP server are enabled.
+    pub(crate) fn http_streams_enabled(&self) -> bool {
+        // Again, not super useful right now, but groundwork for MQTT streams later.
+        self.mjpeg.enabled
+    }
+
     fn default_address() -> net::IpAddr {
         net::IpAddr::from([127u8, 0u8, 0u8, 1u8])
     }

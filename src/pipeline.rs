@@ -136,7 +136,7 @@ impl Pipeline {
         // Bail out if there aren't any stream sources enabled.
         // For now there's just MJPEG, but HLS is planned for the future.
         if !settings.any_streams_enabled() {
-            info!("video streams disabled, skipping setup");
+            info!("video streams disabled, skipping streams setup");
             // It's Ok, there was just nothing to do.
             return Ok(());
         }
@@ -163,15 +163,17 @@ impl Pipeline {
                     .boxed(),
             );
         }
-        let combined_route = routes
-            .into_iter()
-            .reduce(|combined, next| combined.or(next).unify().boxed())
-            .ok_or_else(|| anyhow!("problem creating streaming routes"))?;
-        let bind_address: std::net::SocketAddr = settings.into();
-        debug!(address = ?bind_address, "creating warp server");
-        let server = warp::serve(combined_route).bind(bind_address);
-        self.tasks
-            .push(server.instrument(info_span!("warp_server")).map(Ok).boxed());
+        if settings.http_streams_enabled() {
+            let combined_route = routes
+                .into_iter()
+                .reduce(|combined, next| combined.or(next).unify().boxed())
+                .ok_or_else(|| anyhow!("problem creating streaming routes"))?;
+            let bind_address: std::net::SocketAddr = settings.into();
+            debug!(address = ?bind_address, "creating warp server");
+            let server = warp::serve(combined_route).bind(bind_address);
+            self.tasks
+                .push(server.instrument(info_span!("warp_server")).map(Ok).boxed());
+        }
         Ok(())
     }
 
