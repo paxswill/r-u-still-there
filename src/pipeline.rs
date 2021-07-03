@@ -82,7 +82,9 @@ impl Pipeline {
         let camera_settings = &config.camera;
         let camera: Camera = camera_settings.try_into()?;
         let (frame_source, frame_task) = create_frame_source(&camera)?;
-        let (rendered_source, render_task) = create_renderer(&frame_source, config.render)?;
+        let frame_rate_limit = config.streams.common_frame_rate();
+        let (rendered_source, render_task) =
+            create_renderer(&frame_source, config.render, frame_rate_limit)?;
         // Once IntoIterator is implemented for arrays, this line can be simplified
         let tasks: TaskList = std::array::IntoIter::new([frame_task, render_task]).collect();
         debug!("Opening connection to MQTT broker");
@@ -144,13 +146,14 @@ impl Pipeline {
         if settings.mjpeg.enabled {
             debug!("creating JPEG encoder");
             let jpeg_sender = self.rendered_source.new_child();
-            let encoder_stream = self.rendered_source.uncounted_stream().then(|image| async move {
-                let res = spawn_blocking(move || {
-                    stream::encode_jpeg(&image)
-                }).await;
-                // Map the JoinError to an anyhow::Error
-                res.map_err(|err| anyhow!("Error with JPEG encoding thread: {:?}", err))
-            });
+            let encoder_stream = self
+                .rendered_source
+                .uncounted_stream()
+                .then(|image| async move {
+                    let res = spawn_blocking(move || stream::encode_jpeg(&image)).await;
+                    // Map the JoinError to an anyhow::Error
+                    res.map_err(|err| anyhow!("Error with JPEG encoding thread: {:?}", err))
+                });
             // MJPEG sink
             let mjpeg = stream::MjpegStream::new(&jpeg_sender);
             let mjpeg_output = mjpeg.clone();
@@ -307,6 +310,7 @@ fn create_frame_source(camera: &Camera) -> anyhow::Result<(spmc::Sender<ThermalI
 fn create_renderer(
     frame_source: &spmc::Sender<ThermalImage>,
     settings: render::RenderSettings,
+    frame_rate_limit: Option<Duration>,
 ) -> anyhow::Result<(spmc::Sender<BytesImage>, InnerTask)> {
     let renderer = render::Renderer::new(
         settings.lower_limit,
@@ -316,10 +320,12 @@ fn create_renderer(
         settings.colors,
         render::font::default_renderer(),
     );
-    let rendered_stream = frame_source
-        .stream()
-        .instrument(trace_span!("render_stream"))
-        .map(move |temperatures| renderer.render_buffer(&temperatures));
+    let rendered_stream = match frame_rate_limit {
+        None => frame_source.stream().boxed(),
+        Some(limit) => tokio_stream::StreamExt::throttle(frame_source.stream(), limit).boxed(),
+    }
+    .instrument(trace_span!("render_stream"))
+    .map(move |temperatures| renderer.render_buffer(&temperatures));
     let rendered_multiplexer = spmc::Sender::default();
     let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
     let task = tokio::spawn(render_future).map(flatten_join_result).boxed();

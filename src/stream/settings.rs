@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use num::integer::Integer;
 use serde::Deserialize;
 
 use std::net;
+use std::time::Duration;
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub(crate) struct StreamSettings {
@@ -39,6 +41,26 @@ impl StreamSettings {
     fn default_port() -> u16 {
         9000u16
     }
+
+    /// Out of the enabled streams, if they are frame rate limited, find the greatest common
+    /// denominator for them. And return it as the delay betwwen frames. If there are no frame rate
+    /// limits, or the GCD is 1, `None` is returned.
+    pub(crate) fn common_frame_rate(&self) -> Option<Duration> {
+        let mut rates: Vec<u64> = Vec::new();
+        if self.mjpeg.enabled && self.mjpeg.frame_rate_limit.is_some() {
+            let rate = self.mjpeg.frame_rate_limit.unwrap();
+            let millis_delay = 1000f32 * (1f32 / rate);
+            rates.push(millis_delay as u64);
+        }
+        rates.into_iter().reduce(|a, b| a.gcd(&b)).and_then(|gcd| {
+            // If the GCD is 1, there's no point in reducing the frame rate
+            if gcd == 1 {
+                None
+            } else {
+                Some(Duration::from_millis(gcd))
+            }
+        })
+    }
 }
 
 impl From<StreamSettings> for net::SocketAddr {
@@ -65,6 +87,10 @@ pub(crate) struct MjpegSettings {
     /// Whether or not the MJPEG video stream should be enabled.
     #[serde(default = "MjpegSettings::default_enabled")]
     pub(crate) enabled: bool,
+
+    /// A frame rate limit to apply to just the MJPEG stream.
+    #[serde(default)]
+    pub(crate) frame_rate_limit: Option<f32>,
 }
 
 impl MjpegSettings {
@@ -77,6 +103,7 @@ impl Default for MjpegSettings {
     fn default() -> Self {
         Self {
             enabled: Self::default_enabled(),
+            frame_rate_limit: None,
         }
     }
 }
