@@ -103,3 +103,23 @@ float-cmp = "0.8.0"
 fontdb = "0.5.1"
 tempfile = "3"
 ttf-parser = "0.12.0"
+
+[package.metadata.deb]
+# Required because the systemd .service file uses the `i2c` group and
+# permissions that are set up by this package.
+depends = "$auto, systemd, i2c-tools"
+section = "misc"
+priority = "optional"
+maintainer-scripts = "package/maintscripts"
+conf-files = [
+    "etc/r-u-still-there/config.toml",
+]
+features = ["mjpeg", "mozjpeg", "render_fontdue"]
+separate-debug-symbols = true
+assets = [
+    ["target/release/r-u-still-there", "usr/bin/", "755"],
+    ["config_example.toml", "etc/r-u-still-there/config.toml", "644"],
+]
+
+[package.metadata.deb.systemd-units]
+unit-scripts = "package/unit-scripts"

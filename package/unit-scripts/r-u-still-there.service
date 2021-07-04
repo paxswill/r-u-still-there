@@ -1,0 +1,23 @@
+[Unit]
+Description=Occupancy detection with thermal cameras
+After=network.target
+# Require the i2c kernel module to be loaded before this service starts, so
+# DeviceAllow= can work properly.
+Wants=modprobe@i2c_dev.service
+After=modprobe@i2c_dev.service
+
+[Install]
+WantedBy=default.target
+
+[Service]
+ExecStart=/usr/bin/r-u-still-there
+Restart=on-failure
+# 5 is the error code for configuration errors. They won't just resolve on their
+# own, so don't bother restarting.
+RestartPreventExitStatus=5
+# Use a dynamic user ID, and add it to the 
+DynamicUser=yes
+SupplementaryGroups=i2c
+ConfigurationDirectory=r-u-still-there
+DeviceAllow=char-i2c rw
+DevicePolicy=closed

@@ -7,6 +7,7 @@ use tracing::{debug, debug_span, error, instrument, trace, Instrument};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Registry};
 
+use std::env;
 use std::path::PathBuf;
 
 mod camera;
@@ -45,7 +46,13 @@ fn find_config_file(figment: &Figment) -> anyhow::Result<Option<PathBuf>> {
             return Err(anyhow!("Non-existant config file given: {:?}", path));
         }
     }
-    let prefix = PathBuf::from("/etc/r-u-still-there");
+    // Check for $CONFIGURATION_DIRECTORY, which can be set by systemd. Otherwise use
+    // /etc/r-u-still-there
+    let prefix = env::var("CONFIGURATION_DIRECTORY")
+        .map_or(
+            PathBuf::from("/etc/r-u-still-there"),
+            PathBuf::from
+        );
     let file_names = ["config.toml", "config.yaml"];
     for name in file_names.iter() {
         let path = prefix.join(name);
