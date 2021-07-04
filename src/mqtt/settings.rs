@@ -62,19 +62,9 @@ pub(crate) struct MqttSettings {
     #[serde(default)]
     keep_alive: Option<u16>,
 
-    /// Enable Home Assistant integration.
-    ///
-    /// When enabled, entities will be automatically added to Home Assistant using MQTT discovery.
-    /// Do note that the MJPEG stream is *not* able to be automatically added in this way, you will
-    /// need to add it manually.
-    #[serde(default = "MqttSettings::default_home_assistant")]
-    pub(crate) home_assistant: bool,
-
-    /// The topic prefix used for Home Assistant MQTT discovery.
-    ///
-    /// Defaults to "homeassistant"
-    #[serde(default = "MqttSettings::default_home_assistant_topic")]
-    pub(crate) home_assistant_topic: String,
+    /// All the various Home Assistant settings.
+    #[serde(default)]
+    pub(crate) home_assistant: HomeAssistantSettings,
 }
 
 #[derive(Debug, Deserialize, PartialEq)]
@@ -131,16 +121,6 @@ impl FromStr for MqttUrl {
 }
 
 impl MqttSettings {
-    /// The default value for the home_assistant field.
-    fn default_home_assistant() -> bool {
-        false
-    }
-
-    /// The default Home Assistant MQTT discovery topic prefix.
-    fn default_home_assistant_topic() -> String {
-        "homeassistant".into()
-    }
-
     /// Access the server URL.
     pub(crate) fn server_url(&self) -> &Url {
         &self.server.0
@@ -203,7 +183,6 @@ impl fmt::Debug for MqttSettings {
             .field("server", &self.server)
             .field("keep_alive", &self.keep_alive)
             .field("home_assistant", &self.home_assistant)
-            .field("home_assistant_topic", &self.home_assistant_topic)
             .finish()
     }
 }
@@ -255,9 +234,47 @@ impl TryFrom<&MqttSettings> for rumqttc::MqttOptions {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub(crate) struct HomeAssistantSettings {
+    /// Enable Home Assistant integration.
+    ///
+    /// When enabled, entities will be automatically added to Home Assistant using MQTT discovery.
+    /// Do note that the MJPEG stream is *not* able to be automatically added in this way, you will
+    /// need to add it manually.
+    #[serde(default = "HomeAssistantSettings::default_enabled")]
+    pub(crate) enabled: bool,
+
+    /// The topic prefix used for Home Assistant MQTT discovery.
+    ///
+    /// Defaults to "homeassistant"
+    #[serde(default = "HomeAssistantSettings::default_topic")]
+    pub(crate) topic: String,
+}
+
+impl HomeAssistantSettings {
+    /// The default value for the home_assistant field.
+    fn default_enabled() -> bool {
+        false
+    }
+
+    /// The default Home Assistant MQTT discovery topic prefix.
+    fn default_topic() -> String {
+        "homeassistant".into()
+    }
+}
+
+impl Default for HomeAssistantSettings {
+    fn default() -> Self {
+        Self {
+            enabled: Self::default_enabled(),
+            topic: Self::default_topic(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use super::MqttSettings;
+    use super::{HomeAssistantSettings, MqttSettings};
 
     #[test]
     fn defaults() {
@@ -275,8 +292,7 @@ mod test {
             password: None,
             server: "mqtt://127.0.0.1".parse().unwrap(),
             keep_alive: None,
-            home_assistant: false,
-            home_assistant_topic: "homeassistant".into(),
+            home_assistant: HomeAssistantSettings::default(),
         };
         assert_eq!(parsed, expected);
     }

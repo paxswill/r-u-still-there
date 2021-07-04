@@ -119,14 +119,6 @@ server = "mqtt://mqtt.example.com"
 #password = "hunter2"
 #password = { file = "./mqtt-password" }
 
-# Enable Home Assistant MQTT discovery.
-#home_assistant = true
-
-# The discovery topic used for Home Assistant discovery.
-# The default for r-u-still-there matches the default for Home Assistant, so
-# most users do not need to set this.
-#home_assistant_topic = "homeassistant"
-
 # A unique ID used to identify this device to Home Assistant (when enabled).
 # This is normally automatically generated, and most users do not need to define
 # it.
@@ -136,3 +128,12 @@ server = "mqtt://mqtt.example.com"
 # When not given, a reasonable default is chosen. Explicitly setting it to 0
 # disables keepalive messages.
 #keep_alive = 60
+
+[mqtt.home_assistant]
+# Enable Home Assistant MQTT discovery.
+#enabled = true
+
+# The discovery topic used for Home Assistant discovery.
+# The default for r-u-still-there matches the default for Home Assistant, so
+# most users do not need to set this.
+#topic = "homeassistant"

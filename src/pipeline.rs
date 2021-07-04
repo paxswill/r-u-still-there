@@ -208,16 +208,16 @@ impl Pipeline {
             true,
             QoS::AtLeastOnce,
         );
-        if self.mqtt_config.home_assistant {
+        if self.mqtt_config.home_assistant.enabled {
             count
                 .publish_home_assistant_discovery(
-                    &self.mqtt_config.home_assistant_topic,
+                    &self.mqtt_config.home_assistant.topic,
                     self.status.topic(),
                 )
                 .await?;
             occupied
                 .publish_home_assistant_discovery(
-                    &self.mqtt_config.home_assistant_topic,
+                    &self.mqtt_config.home_assistant.topic,
                     self.status.topic(),
                 )
                 .await?;
@@ -262,11 +262,11 @@ impl Pipeline {
             true,
             QoS::AtLeastOnce,
         );
-        if self.mqtt_config.home_assistant {
+        if self.mqtt_config.home_assistant.enabled {
             let mut config = state.discovery_config(self.status.topic())?;
             config.set_device_class(hass::AnalogSensorClass::Temperature);
             config.set_unit_of_measurement(Some("C".to_string()));
-            let config_topic = state.discovery_topic(&self.mqtt_config.home_assistant_topic)?;
+            let config_topic = state.discovery_topic(&self.mqtt_config.home_assistant.topic)?;
             self.mqtt_client
                 .lock()
                 .await
