@@ -113,11 +113,12 @@ server = "mqtt://mqtt.example.com"
 
 # The password to connect to the MQTT broker. If you don't need a password,
 # don't define one.
-# You can specify the password euther as a string or as a path to a file that
-# contains the password. Leading and trailing whitespace (including newlines)
-# are trimmed from the contents of the file. Examples of both are given.
+# You can specify the password either as a string or as an absolute path to a
+# file that contains the password. Leading and trailing whitespace (including
+# newlines) are trimmed from the contents of the file. Examples of both are
+# given below.
 #password = "hunter2"
-#password = { file = "./mqtt-password" }
+#password = { file = "/path/to/mqtt-password" }
 
 # A unique ID used to identify this device to Home Assistant (when enabled).
 # This is normally automatically generated, and most users do not need to define
