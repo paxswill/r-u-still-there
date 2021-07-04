@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::borrow::Borrow;
 use std::cmp;
 use std::fmt;
 use std::hash::Hash;
@@ -8,18 +9,31 @@ use std::str::FromStr;
 use num_traits::Float;
 use serde::{Deserialize, Serialize};
 
+use crate::mqtt::{home_assistant as hass, DiscoveryValue};
+
 #[derive(Clone, Copy, Debug, Deserialize, Hash, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TemperatureUnit {
+    #[serde(alias = "C")]
+    #[serde(alias = "c")]
     Celsius,
+
+    #[serde(alias = "F")]
+    #[serde(alias = "f")]
     Fahrenheit,
+}
+
+impl Default for TemperatureUnit {
+    fn default() -> Self {
+        Self::Celsius
+    }
 }
 
 impl fmt::Display for TemperatureUnit {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.write_str(match self {
-            TemperatureUnit::Celsius => "C",
-            TemperatureUnit::Fahrenheit => "F",
+            TemperatureUnit::Celsius => "°C",
+            TemperatureUnit::Fahrenheit => "°F",
         })
     }
 }
@@ -73,14 +87,22 @@ where
         }
     }
 
+    /// Get this temperature as the unit specified.
+    pub fn in_unit(&self, unit: &TemperatureUnit) -> T {
+        self.as_unit(unit).value()
+    }
+
+    /// Transform this [Temperature] into Celsius.
     pub fn as_celsius(self) -> Self {
         Self::Celsius(self.in_celsius())
     }
 
+    /// Transform this [Temperature] into Fahrenheit.
     pub fn as_fahrenheit(self) -> Self {
         Self::Fahrenheit(self.in_fahrenheit())
     }
 
+    /// Transform this [Temperature] into the unit specified.
     pub fn as_unit(self, unit: &TemperatureUnit) -> Self {
         match unit {
             TemperatureUnit::Celsius => self.as_celsius(),
@@ -88,6 +110,7 @@ where
         }
     }
 
+    /// Get the unit this temperature is in.
     pub fn unit(&self) -> TemperatureUnit {
         match self {
             Temperature::Celsius(_) => TemperatureUnit::Celsius,
@@ -110,13 +133,22 @@ where
     }
 }
 
+impl<T> Default for Temperature<T>
+where
+    T: Float + Default,
+{
+    /// This is a meaningless default, and
+    fn default() -> Self {
+        Self::Celsius(T::default())
+    }
+}
+
 impl<T> cmp::PartialEq<Self> for Temperature<T>
 where
     T: Float,
 {
     fn eq(&self, other: &Self) -> bool {
-        // Always compare in celsius.
-        self.in_celsius().eq(&other.in_celsius())
+        self.unit() == other.unit() && self.value() == other.value()
     }
 }
 
@@ -144,7 +176,7 @@ where
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.value().fmt(fmt)?;
         if fmt.alternate() {
-            write!(fmt, "°{}", self.unit())?;
+            self.unit().fmt(fmt)?;
         }
         Ok(())
     }
@@ -156,6 +188,39 @@ where
 {
     fn from(value: T) -> Self {
         Self::Celsius(value)
+    }
+}
+
+impl<D, T> DiscoveryValue<D> for Temperature<T>
+where
+    T: Default + Float + Serialize + Send + Sync,
+    D: Borrow<hass::Device> + Default + PartialEq + Serialize,
+{
+    type Config = hass::AnalogSensor<D>;
+
+    fn retained() -> bool {
+        true
+    }
+
+    fn component_type() -> hass::Component {
+        hass::Component::Sensor
+    }
+
+    fn home_assistant_config(
+        device: D,
+        state_topic: String,
+        availability_topic: String,
+        name: String,
+        unique_id: String,
+    ) -> Self::Config {
+        let mut config = hass::AnalogSensor::new_with_state_topic_and_device(state_topic, device);
+        config.add_availability_topic(availability_topic);
+        config.set_name(name);
+        config.set_unique_id(Some(unique_id));
+        // Can't know for certain which scale is being used, so just put "degrees"
+        config.set_unit_of_measurement(Some("°".to_string()));
+        config.set_device_class(hass::AnalogSensorClass::Temperature);
+        config
     }
 }
 

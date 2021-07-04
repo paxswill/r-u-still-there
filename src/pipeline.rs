@@ -30,6 +30,7 @@ use crate::mqtt::{
 };
 use crate::occupancy::Tracker;
 use crate::settings::{Settings, TrackerSettings};
+use crate::temperature::Temperature;
 use crate::{render, spmc, stream};
 
 const MQTT_BASE_TOPIC: &str = "r-u-still-there";
@@ -247,12 +248,18 @@ impl Pipeline {
         }
         // Clone the camera so that the interval closure has an owned reference to it.
         let camera = self.camera.clone();
+        let unit = self.mqtt_config.home_assistant.unit;
         // Just sticking this on a 1Hz cycle, but I might change it later.
-        let temperature_stream =
-            IntervalStream::new(time::interval(Duration::from_secs(1))).map(move |_| {
+        let temperature_stream = IntervalStream::new(time::interval(Duration::from_secs(1)))
+            .map(move |_| {
                 camera
                     .get_temperature()
+                    .map(Temperature::Celsius)
                     .ok_or_else(|| anyhow!("Unable to retrieve camera ambient temperature"))
+            })
+            // Yeah, double map, but keeping these operations somewhat separate for now.
+            .map(move |temperature| {
+                temperature.and_then(|temperature| Ok(temperature.in_unit(&unit)))
             });
         let state = State::<f32, _>::new_discoverable(
             Arc::clone(&self.mqtt_client),
@@ -265,7 +272,7 @@ impl Pipeline {
         if self.mqtt_config.home_assistant.enabled {
             let mut config = state.discovery_config(self.status.topic())?;
             config.set_device_class(hass::AnalogSensorClass::Temperature);
-            config.set_unit_of_measurement(Some("C".to_string()));
+            config.set_unit_of_measurement(Some(self.mqtt_config.home_assistant.unit.to_string()));
             let config_topic = state.discovery_topic(&self.mqtt_config.home_assistant.topic)?;
             self.mqtt_client
                 .lock()

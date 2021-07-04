@@ -137,3 +137,7 @@ server = "mqtt://mqtt.example.com"
 # The default for r-u-still-there matches the default for Home Assistant, so
 # most users do not need to set this.
 #topic = "homeassistant"
+
+# The units to use for temperatures sent to Home Assistant. Valid choices are
+# "celsius" and "fahrenheit"
+#unit = "celsius"

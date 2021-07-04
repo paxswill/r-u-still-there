@@ -12,6 +12,8 @@ use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::str::FromStr;
 
+use crate::temperature::TemperatureUnit;
+
 use super::external_value::ExternalValue;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -249,6 +251,10 @@ pub(crate) struct HomeAssistantSettings {
     /// Defaults to "homeassistant"
     #[serde(default = "HomeAssistantSettings::default_topic")]
     pub(crate) topic: String,
+
+    /// The units to use for temperatures sent to Home Assistant.
+    #[serde(default)]
+    pub(crate) unit: TemperatureUnit,
 }
 
 impl HomeAssistantSettings {
@@ -268,6 +274,7 @@ impl Default for HomeAssistantSettings {
         Self {
             enabled: Self::default_enabled(),
             topic: Self::default_topic(),
+            unit: TemperatureUnit::default(),
         }
     }
 }

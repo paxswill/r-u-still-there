@@ -8,5 +8,5 @@ mod state_values;
 
 pub(crate) use serialize::serialize;
 pub(crate) use settings::MqttSettings;
-pub(crate) use state::State;
+pub(crate) use state::{DiscoveryValue, State};
 pub(crate) use state_values::{Occupancy, OccupancyCount, Status};
