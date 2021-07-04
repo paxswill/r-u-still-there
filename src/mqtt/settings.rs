@@ -179,9 +179,8 @@ impl fmt::Debug for MqttSettings {
             .field("name", &self.name)
             .field("unique_id", &self.unique_id)
             .field("username", &self.username)
-            // <Cthon98> lol, yes. See, when YOU type hunter2, it shows to us as *******
-            // Censor the password (if any) to keep it out of the logs.
-            .field("password", &self.password.as_ref().map(|_| "*******"))
+            // ExternalValue censors its Debug and Display implementations
+            .field("password", &self.password)
             .field("server", &self.server)
             .field("keep_alive", &self.keep_alive)
             .field("home_assistant", &self.home_assistant)

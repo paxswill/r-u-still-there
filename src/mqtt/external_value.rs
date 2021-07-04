@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::convert::TryFrom;
+use std::fmt;
+use std::path::PathBuf;
+
 use serde::Deserialize;
 use tracing::debug;
-
-use std::convert::TryFrom;
-use std::path::PathBuf;
 /// A type that can either be deserialized either from a string or a path to a file.
 ///
 /// If just a plain string is present, that value is used. If a map with a key 'file' with a string
 /// value is provided, the inner string value is taken as a path to a file, the contents of which
 /// will be read and used ad the final value.
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Deserialize, PartialEq)]
 #[serde(try_from = "InnerExternalValue")]
 pub struct ExternalValue(pub String);
 
@@ -21,9 +22,20 @@ enum InnerExternalValue {
     String(String),
 }
 
-impl From<ExternalValue> for String {
-    fn from(value: ExternalValue) -> Self {
-        value.0
+impl fmt::Debug for ExternalValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("ExternalValue")
+            // <Cthon98> lol, yes. See, when YOU type hunter2, it shows to us as *******
+            // Censor the password (if any) to keep it out of the logs.
+            .field(&"*******")
+            .finish()
+    }
+}
+
+impl fmt::Display for ExternalValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Again, hunter2
+        f.write_str("*******")
     }
 }
 
