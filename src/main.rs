@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use figment::providers::{Env, Format, Toml, Yaml};
 use figment::Figment;
 use structopt::StructOpt;
-use tracing::{debug, debug_span, error, instrument, Instrument};
+use tracing::{debug, debug_span, error, instrument, trace, Instrument};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Registry};
 
@@ -84,11 +84,35 @@ fn create_config() -> anyhow::Result<Settings> {
     complete_figment = complete_figment
         .merge(Env::prefixed("RUSTILLTHERE_"))
         .merge(&args);
-    Ok(complete_figment.extract()?)
+    complete_figment
+        .extract()
+        .context("Extracting and combining configuration")
 }
 
-#[tokio::main]
-async fn main() {
+// Just picking values for these.
+#[repr(i32)]
+enum ExitCode {
+    /// Successful exit code.
+    Success = 0,
+
+    /// Exit code for errors not covered by other codes.
+    Other = 1,
+
+    /// Exit code for errors originating with the configuration.
+    Config = 5,
+
+    /// Exit code for errors originating from the setup process, before the application has
+    /// completely started.
+    Setup = 10,
+}
+
+impl Default for ExitCode {
+    fn default() -> Self {
+        Self::Success
+    }
+}
+
+async fn inner_main() -> ExitCode {
     // Create an initial logging config, then update it if needed after the full configuration has
     // been merged.
     // NOTE: This will need updating for tracing-subscriber v0.3.0
@@ -100,13 +124,45 @@ async fn main() {
     let span = debug_span!("setup");
     let config = {
         let _enter = span.enter();
-        let config = create_config().expect("Problem generating configuration");
-        debug!(?config, "final config");
-        config
+        match create_config() {
+            Err(err) => {
+                trace!("Full error chain: {:#?}", err);
+                // Walk the error chain, looking for figment errors
+                for cause in err.chain() {
+                    if let Some(figment_error) = cause.downcast_ref::<figment::Error>() {
+                        for inner_error in figment_error.clone() {
+                            error!("Configuration error: {}", inner_error);
+                        }
+                        return ExitCode::Config;
+                    }
+                }
+                // Not a figment error if we reach here.
+                error!("Error combining configuration: {:?}", err);
+                return ExitCode::Setup;
+            }
+            Ok(config) => {
+                debug!(?config, "final config");
+                config
+            }
+        }
     };
-    let app = Pipeline::new(config).instrument(span).await;
-    match app {
-        Ok(app) => app.await,
-        Err(e) => error!("{:?}", e),
+    let app = match Pipeline::new(config).instrument(span).await {
+        Err(err) => {
+            error!("Setup error: {:?}", err);
+            return ExitCode::Setup;
+        }
+        Ok(app) => app,
+    };
+    if let Err(err) = app.await {
+        error!("{:?}", err);
+        ExitCode::Other
+    } else {
+        ExitCode::Success
     }
+}
+
+#[tokio::main]
+async fn main() {
+    let exit_code = inner_main().await;
+    std::process::exit(exit_code as i32);
 }

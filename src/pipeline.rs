@@ -281,17 +281,18 @@ impl Pipeline {
 }
 
 impl Future for Pipeline {
-    type Output = ();
+    type Output = anyhow::Result<()>;
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         loop {
             match self.as_mut().project().tasks.poll_next(cx) {
                 Poll::Pending => return Poll::Pending,
                 Poll::Ready(option) => match option {
-                    None => return Poll::Ready(()),
+                    None => return Poll::Ready(Ok(())),
                     Some(res) => {
                         if let Err(err) = res {
                             error!(error = ?err, "error in task");
+                            return Poll::Ready(Err(err));
                         }
                     }
                 },
