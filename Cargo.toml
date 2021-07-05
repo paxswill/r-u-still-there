@@ -12,6 +12,7 @@ base64 = "0.13"
 bytes = "1.0.1"
 colorous = "1.0.5"
 delegate = "0.5"
+embedded-hal = "=1.0.0-alpha.4"
 fontdue = { version = "0.5.2", optional = true }
 futures = "0.3.13"
 hex = { version = "0.4", features = ["serde"] }

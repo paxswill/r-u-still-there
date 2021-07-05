@@ -30,7 +30,6 @@ use crate::mqtt::{
 };
 use crate::occupancy::Tracker;
 use crate::settings::{Settings, TrackerSettings};
-use crate::temperature::Temperature;
 use crate::{render, spmc, stream};
 
 const MQTT_BASE_TOPIC: &str = "r-u-still-there";
@@ -242,10 +241,6 @@ impl Pipeline {
     }
 
     async fn create_thermometer(&mut self) -> anyhow::Result<()> {
-        // Only add a thermometer if the camera can return them
-        if self.camera.get_temperature().is_none() {
-            return Ok(());
-        }
         // Clone the camera so that the interval closure has an owned reference to it.
         let camera = self.camera.clone();
         let unit = self.mqtt_config.home_assistant.unit;
@@ -254,8 +249,7 @@ impl Pipeline {
             .map(move |_| {
                 camera
                     .get_temperature()
-                    .map(Temperature::Celsius)
-                    .ok_or_else(|| anyhow!("Unable to retrieve camera ambient temperature"))
+                    .context("Unable to retrieve camera ambient temperature")
             })
             // Yeah, double map, but keeping these operations somewhat separate for now.
             .map(move |temperature| {

@@ -27,6 +27,14 @@ pub(crate) enum CameraSettings {
     },
 }
 
+impl CameraSettings {
+    pub(crate) fn common_settings(&self) -> &CommonSettings {
+        match self {
+            CameraSettings::GridEye { options, .. } => options,
+        }
+    }
+}
+
 // Manually implementing Derserialize as there isn't a way to derive a flattened enum
 // implementation.
 impl<'de> Deserialize<'de> for CameraSettings {
