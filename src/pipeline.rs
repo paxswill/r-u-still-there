@@ -274,6 +274,8 @@ impl Pipeline {
             config.set_device_class(hass::AnalogSensorClass::Temperature);
             config.set_unit_of_measurement(Some(self.mqtt_config.home_assistant.unit.to_string()));
             let config_topic = state.discovery_topic(&self.mqtt_config.home_assistant.topic)?;
+            // Keep this message the same as the debug message in mqtt::state::State::publish_home_assistant_discovery
+            debug!(?config, "Publishing Home Assistant discovery config");
             self.mqtt_client
                 .lock()
                 .await

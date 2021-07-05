@@ -89,6 +89,7 @@ where
 impl<T, D> State<T, D>
 where
     T: DiscoveryValue<D> + fmt::Debug + PartialEq,
+    <T as DiscoveryValue<D>>::Config: fmt::Debug,
     D: Borrow<hass::Device> + Clone + Default + PartialEq,
     D: Send + Sync,
 {
@@ -244,6 +245,7 @@ where {
             State::Discoverable { inner, .. } => {
                 let config_topic = self.discovery_topic(home_assistant_prefix)?;
                 let config = self.discovery_config(availability_topic)?;
+                debug!(?config, "Publishing Home Assistant discovery config");
                 let payload = serialize(&config)?;
                 inner
                     .client
