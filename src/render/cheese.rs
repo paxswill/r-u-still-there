@@ -13,7 +13,7 @@ use fontdue::{Font, FontSettings};
 use image::imageops::overlay;
 use image::{GenericImage, GrayImage, ImageBuffer, Pixel, Rgb, RgbaImage};
 use lru::LruCache;
-use tracing::info;
+use tracing::trace;
 
 use super::font;
 use crate::image_buffer::{BytesImage, ThermalImage};
@@ -114,7 +114,7 @@ impl font::FontRenderer for FontdueRenderer {
                     let mut cache = self.cache.lock().unwrap();
                     let mut cached_cell = cache.get(&(temperature, grid_size));
                     if cached_cell.is_none() {
-                        info!(?temperature, "cache miss");
+                        trace!(?temperature, "cache miss");
                         let text_color = color::Color::from(color_pixel).foreground_color();
                         let mask = self.render_cell(temperature, text_color, grid_size);
                         cache.put((temperature, grid_size), mask);
