@@ -107,6 +107,8 @@ ttf-parser = "0.12.0"
 [package.metadata.deb]
 # Required because the systemd .service file uses the `i2c` group and
 # permissions that are set up by this package.
+# TODO: At some point in the future, investigate if/how udev rules can be used
+# to give a dynamic user permissions for an i2c device.
 depends = "$auto, systemd, i2c-tools"
 section = "misc"
 priority = "optional"

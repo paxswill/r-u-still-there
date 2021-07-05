@@ -97,7 +97,7 @@ address = 0x69
 # character long.
 name = "RPi 4B Development"
 
-# A URL for the MQTT broker. If connecting iver TLS, use `mqtts` as the scheme,
+# A URL for the MQTT broker. If connecting over TLS, use `mqtts` as the scheme,
 # otherwise use `mqtt`. The default port for plain MQTT is 1833, and the default
 # for MQTT over TLS is 8883.
 # NOTE: Connecting over TLS via an IP address isn't supported yet.
