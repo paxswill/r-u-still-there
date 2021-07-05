@@ -5,7 +5,6 @@ use std::error::Error as StdError;
 use anyhow::Context as _;
 use embedded_hal::blocking::i2c;
 use image::flat::{FlatSamples, SampleLayout};
-use thermal_camera::grideye as amg88;
 use tracing::debug;
 
 use crate::image_buffer;

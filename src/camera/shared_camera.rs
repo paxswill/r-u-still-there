@@ -4,7 +4,6 @@ use futures::stream::{StreamExt, TryStream};
 use image::imageops;
 use linux_embedded_hal::I2cdev;
 use serde_repr::Deserialize_repr;
-use thermal_camera::grideye;
 use tokio::time::{self, Duration};
 use tokio_stream::wrappers::IntervalStream;
 use tracing::info_span;
@@ -109,7 +108,7 @@ impl TryFrom<&CameraSettings> for Camera {
         let bus = I2cdev::try_from(i2c_settings).context("Unable to create I2C bus")?;
         let camera: Arc<Mutex<dyn ThermalCamera + Send>> = Arc::new(Mutex::new(match settings {
             CameraSettings::GridEye { i2c, .. } => {
-                let cam = grideye::GridEye::new(
+                let cam = amg88::GridEye::new(
                     bus,
                     i2c.address
                         .try_into()
