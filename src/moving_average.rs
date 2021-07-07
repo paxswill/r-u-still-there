@@ -1,179 +1,282 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use image::{ImageBuffer, Luma, Primitive};
-
 use std::collections::VecDeque;
 use std::convert;
-use std::ops;
+use std::ops::{self, DerefMut};
 use std::sync::{Arc, RwLock};
 use std::vec::Vec;
 
-// For now, everything in here deals with Luma pixels only. Eventually it might be nice to
-// generalize them to also cover multi-channel pixels.
+use bytes::{Bytes, BytesMut};
+use image::{ImageBuffer, Pixel, Primitive};
 
-pub trait MovingAverage<T: 'static + Primitive, const N: usize> {
-    fn update<C>(&mut self, image: &ImageBuffer<Luma<T>, C>) -> ImageBuffer<Luma<T>, Vec<T>>
-    where
-        C: ops::Deref<Target = [T]>,
-    {
-        self.push(image);
-        self.to_buffer()
+/// A trait for types that can be averaged together.
+pub trait Average<Div, Result = Self> {
+    fn add(&self, rhs: &Self) -> Result;
+    fn sub(&self, rhs: &Self) -> Result;
+    fn mul(&self, rhs: &Self) -> Result;
+    fn div(&self, rhs: &Div) -> Result;
+}
+
+/// A trait for types that can be averaged together in-place.
+pub trait AverageMut<Div, Result = Self>: Average<Div, Result> {
+    fn add_assign(&mut self, rhs: &Self);
+    fn sub_assign(&mut self, rhs: &Self);
+}
+
+macro_rules! average_primitive {
+    ($primitive:tt) => {
+        impl<Div> Average<Div> for $primitive
+        where
+            Div: convert::Into<$primitive> + Copy,
+        {
+            fn add(&self, rhs: &Self) -> Self {
+                self + rhs
+            }
+            fn sub(&self, rhs: &Self) -> Self {
+                self - rhs
+            }
+            fn mul(&self, rhs: &Self) -> Self {
+                self * rhs
+            }
+            fn div(&self, rhs: &Div) -> Self {
+                let divisor: $primitive = Into::<$primitive>::into(*rhs);
+                self / divisor
+            }
+        }
+        impl<Div> AverageMut<Div> for $primitive
+        where
+            Div: convert::Into<$primitive> + Copy,
+        {
+            fn add_assign(&mut self, rhs: &Self) {
+                *self += rhs;
+            }
+
+            fn sub_assign(&mut self, rhs: &Self) {
+                *self -= rhs;
+            }
+        }
+    };
+}
+
+average_primitive!(f32);
+average_primitive!(f64);
+average_primitive!(u8);
+average_primitive!(u16);
+average_primitive!(u32);
+
+// It'd be nice if I could make this generic over types that implemented Deref<Target=[T]>, but
+// Rust says no (at least until sealed traits (or maybe negative constraints) are a thing?).
+
+/// Implement [Average] for container types.
+///
+/// if implementing for a generic type, the word 'generic' is added in first, and the type
+/// parameter must be `T`. If not generic, the inner type is given after the implementing type.
+/// If implementing on a type where it's returning another type (ex: for slices, returning a Vec),
+/// add that the last argument.
+///
+/// Examples:
+/// ```
+/// average_container!(generic Vec<T>);
+/// average_container!(generic [T], Vec[T]);
+/// average_container!(Bytes, u8);
+/// ```
+macro_rules! average_container {
+    ($typ:ty, $inner_typ:ty, $return_typ:ty) => {
+        impl<Div> Average<Div, $return_typ> for $typ
+        where
+            Div: convert::Into<$inner_typ> + Copy
+        {
+            fn add(&self, other: &Self) -> $return_typ {
+                assert!(self.len() == other.len(), "The two collections must be the same length to average");
+                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs + *rhs).collect()
+            }
+            fn sub(&self, other: &Self) -> $return_typ {
+                assert!(self.len() == other.len(), "The two collections must be the same length to average");
+                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
+            }
+            fn mul(&self, other: &Self) -> Self {
+                assert!(self.len() == other.len(), "The two collections must be the same length to average");
+                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs * *rhs).collect()
+            }
+            fn div(&self, rhs: &Div) -> $return_typ {
+                let divisor: $inner_typ = Into::<$inner_typ>::into(*rhs);
+                self.iter().map(|lhs| *lhs / divisor).collect()
+            }
+        }
+    };
+    ($typ:ty, $inner_typ:ty) => {
+        average_container!($typ, $inner_typ, Self);
+    };
+    (generic $typ:ty, $return_typ:ty) => {
+        impl<T, Div> Average<Div, $return_typ> for $typ
+        where
+            T: Primitive + ops::AddAssign + ops::SubAssign,
+            Div: convert::Into<T> + Copy
+        {
+            fn add(&self, other: &Self) -> $return_typ {
+                assert!(self.len() == other.len(), "The two collections must be the same length to average");
+                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs + *rhs).collect()
+            }
+            fn sub(&self, other: &Self) -> $return_typ {
+                assert!(self.len() == other.len(), "The two collections must be the same length to average");
+                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
+            }
+            fn mul(&self, other: &Self) -> $return_typ {
+                assert!(self.len() == other.len(), "The two collections must be the same length to average");
+                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs * *rhs).collect()
+            }
+            fn div(&self, rhs: &Div) -> $return_typ {
+                let divisor: T = Into::<T>::into(*rhs);
+                self.iter().map(|lhs| *lhs / divisor).collect()
+            }
+        }
+    };
+    (generic $typ:ty) => {
+        average_container!(generic $typ, Self);
+    };
+}
+
+/// Like [average_container], but for [AverageMut]. Arguments are handled exactly the same way.
+macro_rules! average_mut_container {
+    ($typ:ty, $inner_typ:ty, $return_typ:ty) => {
+        impl<Div> AverageMut<Div, $return_typ> for $typ
+        where
+            Div: convert::Into<$inner_typ> + Copy
+        {
+            fn add_assign(&mut self, other: &Self) {
+                assert!(self.len() == other.len(), "The two collections must be the same length to average");
+                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs += *rhs)
+            }
+
+            fn sub_assign(&mut self, other: &Self) {
+                assert!(self.len() == other.len(), "The two collections must be the same length to average");
+                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs -= *rhs)
+            }
+        }
+    };
+    ($typ:ty, $inner_typ:ty) => {
+        average_mut_container!($typ, $inner_typ, Self);
+    };
+    (generic $typ:ty, $return_typ:ty) => {
+        impl<T, Div> AverageMut<Div, $return_typ> for $typ
+        where
+            T: Primitive + ops::AddAssign + ops::SubAssign,
+            Div: convert::Into<T> + Copy
+        {
+            fn add_assign(&mut self, other: &Self) {
+                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs += *rhs)
+            }
+
+            fn sub_assign(&mut self, other: &Self) {
+                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs -= *rhs)
+            }
+        }
+    };
+    (generic $typ:ty) => {
+        average_mut_container!(generic $typ, Self);
+    };
+}
+
+average_container!(generic Vec<T>);
+average_mut_container!(generic Vec<T>);
+average_container!(generic[T], Vec<T>);
+average_mut_container!(generic[T], Vec<T>);
+average_container!(Bytes, u8);
+average_container!(BytesMut, u8);
+average_mut_container!(BytesMut, u8);
+
+impl<Div, Px, Co> Average<Div> for ImageBuffer<Px, Co>
+where
+    Px: Pixel + 'static,
+    <Px as Pixel>::Subpixel: 'static,
+    Co: ops::Deref<Target = [Px::Subpixel]> + Average<Div>,
+{
+    fn add(&self, rhs: &Self) -> Self {
+        let new_raw = self.as_raw().add(rhs.as_raw());
+        ImageBuffer::from_raw(self.width(), self.height(), new_raw)
+            .expect("An identically sized Vec to work as an image")
     }
 
-    fn push<C>(&mut self, image: &ImageBuffer<Luma<T>, C>)
-    where
-        C: ops::Deref<Target = [T]>;
+    fn sub(&self, rhs: &Self) -> Self {
+        let new_raw = self.as_raw().sub(rhs.as_raw());
+        ImageBuffer::from_raw(self.width(), self.height(), new_raw)
+            .expect("An identically sized Vec to work as an image")
+    }
 
-    fn to_buffer(&self) -> ImageBuffer<Luma<T>, Vec<T>>;
+    fn mul(&self, rhs: &Self) -> Self {
+        let new_raw = self.as_raw().sub(rhs.as_raw());
+        ImageBuffer::from_raw(self.width(), self.height(), new_raw)
+            .expect("An identically sized Vec to work as an image")
+    }
+
+    fn div(&self, rhs: &Div) -> Self {
+        let new_raw = self.as_raw().div(rhs);
+        ImageBuffer::from_raw(self.width(), self.height(), new_raw)
+            .expect("An identically sized Vec to work as an image")
+    }
 }
 
+pub trait MovingAverage<T, const N: usize> {
+    /// Add a new sample and return the new moving average afterwards.
+    fn update(&mut self, new_value: T) -> T {
+        self.push(new_value);
+        self.current_value()
+            .expect("There to be a value as we just pushed one")
+    }
+
+    /// Add a new sample for the moving average.
+    fn push(&mut self, new_value: T);
+
+    /// Get the current moving average. If there have been no samples yet, it returns [None]
+    fn current_value(&self) -> Option<T>;
+}
+
+/// A moving average where all samples are weighted identically.
 #[derive(Clone, Debug)]
 pub struct BoxcarFilter<T, const N: usize> {
-    width: u32,
-    height: u32,
-    frames: Arc<RwLock<VecDeque<Vec<T>>>>,
+    frames: Arc<RwLock<VecDeque<T>>>,
     // Possibly a premature optimization
-    sums: Arc<RwLock<Vec<T>>>,
+    sums: Arc<RwLock<Option<T>>>,
 }
 
-impl<T, const N: usize> BoxcarFilter<T, N>
-where
-    T: 'static + Primitive + Default,
-    T: ops::AddAssign<T> + ops::SubAssign<T>,
-    T: ops::DivAssign + convert::From<u16>,
-{
-    pub fn new(width: u32, height: u32) -> Self {
-        let num_pixels = (width * height) as usize;
+impl<T, const N: usize> BoxcarFilter<T, N> {
+    pub fn new() -> Self {
         Self {
-            width,
-            height,
             frames: Arc::new(RwLock::new(VecDeque::with_capacity(N))),
-            sums: Arc::new(RwLock::new(vec![T::default(); num_pixels])),
+            sums: Arc::new(RwLock::new(None)),
         }
     }
 }
 
 impl<T, const N: usize> MovingAverage<T, N> for BoxcarFilter<T, N>
 where
-    T: 'static + Primitive + Default,
-    T: ops::AddAssign<T> + ops::SubAssign<T>,
-    // TODO: use a better constraint. What I'm actually trying to express is that `T: ops::Div<D>`
-    // and `D: convert::From<u32>`, in other words that I can divide T by something convertable
-    // from D.
-    //T: ops::Div<D>,
-    //D: convert::From<u32>
-    T: ops::DivAssign + convert::From<u16>,
+    T: AverageMut<u16> + Clone,
 {
-    fn push<C>(&mut self, image: &ImageBuffer<Luma<T>, C>)
-    where
-        C: ops::Deref<Target = [T]>,
-    {
+    fn push(&mut self, new_value: T) {
         // Hold write locks for this entire method
         let mut frames = self.frames.write().unwrap();
         let mut sums = self.sums.write().unwrap();
         // Always check to see if we need to pop first to keep the queue from getting too big
         if frames.len() >= N {
             if let Some(old_frame) = frames.pop_front() {
-                for (old_pixel, sum_pixel) in old_frame.iter().zip(sums.iter_mut()) {
-                    *sum_pixel -= *old_pixel;
+                if let Some(sums) = sums.deref_mut() {
+                    sums.sub_assign(&old_frame);
                 }
             }
         }
-        let new_frame = image.to_vec();
-        for (new_pixel, sum_pixel) in new_frame.iter().zip(sums.iter_mut()) {
-            *sum_pixel += *new_pixel;
-        }
-        frames.push_back(new_frame);
-    }
-
-    fn to_buffer(&self) -> ImageBuffer<Luma<T>, Vec<T>> {
-        // Always frames, then sums. Drop the locks as soon as the relevant data is cloned.
-        let (mut averaged_frame, num_frames) = {
-            let frames = self.frames.read().unwrap();
-            let sums = self.sums.read().unwrap();
-            let averaged_frame = sums.clone();
-            (averaged_frame, frames.len())
-        };
-        let divisor = From::from(num_frames as u16);
-        averaged_frame
-            .iter_mut()
-            .for_each(|pixel| *pixel /= divisor);
-        ImageBuffer::from_vec(self.width, self.height, averaged_frame).unwrap()
-    }
-}
-
-#[derive(Debug)]
-pub struct WeightedAverage<const N: usize> {
-    width: u32,
-    height: u32,
-    weights: [f32; N],
-    frames: Arc<RwLock<VecDeque<Vec<f32>>>>,
-}
-
-impl<const N: usize> WeightedAverage<N> {
-    pub fn with_weights(width: u32, height: u32, weights: [f32; N]) -> Self {
-        Self {
-            width,
-            height,
-            weights,
-            frames: Arc::new(RwLock::new(VecDeque::with_capacity(N))),
-        }
-    }
-
-    pub fn from_fn(width: u32, height: u32, weight_func: &dyn Fn() -> [f32; N]) -> Self {
-        let raw_weights = weight_func();
-        let sum: f32 = raw_weights.iter().sum();
-        let mut scaled_weights = raw_weights;
-        scaled_weights.iter_mut().for_each(|w| *w /= sum);
-        println!("Scaled weights: {:?}", scaled_weights);
-        Self::with_weights(width, height, scaled_weights)
-    }
-}
-
-impl<const N: usize> MovingAverage<f32, N> for WeightedAverage<N> {
-    fn push<C>(&mut self, image: &ImageBuffer<Luma<f32>, C>)
-    where
-        C: ops::Deref<Target = [f32]>,
-    {
-        // Hold a write lock for this entire method
-        let mut frames = self.frames.write().unwrap();
-        // Always check to see if we need to pop first to keep the queue from getting too big
-        if frames.len() >= N {
-            frames.pop_front();
-        }
-        frames.push_back(image.to_vec());
-    }
-
-    fn to_buffer(&self) -> ImageBuffer<Luma<f32>, Vec<f32>> {
-        let num_pixels = (self.width * self.height) as usize;
-        let mut averaged_frame = vec![f32::default(); num_pixels];
-        self.frames
-            .read()
-            .unwrap()
-            .iter()
-            .zip(self.weights.iter().copied())
-            .map(|(frame, weight)| frame.iter().map::<f32, _>(move |pixel| pixel * weight))
-            .fold(&mut averaged_frame, |sum_frame, component_frame| {
-                for (sum_pixel, component_pixel) in sum_frame.iter_mut().zip(component_frame) {
-                    *sum_pixel += component_pixel;
-                }
-                sum_frame
-            });
-        ImageBuffer::from_vec(self.width, self.height, averaged_frame).unwrap()
-    }
-}
-
-pub fn polynomial_weights<const WINDOW: usize>(power: f32) -> Box<dyn Fn() -> [f32; WINDOW]> {
-    Box::new(move || {
-        let mut weights = [f32::default(); WINDOW];
-        weights.iter_mut().enumerate().for_each(|(x, dest)| {
-            let x = x as f32;
-            let window_length = WINDOW as f32;
-            let mut weight = -((x / window_length).powf(power)) + 1.0;
-            if weight.is_nan() {
-                weight = 1f32;
+        match sums.deref_mut() {
+            Some(sums) => sums.add_assign(&new_value),
+            None => {
+                sums.replace(new_value.clone());
             }
-            *dest = weight;
-        });
-        weights
-    })
+        }
+        frames.push_back(new_value);
+    }
+
+    fn current_value(&self) -> Option<T> {
+        // Always frames, then sums.
+        let frames = self.frames.read().unwrap();
+        let sums = self.sums.read().unwrap();
+        let num_frames = frames.len() as u16;
+        sums.as_ref().map(|sums| sums.clone().div(&num_frames))
+    }
 }
