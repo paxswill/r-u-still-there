@@ -1,0 +1,20 @@
+[target.arm-unknown-linux-gnueabihf]
+passthrough = [
+    "TARGET_CFLAGS"
+]
+
+[target.arm-unknown-linux-musleabihf]
+passthrough = [
+    "TARGET_CFLAGS"
+]
+
+[target.armv7-unknown-linux-gnueabihf]
+passthrough = [
+    "TARGET_CFLAGS"
+]
+
+[target.armv7-unknown-linux-musleabihf]
+passthrough = [
+    "TARGET_CFLAGS"
+]
+
