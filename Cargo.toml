@@ -123,3 +123,15 @@ assets = [
 
 [package.metadata.deb.systemd-units]
 unit-scripts = "package/unit-scripts"
+
+[package.metadata.deb.variants.v6]
+name = "r-u-still-there-v6"
+provides = "r-u-still-there"
+
+[package.metadata.deb.variants.v7]
+name = "r-u-still-there-v7"
+provides = "r-u-still-there"
+
+[profile.dev]
+# Unoptimized is so slow as to be unusable
+opt-level = 3
