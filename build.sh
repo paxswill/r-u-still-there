@@ -1,7 +1,7 @@
 #!/bin/sh
 
 set -e
-
+set -x
 
 armv6 () {
 	echo "Building and packaging ARMv6 (hard float)"
