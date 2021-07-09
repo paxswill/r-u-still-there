@@ -86,6 +86,7 @@ impl PartialEq for CameraSettings {
 mod de_tests {
     // Missing pytest's parameterized tests here.
     use std::num::NonZeroU8;
+    use std::path::PathBuf;
 
     use crate::camera::{Bus, I2cSettings};
 
@@ -117,7 +118,7 @@ mod de_tests {
         let bus: Result<Bus, _> = "/dev/i2c-0".parse();
         assert!(bus.is_ok());
         let bus = bus.unwrap();
-        assert_eq!(bus, Bus::Path("/dev/i2c-0".to_string()))
+        assert_eq!(bus, Bus::Path(PathBuf::from("/dev/i2c-0")));
     }
 
     #[test]
@@ -249,33 +250,6 @@ mod de_tests {
         let expected = CameraSettings {
             kind: CameraKind::GridEye(I2cSettings {
                 bus: Bus::Number(1),
-                address: 30,
-            }),
-            rotation: Rotation::OneEighty,
-            flip_horizontal: true,
-            flip_vertical: true,
-            frame_rate: Some(NonZeroU8::new(7).unwrap()),
-        };
-        assert_eq!(parsed, expected);
-    }
-
-    #[test]
-    fn grideye_full_bus_str() {
-        let source = r#"
-        kind = "grideye"
-        bus = "1"
-        address = 30
-        rotation = 180
-        flip_horizontal = true
-        flip_vertical = true
-        frame_rate = 7
-        "#;
-        let parsed = toml::from_str(source);
-        assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
-        let parsed: CameraSettings = parsed.unwrap();
-        let expected = CameraSettings {
-            kind: CameraKind::GridEye(I2cSettings {
-                bus: Bus::Path("1".to_string()),
                 address: 30,
             }),
             rotation: Rotation::OneEighty,

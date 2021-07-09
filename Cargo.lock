@@ -1797,7 +1797,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_repr",
- "serde_yaml",
  "sha2",
  "structopt",
  "svg",
