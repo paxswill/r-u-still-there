@@ -330,10 +330,13 @@ mod test {
         assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
         let parsed: MqttSettings = parsed.unwrap();
         let unique_id = parsed.unique_id();
+        let decoded_uid = base64::decode_config(unique_id, base64::URL_SAFE_NO_PAD)
+            .expect("The UID to be decodable as base64");
         assert!(
-            unique_id.len() == 64,
-            "Unique ID ({}) is not 64 hex digits long (is /etc/machine-id not available?)",
-            unique_id
+            decoded_uid.len() * 8 == 128,
+            "Unique ID ({}) is not 128 bits (it's {}) (is /etc/machine-id not available?)",
+            hex::encode(&decoded_uid),
+            decoded_uid.len() * 8,
         );
     }
 }
