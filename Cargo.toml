@@ -120,6 +120,7 @@ assets = [
     ["target/release/r-u-still-there", "usr/bin/", "755"],
     ["config_example.toml", "etc/r-u-still-there/config.toml", "644"],
 ]
+changelog = "debian/changelog"
 revision = "1"
 
 [package.metadata.deb.systemd-units]

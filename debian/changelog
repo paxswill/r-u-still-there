@@ -1,0 +1,12 @@
+r-u-still-there (0.1.0-1) UNRELEASED; urgency=medium
+
+  * Fix packaging for r-u-still-there.service file for 32-bit sub-architecture
+    variants.
+
+ -- Will Ross <paxswill@paxswill.com>  Fri, 09 Jul 2021 14:04:09 +0000
+
+r-u-still-there (0.1.0) buster; urgency=medium
+
+  * Initial release.
+
+ -- Will Ross <paxswill@paxswill.com>  Fri, 09 Jul 2021 14:03:00 +0000
