@@ -195,8 +195,7 @@ impl<'de> Deserialize<'de> for CameraSettings {
 
 #[cfg(test)]
 mod de_tests {
-    // I'm not sure I need to include both TOML and JSON test cases, but v0v
-    // Also missing pytest's parameterized tests here.
+    // Missing pytest's parameterized tests here.
     use crate::camera::{Bus, CameraSettings, CommonSettings, I2cSettings, Rotation};
 
     #[test]
@@ -314,33 +313,7 @@ mod de_tests {
     }
 
     #[test]
-    fn grideye_minimal_json() {
-        let source = r#"
-        {
-            "kind": "grideye",
-            "bus": 1,
-            "address": 30
-        }"#;
-        let parsed = serde_json::from_str(source);
-        assert!(parsed.is_ok(), "Unable to parse JSON: {:?}", parsed);
-        let parsed: CameraSettings = parsed.unwrap();
-        let expected = CameraSettings::GridEye {
-            i2c: I2cSettings {
-                bus: Bus::Number(1),
-                address: 30,
-            },
-            options: CommonSettings {
-                rotation: Rotation::Zero,
-                flip_horizontal: false,
-                flip_vertical: false,
-                frame_rate: 10,
-            },
-        };
-        assert_eq!(parsed, expected);
-    }
-
-    #[test]
-    fn grideye_full_toml_bus_num() {
+    fn grideye_full_bus_num() {
         let source = r#"
         kind = "grideye"
         bus = 1
@@ -369,7 +342,7 @@ mod de_tests {
     }
 
     #[test]
-    fn grideye_full_toml_bus_str() {
+    fn grideye_full_bus_str() {
         let source = r#"
         kind = "grideye"
         bus = "1"
@@ -381,66 +354,6 @@ mod de_tests {
         "#;
         let parsed = toml::from_str(source);
         assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
-        let parsed: CameraSettings = parsed.unwrap();
-        let expected = CameraSettings::GridEye {
-            i2c: I2cSettings {
-                bus: Bus::Path("1".to_string()),
-                address: 30,
-            },
-            options: CommonSettings {
-                rotation: Rotation::OneEighty,
-                flip_horizontal: true,
-                flip_vertical: true,
-                frame_rate: 7,
-            },
-        };
-        assert_eq!(parsed, expected);
-    }
-
-    #[test]
-    fn grideye_full_json_bus_num() {
-        let source = r#"
-        {
-            "kind": "grideye",
-            "bus": 1,
-            "address": 30,
-            "rotation": 180,
-            "flip_horizontal": true,
-            "flip_vertical": true,
-            "frame_rate": 7
-        }"#;
-        let parsed = serde_json::from_str(source);
-        assert!(parsed.is_ok(), "Unable to parse JSON: {:?}", parsed);
-        let parsed: CameraSettings = parsed.unwrap();
-        let expected = CameraSettings::GridEye {
-            i2c: I2cSettings {
-                bus: Bus::Number(1),
-                address: 30,
-            },
-            options: CommonSettings {
-                rotation: Rotation::OneEighty,
-                flip_horizontal: true,
-                flip_vertical: true,
-                frame_rate: 7,
-            },
-        };
-        assert_eq!(parsed, expected);
-    }
-
-    #[test]
-    fn grideye_full_json_bus_str() {
-        let source = r#"
-        {
-            "kind": "grideye",
-            "bus": "1",
-            "address": 30,
-            "rotation": 180,
-            "flip_horizontal": true,
-            "flip_vertical": true,
-            "frame_rate": 7
-        }"#;
-        let parsed = serde_json::from_str(source);
-        assert!(parsed.is_ok(), "Unable to parse JSON: {:?}", parsed);
         let parsed: CameraSettings = parsed.unwrap();
         let expected = CameraSettings::GridEye {
             i2c: I2cSettings {
