@@ -123,6 +123,7 @@ assets = [
 
 [package.metadata.deb.systemd-units]
 unit-scripts = "package/unit-scripts"
+unit-name = "r-u-still-there"
 
 [package.metadata.deb.variants.v6]
 name = "r-u-still-there-v6"
