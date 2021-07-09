@@ -15,7 +15,7 @@ pub(crate) enum Bus {
     Path(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 pub(crate) struct I2cSettings {
     pub(crate) bus: Bus,
     pub(crate) address: u8,
@@ -35,11 +35,11 @@ impl FromStr for Bus {
     }
 }
 
-impl TryFrom<&I2cSettings> for I2cdev {
+impl TryFrom<&Bus> for I2cdev {
     type Error = LinuxI2CError;
 
-    fn try_from(settings: &I2cSettings) -> Result<Self, Self::Error> {
-        let device_path = match &settings.bus {
+    fn try_from(bus: &Bus) -> Result<Self, Self::Error> {
+        let device_path = match bus {
             Bus::Number(n) => PathBuf::from(format!("/dev/i2c-{}", n)),
             Bus::Path(p) => PathBuf::from(p),
         };

@@ -1,19 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use anyhow::Context;
+use anyhow::{bail, Context};
 use futures::stream::{StreamExt, TryStream};
 use image::imageops;
 use linux_embedded_hal::I2cdev;
-use serde_repr::Deserialize_repr;
 use tokio::time::{self, Duration};
 use tokio_stream::wrappers::IntervalStream;
-use tracing::info_span;
+use tracing::{info_span, warn};
 use tracing_futures::Instrument;
 
 use std::convert::{TryFrom, TryInto};
 use std::sync::{Arc, Mutex};
 
+use super::settings::{CameraKind, CameraSettings, Rotation};
 use super::thermal_camera::{ThermalCamera, YAxisDirection};
-use super::{i2c::I2cSettings, settings::CameraSettings};
 use crate::image_buffer::ThermalImage;
 use crate::temperature::Temperature;
 
@@ -23,26 +22,7 @@ use crate::temperature::Temperature;
 #[derive(Clone)]
 pub(crate) struct Camera {
     camera: Arc<Mutex<dyn ThermalCamera + Send>>,
-    settings: CommonSettings,
-}
-
-/// Settings common to all camera types.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct CommonSettings {
-    pub(crate) rotation: Rotation,
-    pub(crate) flip_horizontal: bool,
-    pub(crate) flip_vertical: bool,
-    pub(crate) frame_rate: u8,
-}
-
-// This enum is purely used to restrict the acceptable values for rotation
-#[derive(Clone, Copy, Deserialize_repr, PartialEq, Debug)]
-#[repr(u16)]
-pub(crate) enum Rotation {
-    Zero = 0,
-    Ninety = 90,
-    OneEighty = 180,
-    TwoSeventy = 270,
+    settings: CameraSettings,
 }
 
 impl Camera {
@@ -91,7 +71,8 @@ impl Camera {
         &self,
     ) -> impl TryStream<Ok = ThermalImage, Error = anyhow::Error, Item = anyhow::Result<ThermalImage>>
     {
-        let interval = time::interval(self.settings.into());
+        let interval_millis = 1000 / self.settings.frame_rate() as u64;
+        let interval = time::interval(Duration::from_millis(interval_millis));
         // Really we just need a shared reference to self for get_frame()
         let this = self.clone();
         IntervalStream::new(interval)
@@ -104,39 +85,31 @@ impl TryFrom<&CameraSettings> for Camera {
     type Error = anyhow::Error;
 
     fn try_from(settings: &CameraSettings) -> anyhow::Result<Self> {
-        let i2c_settings: &I2cSettings = settings.into();
-        let bus = I2cdev::try_from(i2c_settings).context("Unable to create I2C bus")?;
-        let camera: Arc<Mutex<dyn ThermalCamera + Send>> = Arc::new(Mutex::new(match settings {
-            CameraSettings::GridEye { i2c, .. } => {
-                let cam = amg88::GridEye::new(
-                    bus,
-                    i2c.address
-                        .try_into()
-                        .context("Invalid I2C address given")?,
-                );
-                cam
-            }
-        }));
-        let common_settings = settings.common_settings();
-        camera
-            .lock()
-            .unwrap()
-            .set_frame_rate(common_settings.frame_rate)?;
+        let camera: Arc<Mutex<dyn ThermalCamera + Send>> = Arc::new(Mutex::new(
+            match &settings.kind {
+                CameraKind::GridEye(i2c) => {
+                    let bus = I2cdev::try_from(&i2c.bus).context("Unable to create I2C bus")?;
+                    let mut cam = amg88::GridEye::new(
+                        bus,
+                        i2c.address
+                            .try_into()
+                            .context("Invalid I2C address given")?,
+                    );
+                    match settings.frame_rate() {
+                    n @ (1 | 10) => cam.set_frame_rate(n.try_into()?)?,
+                    1..=9 => {
+                        warn!("Polling the camera at a lower frame rate, but camera is still running at 10FPS");
+                        cam.set_frame_rate(10.try_into()?)?
+                    }
+                    _ => bail!("Invalid GridEYE frame rate given. Only 1-10 are valid (and only 1 or 10 preferred)"),
+                }
+                    cam
+                }
+            },
+        ));
         Ok(Self {
             camera,
-            settings: *common_settings,
+            settings: settings.clone(),
         })
-    }
-}
-
-impl From<CommonSettings> for Duration {
-    fn from(options: CommonSettings) -> Self {
-        Self::from_millis(1000 / options.frame_rate as u64)
-    }
-}
-
-impl Default for Rotation {
-    fn default() -> Self {
-        Self::Zero
     }
 }
