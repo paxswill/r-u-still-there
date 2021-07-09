@@ -49,11 +49,11 @@ address = 0x69
 #enable = true
 # Is the same as
 #[streams]
-#mjpeg.enable = true
+#mjpeg.enabled = true
 [streams.mjpeg]
 # Whether or not to enable the MJPEG stream.
 # The stream is available from http://HOSTNAME:PORT/mjpeg
-#enable = true
+#enabled = true
 
 # Limit the frame rate to the specified rate per second. This value can take
 # floating point numbers, so if you want the stream to be slowed to 1 frame
