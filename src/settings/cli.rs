@@ -1,15 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use serde::Deserialize;
 use structopt::clap::{AppSettings, ArgGroup};
 use structopt::StructOpt;
 
 use std::net;
 use std::num::NonZeroU8;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use crate::camera::Bus;
 use crate::mqtt::MqttUrl;
 use crate::temperature::TemperatureUnit;
 use crate::util::parse_int_decimal_hex;
+
+#[derive(Clone, Debug, Deserialize, StructOpt)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum CameraKind {
+    GridEye,
+}
 
 #[derive(Clone, Debug, StructOpt)]
 #[structopt(setting(AppSettings::DeriveDisplayOrder))]
@@ -19,6 +27,10 @@ pub(crate) struct Args {
     /// Path to a configuration file.
     #[structopt(short, long, parse(from_os_str))]
     pub(crate) config_path: Option<PathBuf>,
+
+    /// The kind of camera being used.
+    #[structopt(short = "C", long, possible_values(&["grideye"]))]
+    pub(crate) camera_kind: Option<CameraKind>,
 
     /// The I2C bus the camera is connected to.
     #[structopt(short = "b", long)]
@@ -92,4 +104,16 @@ pub(crate) struct Args {
     /// Disable Home Assistant integration.
     #[structopt(long = "no-home-assistant", group = "home_assistant")]
     pub(super) disable_home_assistant: bool,
+}
+
+impl FromStr for CameraKind {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_ascii_lowercase().as_str() {
+            "grideye" => Ok(Self::GridEye),
+            unknown => Err(format!("'{}' is not a known camera type", unknown)),
+        }
+    }
+
 }
