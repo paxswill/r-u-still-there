@@ -14,10 +14,6 @@ pub(crate) use tracker::TrackerSettings;
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct Settings {
-    /// A dummy field, present when parsing CLI arguments.
-    #[serde(default)]
-    config_path: Option<String>,
-
     /// Camera-specific settings.
     pub(crate) camera: CameraSettings,
 
