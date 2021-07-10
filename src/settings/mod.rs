@@ -71,12 +71,8 @@ macro_rules! merge_arg {
 impl Settings {
     /// Merge in values given on the command line into an existing [Settings].
     pub(crate) fn merge_args(&mut self, args: &Args) {
-        if let Some(bus) = &args.i2c_bus {
-            self.camera.kind.set_bus(bus.clone());
-        }
-        if let Some(address) = args.i2c_address {
-            self.camera.kind.set_address(address);
-        }
+        // Don't need to merge in camera kind, i2c bus or i2c address as those are pulled in by
+        // CameraSettings when using the CameraSettingsArgs deserializer
         if let Some(frame_rate) = args.frame_rate {
             self.camera.set_frame_rate(frame_rate)
         }
