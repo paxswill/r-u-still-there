@@ -6,7 +6,7 @@ use serde::Deserialize;
 use crate::image_buffer::ThermalImage;
 use crate::temperature::Temperature;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub(crate) enum Threshold {
     Static(Temperature),
