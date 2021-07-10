@@ -13,22 +13,12 @@ use std::str::FromStr;
 use crate::camera::Bus;
 use crate::temperature::TemperatureUnit;
 
-#[derive(Clone, Debug, Deserialize, Serialize, StructOpt)]
-#[serde(rename_all = "lowercase")]
-pub(crate) enum CameraKind {
-    GridEye,
-}
-
 #[derive(Clone, Debug, StructOpt)]
 #[structopt(setting(AppSettings::DeriveDisplayOrder), group = ArgGroup::with_name("mjpeg"))]
 pub(crate) struct Args {
     /// Path to a configuration file.
     #[structopt(short, long, parse(from_os_str))]
     pub(crate) config_path: Option<PathBuf>,
-
-    /// The kind of camera being used.
-    #[structopt(short = "C", long, possible_values(&["grideye"]))]
-    pub(crate) camera_kind: Option<CameraKind>,
 
     /// The I2C bus the camera is connected to.
     #[structopt(short = "b", long)]
@@ -77,16 +67,6 @@ pub(crate) struct Args {
 #[derive(Clone, Debug)]
 pub(crate) struct MatchedArgs<'a>(ArgMatches<'a>);
 
-impl FromStr for CameraKind {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "grideye" => Ok(Self::GridEye),
-            unknown => Err(format!("'{}' is not a known camera type", unknown)),
-        }
-    }
-}
 
 /// Parse an unsigned integer from a base-10 or base-16 string representation.
 ///
@@ -106,9 +86,6 @@ impl Args {
     /// Create a map of camera-related settings.
     fn camera_data(&self) -> Result<Dict, Error> {
         let mut data = Dict::new();
-        if let Some(camera_kind) = &self.camera_kind {
-            data.insert("kind".to_string(), Value::serialize(camera_kind)?);
-        }
         if let Some(i2c_bus) = &self.i2c_bus {
             data.insert("bus".to_string(), Value::serialize(i2c_bus)?);
         }
