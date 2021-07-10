@@ -1,36 +1,152 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use serde::Deserialize;
+use std::fmt;
+
+use serde::de::{self, Deserialize, DeserializeSeed, Deserializer, MapAccess, Visitor};
+use tracing::warn;
 
 mod cli;
 pub(crate) mod gradient;
 mod tracker;
 
-use crate::camera::CameraSettings;
+use crate::camera::{CameraSettings, CameraSettingsArgs};
 use crate::mqtt::MqttSettings;
 use crate::render::RenderSettings;
 use crate::stream::StreamSettings;
 pub(crate) use cli::Args;
 pub(crate) use tracker::TrackerSettings;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub(crate) struct Settings {
     /// Camera-specific settings.
     pub(crate) camera: CameraSettings,
 
     /// Settings related to the HTTP server for the video streams.
-    #[serde(default)]
     pub(crate) streams: StreamSettings,
 
     /// Settings related to how the data is rendered for the video streams.
-    #[serde(default)]
     pub(crate) render: RenderSettings,
 
     /// Occupancy tracker settings.
-    #[serde(default)]
     pub(crate) tracker: TrackerSettings,
 
     /// MQTT server connection settings.
     pub(crate) mqtt: MqttSettings,
+}
+
+// Manually implementing Deserialize so it can use DeserializeSeed, so it can pass down Args to
+// those settings structs that can use them.
+#[derive(Debug)]
+struct SettingsArgs<'a>(&'a Args);
+
+impl<'a> SettingsArgs<'a> {
+    pub(crate) fn new(args: &'a Args) -> Self {
+        Self(args)
+    }
+}
+
+const SETTINGS_FIELDS: &[&str] = &["camera", "streams", "render", "tracker", "mqtt"];
+
+impl<'de, 'a> DeserializeSeed<'de> for SettingsArgs<'a> {
+    type Value = Settings;
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(serde::Deserialize)]
+        #[serde(field_identifier, rename_all = "snake_case")]
+        enum Field<'a> {
+            Camera,
+            Streams,
+            Render,
+            Tracker,
+            Mqtt,
+            Unknown(&'a str),
+        }
+
+        struct SettingsVisitor<'a>(&'a Args);
+
+        impl<'de, 'a> Visitor<'de> for SettingsVisitor<'a> {
+            type Value = Settings;
+
+            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                f.write_str("an r-u-still-there configuration structure")
+            }
+
+            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+            where
+                A: MapAccess<'de>,
+            {
+                let mut camera = None;
+                let mut streams = None;
+                let mut render = None;
+                let mut tracker = None;
+                let mut mqtt = None;
+                while let Some(key) = map.next_key()? {
+                    match key {
+                        Field::Camera => {
+                            if camera.is_some() {
+                                return Err(de::Error::duplicate_field("camera"));
+                            }
+                            camera = Some(map.next_value_seed(CameraSettingsArgs::new(self.0))?);
+                        }
+                        Field::Streams => {
+                            if streams.is_some() {
+                                return Err(de::Error::duplicate_field("streams"));
+                            }
+                            streams = Some(map.next_value()?);
+                        }
+                        Field::Render => {
+                            if render.is_some() {
+                                return Err(de::Error::duplicate_field("render"));
+                            }
+                            render = Some(map.next_value()?);
+                        }
+                        Field::Tracker => {
+                            if tracker.is_some() {
+                                return Err(de::Error::duplicate_field("tracker"));
+                            }
+                            tracker = Some(map.next_value()?);
+                        }
+                        Field::Mqtt => {
+                            if mqtt.is_some() {
+                                return Err(de::Error::duplicate_field("mqtt"));
+                            }
+                            mqtt = Some(map.next_value()?);
+                        }
+                        Field::Unknown(k) => {
+                            warn!("Unknown top-level field: {}", k);
+                        }
+                    }
+                }
+                let camera = camera.ok_or_else(|| de::Error::missing_field("camera"))?;
+                let streams = streams.unwrap_or_default();
+                let render = render.unwrap_or_default();
+                let tracker = tracker.unwrap_or_default();
+                let mqtt = mqtt.ok_or_else(|| de::Error::missing_field("mqtt"))?;
+                Ok(Settings {
+                    camera,
+                    streams,
+                    render,
+                    tracker,
+                    mqtt,
+                })
+            }
+        }
+
+        let visitor = SettingsVisitor(self.0);
+        deserializer.deserialize_struct("Settings", SETTINGS_FIELDS, visitor)
+    }
+}
+
+impl<'de> Deserialize<'de> for Settings {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let args = Args::default();
+        SettingsArgs(&args).deserialize(deserializer)
+    }
 }
 
 /// DRY macro for merging in optional CLI arguments.
@@ -69,8 +185,19 @@ macro_rules! merge_arg {
 }
 
 impl Settings {
+    pub(crate) fn from_str_with_args(
+        config_str: &str,
+        args: &Args,
+    ) -> Result<Self, toml::de::Error> {
+        let mut deserializer = toml::de::Deserializer::new(config_str);
+        let mut settings = SettingsArgs::new(&args).deserialize(&mut deserializer)?;
+        deserializer.end()?;
+        settings.merge_args(&args);
+        Ok(settings)
+    }
+
     /// Merge in values given on the command line into an existing [Settings].
-    pub(crate) fn merge_args(&mut self, args: &Args) {
+    fn merge_args(&mut self, args: &Args) {
         // Don't need to merge in camera kind, i2c bus or i2c address as those are pulled in by
         // CameraSettings when using the CameraSettingsArgs deserializer
         if let Some(frame_rate) = args.frame_rate {

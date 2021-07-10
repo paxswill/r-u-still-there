@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use serde::Deserialize;
 use structopt::clap::{AppSettings, ArgGroup};
 use structopt::StructOpt;
 
@@ -12,7 +11,7 @@ use crate::mqtt::MqttUrl;
 use crate::temperature::TemperatureUnit;
 use crate::util::parse_int_decimal_hex;
 
-#[derive(Clone, Debug, StructOpt)]
+#[derive(Clone, Debug, Default, StructOpt)]
 #[structopt(setting(AppSettings::DeriveDisplayOrder))]
 #[structopt(group = ArgGroup::with_name("mjpeg"))]
 #[structopt(group = ArgGroup::with_name("home_assistant"))]

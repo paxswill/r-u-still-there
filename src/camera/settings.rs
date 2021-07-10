@@ -78,7 +78,13 @@ const CAMERA_FIELDS: &[&str] = &[
     "kind",
 ];
 
-pub(crate) struct CameraSettingsArgs<'a>(pub(crate) &'a Args);
+pub(crate) struct CameraSettingsArgs<'a>(&'a Args);
+
+impl<'a> CameraSettingsArgs<'a> {
+    pub(crate) fn new(args: &'a Args) -> Self {
+        Self(args)
+    }
+}
 
 // Manually implementing Derserialize as there isn't a way to derive DeserializeSeed
 impl<'de, 'a> DeserializeSeed<'de> for CameraSettingsArgs<'a> {

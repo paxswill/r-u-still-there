@@ -70,9 +70,7 @@ fn create_config() -> anyhow::Result<Settings> {
     // a later commit that handles the case where those parameteres are only given via CLI args.
     let config_path = config_path.expect("A config file is required for now");
     let config_data = read_to_string(config_path)?;
-    let mut settings: Settings = toml::from_str(&config_data)?;
-    settings.merge_args(&args);
-    Ok(settings)
+    Ok(Settings::from_str_with_args(&config_data, &args)?)
 }
 
 // Just picking values for these.
