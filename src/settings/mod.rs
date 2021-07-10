@@ -37,11 +37,37 @@ pub(crate) struct Settings {
     pub(crate) mqtt: MqttSettings,
 }
 
-// DRY macro for merging in optional CLI arguments
+/// DRY macro for merging in optional CLI arguments.
+///
+/// It handles three simple kinds of argument that occur in the [Args] struct. The first two handle
+/// the case where a field needs to be checked if it is [Some], and if it is assign that value to a
+/// field on a different struct. The difference in the two cases are that the first case handles
+/// types that are [Copy], while the second handles [Clone]-able types.
+///
+///     merge_arg!(args.source.copyable, self.destination.field);
+///     merge_arg!(clone args.source.clonable, self.destination.field);
+///
+/// The third case is for boolean values. These are implemented on [Args] as a pair of mutually
+/// exclusive flags, meaning up to one may be true. `merge_args!` checks both flags, setting a
+/// destination field `true` or `false` depending on which flag is set.
+///
+///     merge_arg!(args.enable_flag, args.disable_flag, self.is_enabled);
 macro_rules! merge_arg {
     ($arg:expr, $dest:expr) => {
         if let Some(arg_member) = $arg {
             $dest = arg_member;
+        }
+    };
+    (clone $arg:expr, $dest:expr) => {
+        if let Some(arg_member) = &$arg {
+            $dest = arg_member.clone();
+        }
+    };
+    ($enable_arg:expr, $disable_arg:expr, $dest:expr) => {
+        if $enable_arg {
+            $dest = true;
+        } else if $disable_arg {
+            $dest = false;
         }
     };
 }
@@ -68,10 +94,30 @@ impl Settings {
         // Only one of enable_mjpeg or disable_mjpeg can be true at a time, but it is is possible
         // for both to be false. In the case where both are false, the value read from defaults (or
         // a config file) is preserved.
-        if args.enable_mjpeg {
-            self.streams.mjpeg.enabled = true;
-        } else if args.disable_mjpeg {
-            self.streams.mjpeg.enabled = false;
+        merge_arg!(
+            args.enable_mjpeg,
+            args.disable_mjpeg,
+            self.streams.mjpeg.enabled
+        );
+        merge_arg!(clone args.mqtt_name, self.mqtt.name);
+        // The MQTT username and password are allowed to be empty strings, in which case they are
+        // interpreted as `None`
+        match args.mqtt_username.as_deref() {
+            Some("") => self.mqtt.username = None,
+            Some(username) => self.mqtt.username = Some(username.to_string()),
+            None => (),
         }
+        match args.mqtt_password.as_deref() {
+            Some("") => self.mqtt.password = None,
+            Some(password) => self.mqtt.password = Some(password.into()),
+            None => (),
+        }
+        merge_arg!(clone args.mqtt_server, self.mqtt.server);
+        // Same situation for *_home_assistant as*_mjpeg.
+        merge_arg!(
+            args.enable_home_assistant,
+            args.disable_home_assistant,
+            self.mqtt.home_assistant.enabled
+        );
     }
 }

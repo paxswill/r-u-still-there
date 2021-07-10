@@ -39,6 +39,18 @@ impl fmt::Display for ExternalValue {
     }
 }
 
+impl From<&str> for ExternalValue {
+    fn from(s: &str) -> Self {
+        Self(s.to_string())
+    }
+}
+
+impl From<String> for ExternalValue {
+    fn from(s: String) -> Self {
+        Self(s)
+    }
+}
+
 impl TryFrom<InnerExternalValue> for ExternalValue {
     type Error = std::io::Error;
 

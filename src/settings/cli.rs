@@ -7,11 +7,14 @@ use std::num::NonZeroU8;
 use std::path::PathBuf;
 
 use crate::camera::Bus;
+use crate::mqtt::MqttUrl;
 use crate::temperature::TemperatureUnit;
 use crate::util::parse_int_decimal_hex;
 
 #[derive(Clone, Debug, StructOpt)]
-#[structopt(setting(AppSettings::DeriveDisplayOrder), group = ArgGroup::with_name("mjpeg"))]
+#[structopt(setting(AppSettings::DeriveDisplayOrder))]
+#[structopt(group = ArgGroup::with_name("mjpeg"))]
+#[structopt(group = ArgGroup::with_name("home_assistant"))]
 pub(crate) struct Args {
     /// Path to a configuration file.
     #[structopt(short, long, parse(from_os_str))]
@@ -56,4 +59,37 @@ pub(crate) struct Args {
     /// Disable MJPEG streaming.
     #[structopt(short = "M", long = "no-mjpeg", group = "mjpeg")]
     pub(super) disable_mjpeg: bool,
+
+    /// The name for this device as exposed on the MQTT server.
+    ///
+    /// This name is used as part of the topics the sensor values are published to.
+    #[structopt(short = "N", long)]
+    pub(crate) mqtt_name: Option<String>,
+
+    /// The (optional) username to used to connect to the MQTT broker.
+    ///
+    /// An empty string is interpreted as no username.
+    #[structopt(short = "U", long)]
+    pub(crate) mqtt_username: Option<String>,
+
+    /// The (optional) password used to connect to the MQTT broker.
+    ///
+    /// An empty string is interpreted as no password.
+    #[structopt(short = "P", long)]
+    pub(crate) mqtt_password: Option<String>,
+
+    /// The URL to the MQTT broker.
+    ///
+    /// The only schemes accepted are 'mqtt' and 'mqtts', with default ports of 1883 and 8883
+    /// respectively.
+    #[structopt(short = "S", long, parse(try_from_str))]
+    pub(crate) mqtt_server: Option<MqttUrl>,
+
+    /// Enable Home Assistant integration.
+    #[structopt(long = "home-assistant", group = "home_assistant")]
+    pub(super) enable_home_assistant: bool,
+
+    /// Disable Home Assistant integration.
+    #[structopt(long = "no-home-assistant", group = "home_assistant")]
+    pub(super) disable_home_assistant: bool,
 }

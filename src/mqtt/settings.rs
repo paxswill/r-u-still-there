@@ -40,7 +40,7 @@ pub(crate) struct MqttSettings {
 
     /// The MQTT server username, if required.
     #[serde(default)]
-    username: Option<String>,
+    pub(crate) username: Option<String>,
 
     /// The MQTT server password, if required.
     ///
@@ -50,12 +50,12 @@ pub(crate) struct MqttSettings {
     /// as a map/object of a key "file" to a string. In the first case, the string value is treated
     /// as the password. In the second, the inner value is a path to a file, the contents of which
     /// are read in and used as the password.
-    password: Option<ExternalValue>,
+    pub(crate) password: Option<ExternalValue>,
 
     /// A URL for the MQTT server to connect to. If not given, the scheme 'mqtt' is assumed. Valid
     /// schemes are 'mqtt' for MQTT over TCP and 'mqtts' for MQTT over TLS. If a port is not given,
     /// 1883 is used for MQTT over TCP, and 8883 for MQTT over TLS.
-    server: MqttUrl,
+    pub(crate) server: MqttUrl,
 
     /// Enable MQTT keep-alive.
     ///
@@ -69,7 +69,7 @@ pub(crate) struct MqttSettings {
     pub(crate) home_assistant: HomeAssistantSettings,
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(try_from = "Url")]
 pub(crate) struct MqttUrl(Url);
 
