@@ -15,7 +15,7 @@ use crate::stream::StreamSettings;
 pub(crate) use cli::Args;
 pub(crate) use tracker::TrackerSettings;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub(crate) struct Settings {
     /// Camera-specific settings.
     pub(crate) camera: CameraSettings,
@@ -238,5 +238,162 @@ impl Settings {
             args.disable_home_assistant,
             self.mqtt.home_assistant.enabled
         );
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::camera::{Bus, CameraKind, CameraSettings, I2cSettings};
+    use crate::mqtt::MqttSettings;
+    use crate::occupancy::Threshold;
+    use crate::temperature::Temperature;
+
+    use super::cli::Args;
+    use super::Settings;
+
+    fn expected_config() -> Settings {
+        Settings {
+            camera: CameraSettings::new(CameraKind::GridEye(I2cSettings {
+                bus: Bus::Number(9),
+                address: 0x68,
+            })),
+            streams: Default::default(),
+            render: Default::default(),
+            tracker: Default::default(),
+            mqtt: MqttSettings {
+                name: "Testing Name".to_string(),
+                unique_id: Default::default(),
+                username: Default::default(),
+                password: Default::default(),
+                server: "mqtt://mqtt.invalid".parse().unwrap(),
+                keep_alive: Default::default(),
+                home_assistant: Default::default(),
+            },
+        }
+    }
+
+    #[test]
+    fn minimal_no_args() -> anyhow::Result<()> {
+        let source = r#"
+        [camera]
+        kind = "grideye"
+        bus = 9
+        address = 0x68
+        [mqtt]
+        name = "Testing Name"
+        server = "mqtt://mqtt.invalid"
+        "#;
+        let config: Settings = toml::from_str(source)?;
+        assert_eq!(config, expected_config());
+        Ok(())
+    }
+
+    #[test]
+    fn minimal_kind_arg() -> anyhow::Result<()> {
+        let source = r#"
+        [camera]
+        bus = 9
+        address = 0x68
+        [mqtt]
+        name = "Testing Name"
+        server = "mqtt://mqtt.invalid"
+        "#;
+        let args = Args {
+            camera_kind: Some("grideye".to_string()),
+            ..Args::default()
+        };
+        let config = Settings::from_str_with_args(source, &args)?;
+        assert_eq!(config, expected_config());
+        Ok(())
+    }
+
+    #[test]
+    fn minimal_address_arg() -> anyhow::Result<()> {
+        let source = r#"
+        [camera]
+        kind = "grideye"
+        bus = 9
+        [mqtt]
+        name = "Testing Name"
+        server = "mqtt://mqtt.invalid"
+        "#;
+        let args = Args {
+            i2c_address: Some(0x68),
+            ..Args::default()
+        };
+        let config = Settings::from_str_with_args(source, &args)?;
+        assert_eq!(config, expected_config());
+        Ok(())
+    }
+
+    #[test]
+    fn minimal_bus_args() -> anyhow::Result<()> {
+        let source = r#"
+        [camera]
+        kind = "grideye"
+        address = 0x68
+        [mqtt]
+        name = "Testing Name"
+        server = "mqtt://mqtt.invalid"
+        "#;
+        let args = Args {
+            i2c_bus: Some(Bus::Number(9)),
+            ..Args::default()
+        };
+        let config = Settings::from_str_with_args(source, &args)?;
+        assert_eq!(config, expected_config());
+        Ok(())
+    }
+
+    #[test]
+    fn minimal_empty_sections() -> anyhow::Result<()> {
+        let source = r#"
+        [camera]
+        kind = "grideye"
+        bus = 9
+        address = 0x68
+        [streams]
+        [streams.mjpeg]
+        [render]
+        [tracker]
+        [mqtt]
+        name = "Testing Name"
+        server = "mqtt://mqtt.invalid"
+        [mqtt.home_assistant]
+        "#;
+        let config: Settings = toml::from_str(source)?;
+        assert_eq!(config, expected_config());
+        Ok(())
+    }
+
+    // Test setting jsut one field of each section. The rest of the parsing for those fields will
+    // be done in their respective modules.
+    #[test]
+    fn non_default_subsections() -> anyhow::Result<()> {
+        let source = r#"
+        [camera]
+        kind = "grideye"
+        bus = 9
+        address = 0x68
+        [streams]
+        mjpeg.enabled = true
+        [render]
+        grid_size = 42
+        [tracker]
+        threshold = 7
+        [mqtt]
+        name = "Testing Name"
+        server = "mqtt://mqtt.invalid"
+        [mqtt.home_assistant]
+        topic = "testing_topic"
+        "#;
+        let mut expected = expected_config();
+        expected.streams.mjpeg.enabled = true;
+        expected.render.grid_size = 42;
+        expected.tracker.threshold = Threshold::Static(Temperature::Celsius(7f32));
+        expected.mqtt.home_assistant.topic = "testing_topic".to_string();
+        let config: Settings = toml::from_str(source)?;
+        assert_eq!(config, expected);
+        Ok(())
     }
 }

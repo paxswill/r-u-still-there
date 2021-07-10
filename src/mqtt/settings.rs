@@ -36,7 +36,7 @@ pub(crate) struct MqttSettings {
     /// existing setup to a new installation, or using a volatile system that regenerates its
     /// `machine-id` on every boot).
     #[serde(default)]
-    unique_id: Option<String>,
+    pub(crate) unique_id: Option<String>,
 
     /// The MQTT server username, if required.
     #[serde(default)]
@@ -62,7 +62,7 @@ pub(crate) struct MqttSettings {
     /// Periodically the client will ping the server so the server knows the connection is still
     /// active. Specified in seconds. 0 is the same as disabled.
     #[serde(default)]
-    keep_alive: Option<u16>,
+    pub(crate) keep_alive: Option<u16>,
 
     /// All the various Home Assistant settings.
     #[serde(default)]

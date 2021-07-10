@@ -235,6 +235,16 @@ impl<'de> Deserialize<'de> for CameraSettings {
 }
 
 impl CameraSettings {
+    pub(crate) fn new(kind: CameraKind) -> Self {
+        Self {
+            kind: kind,
+            rotation: Rotation::default(),
+            flip_horizontal: false,
+            flip_vertical: false,
+            frame_rate: None,
+        }
+    }
+
     /// Get the configured frame rate.
     pub(crate) fn frame_rate(&self) -> u8 {
         self.frame_rate
