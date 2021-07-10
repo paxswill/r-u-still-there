@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::{anyhow, Context as _};
-use figment::providers::{Env, Format, Toml, Yaml};
-use figment::Figment;
 use structopt::StructOpt;
 use tracing::{debug, debug_span, error, instrument, trace, Instrument};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Registry};
 
 use std::env;
+use std::fs::read_to_string;
 use std::path::PathBuf;
 
 mod camera;
@@ -29,18 +28,16 @@ use crate::settings::{Args, Settings};
 
 /// Select a configuration file to use.
 ///
-/// If there's a path present in the provided [Figment], it will be used. Otherwise, one of
-/// `config.toml`, or `config.yaml`, will be searched for (in that order) within the
-/// `/etc/r-u-still-there/` directory. If no file is found, [None] is returned.
+/// If there's a path present in the provided [Args], it will be used. Otherwise, `config.toml`
+/// will be searched for within the configuration directory. If a `CONFIGURATION_DIRECTORY`
+/// environment variable exists (ex: systemd sets it in some cases), that is searched. If that
+/// variable isn't set, `/etc/r-u-still-there/` is used. If no config file is found, `Ok(None)` is
+/// returned.
 #[instrument(level = "debug", err)]
-fn find_config_file(figment: &Figment) -> anyhow::Result<Option<PathBuf>> {
-    let given_config_path = figment
-        .find_value("config_path")
-        .ok()
-        .and_then(|v| v.as_str().map(|s| s.to_string()));
-    if let Some(given_config_path) = given_config_path {
-        debug!(%given_config_path, "using config path from user");
-        let path = PathBuf::from(given_config_path);
+fn find_config_file(args: &Args) -> anyhow::Result<Option<PathBuf>> {
+    if let Some(cli_config_path) = &args.config_path {
+        debug!(?cli_config_path, "using config path from CLI argument");
+        let path = cli_config_path.clone();
         if path.exists() {
             return Ok(Some(path));
         } else {
@@ -51,47 +48,31 @@ fn find_config_file(figment: &Figment) -> anyhow::Result<Option<PathBuf>> {
     // /etc/r-u-still-there
     let prefix = env::var("CONFIGURATION_DIRECTORY")
         .map_or(PathBuf::from("/etc/r-u-still-there"), PathBuf::from);
-    let file_names = ["config.toml", "config.yaml"];
-    for name in file_names.iter() {
-        let path = prefix.join(name);
-        debug!("checking for file {:?}", path);
-        if path.exists() {
-            return Ok(Some(path));
-        }
+
+    // Only supporting TOML
+    let path = prefix.join("config.toml");
+    debug!("checking for file {:?}", path);
+    if path.exists() {
+        return Ok(Some(path));
     }
     Ok(None)
 }
 
+/// Find and create the final configuration for the application.
 #[instrument(level = "debug", err)]
 fn create_config() -> anyhow::Result<Settings> {
     // Configuration priority is as follows from least to greatest:
-    // Defaults -> Config file -> Environment variable -> CLI flag
+    // Defaults -> Config file -> CLI flag
     let args = Args::from_args();
-    let initial_figment = Figment::new()
-        .merge(Env::prefixed("RUSTILLTHERE_"))
-        .merge(&args);
     // Find a config file
-    let config_path = find_config_file(&initial_figment)?;
-    // TODO: Add single location for derfaults, and use them as the initial figment.
-    let mut complete_figment = Figment::new();
-    if let Some(config_path) = config_path {
-        let config_extension = config_path.extension().map(|ext| ext.to_str()).flatten();
-        // It'd be nice if I could use pattern matching here, but there's some missing trait
-        // implementations in Figment (ex: Provider for Box<dyn Provider>).
-        if config_extension == Some("toml") {
-            complete_figment = complete_figment.merge(Toml::file(config_path));
-        } else if config_extension == Some("yaml") {
-            complete_figment = complete_figment.merge(Yaml::file(config_path));
-        } else {
-            return Err(anyhow!("Unknown file extension for file {:?}", config_path));
-        }
-    }
-    complete_figment = complete_figment
-        .merge(Env::prefixed("RUSTILLTHERE_"))
-        .merge(&args);
-    complete_figment
-        .extract()
-        .context("Extracting and combining configuration")
+    let config_path = find_config_file(&args)?;
+    // TODO: Right now, there *needs* to be a config file for the required parameters. There'll be
+    // a later commit that handles the case where those parameteres are only given via CLI args.
+    let config_path = config_path.expect("A config file is required for now");
+    let config_data = read_to_string(config_path)?;
+    let mut settings: Settings = toml::from_str(&config_data)?;
+    settings.merge_args(&args);
+    Ok(settings)
 }
 
 // Just picking values for these.
@@ -132,16 +113,14 @@ async fn inner_main() -> ExitCode {
         match create_config() {
             Err(err) => {
                 trace!("Full error chain: {:#?}", err);
-                // Walk the error chain, looking for figment errors
+                // Walk the error chain, looking for toml errors
                 for cause in err.chain() {
-                    if let Some(figment_error) = cause.downcast_ref::<figment::Error>() {
-                        for inner_error in figment_error.clone() {
-                            error!("Configuration error: {}", inner_error);
-                        }
+                    if let Some(toml_error) = cause.downcast_ref::<toml::de::Error>() {
+                        error!("Configuration error: {}", toml_error);
                         return ExitCode::Config;
                     }
                 }
-                // Not a figment error if we reach here.
+                // Not a toml error if we reach here.
                 error!("Error combining configuration: {:?}", err);
                 return ExitCode::Setup;
             }

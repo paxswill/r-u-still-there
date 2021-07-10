@@ -9,11 +9,11 @@ use std::time::Duration;
 pub(crate) struct StreamSettings {
     /// The address to bind the server to. Defaults to `127.0.0.1`.
     #[serde(default = "StreamSettings::default_address")]
-    address: net::IpAddr,
+    pub(crate) address: net::IpAddr,
 
     /// The port to bind the server to. Default to `9000`.
     #[serde(default = "StreamSettings::default_port")]
-    port: u16,
+    pub(crate) port: u16,
 
     /// MJPEG-specific settings.
     #[serde(default)]

@@ -4,7 +4,7 @@ use std::num::NonZeroU8;
 use serde::Deserialize;
 use serde_repr::Deserialize_repr;
 
-use super::I2cSettings;
+use super::{Bus, I2cSettings};
 
 // This enum is purely used to restrict the acceptable values for rotation
 #[derive(Clone, Copy, Deserialize_repr, PartialEq, Debug)]
@@ -51,6 +51,18 @@ impl CameraKind {
     fn default_frame_rate(&self) -> u8 {
         match self {
             CameraKind::GridEye(_) => 10,
+        }
+    }
+
+    pub(crate) fn set_bus(&mut self, new_bus: Bus) {
+        match self {
+            CameraKind::GridEye(i2c) => i2c.bus = new_bus,
+        }
+    }
+
+    pub(crate) fn set_address(&mut self, new_address: u8) {
+        match self {
+            CameraKind::GridEye(i2c) => i2c.address = new_address,
         }
     }
 }
