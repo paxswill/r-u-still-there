@@ -28,16 +28,6 @@ pub(crate) struct MqttSettings {
     /// A name for the base topic for this device.
     pub(crate) name: String,
 
-    /// Provide a persistent unique identifier for this device.
-    ///
-    /// This value need to be unique across different devices, but also persistent over the life of
-    /// the device. By default the systemd `machine-id` is used as a seed to generate an ID
-    /// automatically, but there are some uses for manually specifying it (ex: migrating an
-    /// existing setup to a new installation, or using a volatile system that regenerates its
-    /// `machine-id` on every boot).
-    #[serde(default)]
-    pub(crate) unique_id: Option<String>,
-
     /// The MQTT server username, if required.
     #[serde(default)]
     pub(crate) username: Option<String>,
@@ -134,7 +124,7 @@ impl MqttSettings {
     /// it. If a machine-specific ID is not able to be found, the configured name is used instead
     /// (also hashed).
     pub(crate) fn unique_id(&self) -> String {
-        match &self.unique_id {
+        match &self.home_assistant.unique_id {
             Some(uid) => uid.clone(),
             None => {
                 let machine_id: Vec<u8> = match get_machine_id() {
@@ -177,7 +167,6 @@ impl fmt::Debug for MqttSettings {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("MqttSettings")
             .field("name", &self.name)
-            .field("unique_id", &self.unique_id)
             .field("username", &self.username)
             // ExternalValue censors its Debug and Display implementations
             .field("password", &self.password)
@@ -254,6 +243,16 @@ pub(crate) struct HomeAssistantSettings {
     /// The units to use for temperatures sent to Home Assistant.
     #[serde(default)]
     pub(crate) unit: TemperatureUnit,
+
+    /// Provide a persistent unique identifier for this device.
+    ///
+    /// This value need to be unique across different devices, but also persistent over the life of
+    /// the device. By default the systemd `machine-id` is used as a seed to generate an ID
+    /// automatically, but there are some uses for manually specifying it (ex: migrating an
+    /// existing setup to a new installation, or using a volatile system that regenerates its
+    /// `machine-id` on every boot).
+    #[serde(default)]
+    pub(crate) unique_id: Option<String>,
 }
 
 impl HomeAssistantSettings {
@@ -274,6 +273,7 @@ impl Default for HomeAssistantSettings {
             enabled: Self::default_enabled(),
             topic: Self::default_topic(),
             unit: TemperatureUnit::default(),
+            unique_id: None,
         }
     }
 }
@@ -293,7 +293,6 @@ mod test {
         let parsed: MqttSettings = parsed.unwrap();
         let expected = MqttSettings {
             name: "example".to_string(),
-            unique_id: None,
             username: None,
             password: None,
             server: "mqtt://127.0.0.1".parse().unwrap(),
@@ -310,6 +309,7 @@ mod test {
             r#"
         name = "example"
         server = "mqtt://127.0.0.1"
+        [home_assistant]
         unique_id = "{}"
         "#,
             unique_id

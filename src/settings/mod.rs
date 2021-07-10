@@ -262,7 +262,6 @@ mod test {
             tracker: Default::default(),
             mqtt: MqttSettings {
                 name: "Testing Name".to_string(),
-                unique_id: Default::default(),
                 username: Default::default(),
                 password: Default::default(),
                 server: "mqtt://mqtt.invalid".parse().unwrap(),
