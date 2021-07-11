@@ -161,30 +161,44 @@ This repository should just build with `cargo` once checked out from git:
 ```shell
 git clone https://github.com/paxswill/r-u-still-there.git
 cd r-u-still-there
-cargo build --release
+cargo build
 ```
-
-You will almost always want to build in release mode, as without the more
-extra optimization passes it's unusably slow. Use `cargo check` for syntax
-checking (if you're not already using another tool such as [RLS][rls] or
-[rust-analyzer][rust-analyzer]).
-
-[rls]: https://github.com/rust-lang/rls
-[rust-analyzer]: https://rust-analyzer.github.io/
+Development builds turn the optimizations up, as it's unusably slow without
+them.
 
 ### Cross-compiling
-
 Building on the target device itself can be very slow, and the device may not
-even have enough memory. Cross compilation is pretty easy with Rust, especially
-if using the [musl][musl] targets as they are (at least currently) statically
-linked. When using the `mozjpeg` optional dependency (the default setting is to
-use it) you will also need a linker and C compiler for your target.
-[musl-cross-make][musl-cross-make] is a pretty easy way to build and install the
-toolchains required. Once you've installed the toolchains, you will need to add
-these lines to the `.cargo/config.toml` file (creating it if it doesn't exist):
+even have enough memory. Thankfully cross compilation is pretty easy with Rust.
 
-[musl]: https://musl.libc.org/
-[musl-cross-make]: https://github.com/richfelker/musl-cross-make
+Whichever way you end up building the package, if you're compiling the a 32-bit
+ARM arhitecture you'll need to pass some extra flags through to the C compiler
+(replacing `cargo` with `cross` is using `cross`):
+```shell
+# ARMv6, for Raspberry Pi 0 and 1
+TARGET_CFLAGS="-march=armv6+fp" cargo build --release --target arm-unknown-linux-musleabihf
+# ARMv7, for earlier version of the Raspberry Pi 2 and BeagleBones
+TARGET_CFLAGS="-march=armv7-a+simd" cargo build --release --target armv7-unknown-linux-musleabihf
+# 64-bit ARMv8, for Raspberry Pi Model 4
+cargo build --release --target aarch64-unknown-linux-musl
+```
+
+
+#### glibc
+
+The easiest way to cross-build for glibc targets I've found is with
+[`cross`][cross]. It just works, and is also how the packages are build (along
+with [`cargo-deb`][cargo-deb])
+
+[cross]: https://github.com/rust-embedded/cross
+#### musl static builds
+I use the musl targets for most of my development as they're easier to get
+working when cross-building from a FreeBSD-based system. The musl-based targets
+are also a bit slower in my experience, so by using them for development I get a
+nice little "performance boost" for free when using glibc for the packages.
+I've found [musl-cross-make][musl-cross-make] the easiest way to get a native
+cross-toolchain set up. Once they're installed and available in `$PATH`, you'll
+need to create `.cargo/config.toml` with contents similar to this:
+
 
 ```toml
 [target.arm-unknown-linux-musleabihf]
@@ -196,27 +210,15 @@ linker = "armv7-linux-musleabihf-gcc"
 [target.aarch64-unknown-linux-musl]
 linker = "aarch64-linux-musl-gcc"
 ```
+[musl-cross-make]: https://github.com/richfelker/musl-cross-make
 
 You also need to provide come extra options to the C compiler for the 32-bit ARM
 architectures:
 
-```shell
-# ARMv6, for Raspberry Pi 0 and 1
-TARGET_CFLAGS="-march=armv6+fp" cargo build --release --target arm-unknown-linux-musleabihf
-# ARMv7, for earlier version of the Raspberry Pi 2 and BeagleBones
-TARGET_CFLAGS="-march=armv7-a+simd" cargo build --release --target armv7-unknown-linux-musleabihf
-# 64-bit ARMv8, for Raspberry Pi Model 4
-cargo build --release --target aarch64-unknown-linux-musl
-```
+#### Packaging
 
-Building the Debian package is done using [cargo-deb][cargo-deb]. Once you have
-it installed, just replace `build --release` in the commands above with `deb`,
-like so:
-
-```shell
-TARGET_CFLAGS="-march=armv6+fp" cargo deb --target arm-unknown-linux-musleabihf
-```
+Building the Debian package is done using [`cargo-deb`][cargo-deb]. `build.sh`
+will build each architecture using `cross`, then package it up, leaving the
+`.deb` file in the project directory.
 
 [cargo-deb]: https://github.com/mmstick/cargo-deb
-
-
