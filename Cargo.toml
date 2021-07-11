@@ -5,6 +5,7 @@ license = "GPL-3.0-or-later"
 name = "r-u-still-there"
 repository = "https://git.sr.ht/~paxswill/r-u-still-there"
 version = "0.1.1"
+description = "Occupancy sensors for home automation using thermal cameras."
 
 [dependencies]
 amg88 = "0.3.0"
