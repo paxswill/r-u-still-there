@@ -4,8 +4,8 @@
 # A temperature can be given in two formats in the config file. If a number is
 # given, it is assumed to be in Celsius. If you wish to be explicit as to the
 # unit, you can wrap it in a map, like so:
-# { "celsius": -40 }
-# { "fahrenheit": -40 }
+# { celsius = -40 }
+# { fahrenheit = -40 }
 
 [camera]
 # The kind of camera being used. Currently only "grideye" is supported.
