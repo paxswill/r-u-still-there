@@ -118,7 +118,7 @@ assets = [
     ["config_example.toml", "etc/r-u-still-there/config.toml", "644"],
 ]
 changelog = "debian/changelog"
-revision = "2"
+#revision = "1"
 
 [package.metadata.deb.systemd-units]
 unit-scripts = "debian/unit-scripts"
