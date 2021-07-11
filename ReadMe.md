@@ -46,9 +46,6 @@ Omron D6T sensors in the future.
 
 ## Installation
 
-**TODO**: Actually cut a release. As it stands, this section is describing the
-*planned* installation process.
-
 You can install just the program from cargo (crate name 'r-u-still-there'). The
 preferred process though is to use the .deb packages, either manually downloaded
 from the releases on GitHub or from my package repo. In any case, I would
