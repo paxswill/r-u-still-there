@@ -58,28 +58,9 @@ exact same hardware).
 
 ### Debian-based Distributions (including Ubuntu, Raspberry Pi OS)
 
-**TODO**: Set up automagic builds, then manually sign with my existing keys.
-Provide config that adds my deb repo, but pins it lower (see apt_preferences(5)
-for details on pinning packages from an origin lower than default).
-
-A systemd service file is added and started, but your configuration file will
-need to be modified with some details before r-u-still-there will start. Edit
-`/etc/r-u-still-there/config.toml` in your text editor of choice:
-
-```shell
-sudo nano /etc/r-u-still-there/config.toml
-```
-
-The configuration file documents each value, with the values uncommented by
-default required to be present.
-
-Once you're made your changes and saved them, start the service with `sudo
-systemctl start r-u-still-there`. You can check to make sure it's running with
-`systemctl status r-u-still-there`. Next to the "Active: " label, it should say,
-"active (running)". If it isn't (and it will probably say that it's failed in
-this case) the most recent logs are listed below. Use the arrow keys to scroll
-through them and see what went wrong. Press the `Q` key to exit the status view
-when you're done.
+See the RaspberryPi.md file for a walkthrough of installing it on a Raspberry
+Pi. Installation on other Debian-based systems will be mostly the same, with the
+biggest difference in how the I²C bus is enabled on different devices.
 
 ## FAQ
 #### Why is the CPU usage is really high?
