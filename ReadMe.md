@@ -65,9 +65,10 @@ biggest difference in how the I²C bus is enabled on different devices.
 ## FAQ
 #### Why is the CPU usage is really high?
 Drawing the text of the temperatures is fairly CPU intensive at the moment. If
-you can disable that (by commenting out the `units` value in the config file),
-CPU usage will go down. Another option is to limit the frame rate of the video
-stream with the `frame_rate_limit` setting.
+you can disable that (by commenting out the `render.units` value in the config
+file), CPU usage will go down. Another option is to limit the frame rate of the
+video stream with the `frame_rate_limit` setting. And finally, nudging the
+`render.grid_size` setting lower can help a little bit.
 
 Rendering the video stream is the most "expensive" part of r-u-still-there at
 the moment as it's all being done on the CPU. If there is no client
@@ -79,7 +80,7 @@ For the Debian packages, the configuration file is located at
 `/etc/r-u-still-there/config.toml`. That is also the default location if no
 config file is given as a command line argument.
 
-#### How do you connect the cameras?
+#### How do you connect the camera to the computer?
 You need to connect the camera to your device's I²C bus. This varies between
 different devices, but here are a few examples for some devices:
 
