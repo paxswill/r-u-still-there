@@ -9,7 +9,7 @@ pub(crate) mod gradient;
 mod tracker;
 
 use crate::camera::{CameraSettings, CameraSettingsArgs};
-use crate::mqtt::MqttSettings;
+use crate::mqtt::{MqttSettings, MqttSettingsArgs};
 use crate::render::RenderSettings;
 use crate::stream::StreamSettings;
 pub(crate) use cli::Args;
@@ -112,7 +112,7 @@ impl<'de, 'a> DeserializeSeed<'de> for SettingsArgs<'a> {
                             if mqtt.is_some() {
                                 return Err(de::Error::duplicate_field("mqtt"));
                             }
-                            mqtt = Some(map.next_value()?);
+                            mqtt = Some(map.next_value_seed(MqttSettingsArgs(self.0))?);
                         }
                         Field::Unknown(k) => {
                             warn!("Unknown top-level field: {}", k);
