@@ -2,13 +2,13 @@
 use std::fmt;
 
 use serde::de::{self, Deserialize, DeserializeSeed, Deserializer, MapAccess, Visitor};
-use tracing::warn;
+use tracing::{info, warn};
 
 mod cli;
 pub(crate) mod gradient;
 mod tracker;
 
-use crate::camera::{CameraSettings, CameraSettingsArgs};
+use crate::camera::{CameraKind, CameraSettings, CameraSettingsArgs, I2cSettings};
 use crate::mqtt::{MqttSettings, MqttSettingsArgs};
 use crate::render::RenderSettings;
 use crate::stream::StreamSettings;
@@ -119,11 +119,48 @@ impl<'de, 'a> DeserializeSeed<'de> for SettingsArgs<'a> {
                         }
                     }
                 }
-                let camera = camera.ok_or_else(|| de::Error::missing_field("camera"))?;
+                let camera = camera
+                    .ok_or_else(|| de::Error::missing_field("camera"))
+                    .or_else(|err| {
+                        info!("Missing 'camera' key in config file, checking arguments for camera configuration");
+                        // At this point, there is *no* camera configuration in the config file, so
+                        // everything *better* be in the args.
+                        let args = self.0;
+                        match args.camera_kind.as_deref() {
+                            Some("grideye") => {
+                                if let (Some(bus), Some(address)) = (args.i2c_bus.as_ref(), args.i2c_address) {
+                                    let bus = bus.clone();
+                                    let camera_kind = CameraKind::GridEye(I2cSettings { bus, address });
+                                    Ok(CameraSettings::new(camera_kind))
+                                } else {
+                                    Err(err)
+                                }
+                            }
+                            Some(_) | None => {
+                                Err(err)
+                            }
+                        }
+                    })?;
                 let streams = streams.unwrap_or_default();
                 let render = render.unwrap_or_default();
                 let tracker = tracker.unwrap_or_default();
-                let mqtt = mqtt.ok_or_else(|| de::Error::missing_field("mqtt"))?;
+                let mqtt = mqtt
+                    .ok_or_else(|| de::Error::missing_field("mqtt"))
+                    .or_else(|err| {
+                        // Like with camera above, everything required for MQTT needs to be in CLI
+                        // arguments if we've reached this point. Only the name and server are
+                        // absolutely required to be present, and `merge_args` will ensure any
+                        // other settings in the arguments are applied.
+                        info!("Missing 'mqtt' key in config file, checking arguments for MQTT configuration");
+                        match (self.0.mqtt_name.as_deref(), self.0.mqtt_server.as_ref()) {
+                            (Some(name), Some(server)) => {
+                                Ok(MqttSettings::new(name, server))
+                            }
+                            _ => {
+                                Err(err)
+                            }
+                        }
+                    })?;
                 Ok(Settings {
                     camera,
                     streams,
@@ -231,7 +268,6 @@ impl Settings {
             Some(password) => self.mqtt.password = Some(password.into()),
             None => (),
         }
-        merge_arg!(clone args.mqtt_server, self.mqtt.server);
         // Same situation for *_home_assistant as*_mjpeg.
         merge_arg!(
             args.enable_home_assistant,
@@ -326,7 +362,7 @@ mod test {
     }
 
     #[test]
-    fn minimal_bus_args() -> anyhow::Result<()> {
+    fn minimal_bus_arg() -> anyhow::Result<()> {
         let source = r#"
         [camera]
         kind = "grideye"
@@ -342,6 +378,63 @@ mod test {
         let config = Settings::from_str_with_args(source, &args)?;
         assert_eq!(config, expected_config());
         Ok(())
+    }
+
+    #[test]
+    fn minimal_mqtt_name_arg() -> anyhow::Result<()> {
+        let source = r#"
+        [camera]
+        kind = "grideye"
+        bus = 9
+        address = 0x68
+        [mqtt]
+        server = "mqtt://mqtt.invalid"
+        "#;
+        let args = Args {
+            mqtt_name: Some("Testing Name".to_string()),
+            ..Args::default()
+        };
+        let config = Settings::from_str_with_args(source, &args)?;
+        assert_eq!(config, expected_config());
+        Ok(())
+    }
+    #[test]
+    fn minimal_mqtt_server_arg() -> anyhow::Result<()> {
+        let source = r#"
+        [camera]
+        kind = "grideye"
+        bus = 9
+        address = 0x68
+        [mqtt]
+        name = "Testing Name"
+        "#;
+        let args = Args {
+            mqtt_server: Some("mqtt://mqtt.invalid".parse().unwrap()),
+            ..Args::default()
+        };
+        let config = Settings::from_str_with_args(source, &args)?;
+        assert_eq!(config, expected_config());
+        Ok(())
+    }
+
+    #[test]
+    fn only_args() {
+        let args = Args {
+            camera_kind: Some("grideye".to_string()),
+            i2c_address: Some(0x68),
+            i2c_bus: Some(Bus::Number(9)),
+            mqtt_name: Some("Testing Name".to_string()),
+            mqtt_server: Some("mqtt://mqtt.invalid".parse().unwrap()),
+            ..Args::default()
+        };
+        let config = Settings::from_str_with_args("", &args);
+        assert!(
+            config.is_ok(),
+            "Parsing an empty config failed: {:?}",
+            config
+        );
+        let config = config.unwrap();
+        assert_eq!(config, expected_config());
     }
 
     #[test]

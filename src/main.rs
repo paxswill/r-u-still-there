@@ -65,11 +65,11 @@ fn create_config() -> anyhow::Result<Settings> {
     // Defaults -> Config file -> CLI flag
     let args = Args::from_args();
     // Find a config file
-    let config_path = find_config_file(&args)?;
-    // TODO: Right now, there *needs* to be a config file for the required parameters. There'll be
-    // a later commit that handles the case where those parameteres are only given via CLI args.
-    let config_path = config_path.expect("A config file is required for now");
-    let config_data = read_to_string(config_path)?;
+    let config_data = if let Some(path) = find_config_file(&args)? {
+        read_to_string(path)?
+    } else {
+        "".to_string()
+    };
     Ok(Settings::from_str_with_args(&config_data, &args)?)
 }
 
