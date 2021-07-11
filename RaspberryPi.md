@@ -177,17 +177,25 @@ headless access, step 5 is where the interesting stuff starts.
    # Use the IP address (or the hostname if you've set that up) of your MQTT  
    # broker here. If you're using plain MQTT, use 'mqtt' as the scheme, but if 
    # you're using MQTT over TLS, use 'mqtts'.
-   server = "mqtts://mqtt.home.paxswill.com"
+   server = "mqtts://mqtt.example.com"
    # If your MQTT broker isn't set up to use authentication, you can leave 
-   # these out.
+   # the 'username' part out.
    username = "r-u-still-there"
-   # If you're using a path here, for now it has to be an absolute path.
-   password = { file = "/etc/r-u-still-there/mqtt-password" }
    [mqtt.home_assistant]
    enabled = true
    # Home Assistant should be converting whatever units r-u-still-there sends it
    # to what you've set as the preferred unit in Home Assistant.
    unit = "celsius"
+   ```
+   In this example, I'm going to use a systemd drop-in to slightly customize the
+   default service file:
+   ```shell
+   (umask 077; sudo systemctl edit r-u-still-there.service)
+   ```
+   with contents similar to this:
+   ```ini
+   [Service]
+   Environment="RUSTILLTHERE_MQTT_PASSWORD=SooperSeekrit"
    ```
 
 7. Now that we have the config file set up, let's test it:
