@@ -107,6 +107,14 @@ detect me (a moderately tall, average build man) from about 4m (13 ft) away.
 On the GridEYE, setting the camera to 1 FPS will internally de-noise the image.
 I'm also planning on adding other methods in the future.
 
+#### How can I view the camera image?
+
+There's an MJPEG stream available (if enabled) over HTTP on port 9000 at
+`/mjpeg` (so `http://<IP address>:9000/mjpeg`). If you want to have it available
+in Home Assistant, you'll need to [configure it manually][hass-mjpeg].
+
+[hass-mjpeg]: https://www.home-assistant.io/integrations/mjpeg/
+
 #### This sounds a lot like what [room-assistant][room-assistant] does.
 
 It does! I used room-assistant for a while, and think it's a really cool piece
