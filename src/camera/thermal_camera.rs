@@ -30,8 +30,8 @@ pub(crate) trait ThermalCamera {
 
 impl<I2C> ThermalCamera for amg88::GridEye<I2C>
 where
-    I2C: i2c::Transactional,
-    <I2C as i2c::Transactional>::Error: 'static + StdError + Sync + Send,
+    I2C: i2c::WriteRead,
+    <I2C as i2c::WriteRead>::Error: 'static + StdError + Sync + Send,
 {
     fn temperature(&mut self) -> anyhow::Result<Temperature> {
         self.thermistor()
