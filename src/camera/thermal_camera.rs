@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::convert::TryFrom;
 use std::error::Error as StdError;
+use std::fmt;
 
 use anyhow::Context as _;
 use embedded_hal::blocking::i2c;
 use image::flat::{FlatSamples, SampleLayout};
+use ndarray::{ArrayViewMut, ShapeBuilder};
 use tracing::debug;
 
 use crate::image_buffer;
@@ -71,6 +73,77 @@ where
         let grideye_frame_rate =
             amg88::FrameRateValue::try_from(frame_rate).context("Invalid frame rate")?;
         self.set_frame_rate(grideye_frame_rate)
+            .context("Error setting camera frame rate")
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Mlx90640<I2C> {
+    camera: mlx9064x::Mlx90640Camera<I2C>,
+    temperature_buffer: Vec<f32>,
+}
+
+impl<I2C> Mlx90640<I2C>
+where
+    I2C: i2c::WriteRead,
+    <I2C as i2c::WriteRead>::Error: 'static + StdError + Sync + Send,
+{
+    pub(crate) fn new(camera: mlx9064x::Mlx90640Camera<I2C>) -> Self {
+        let num_pixels = camera.height() * camera.width();
+        Self {
+            camera,
+            temperature_buffer: vec![0f32; num_pixels],
+        }
+    }
+}
+
+impl<I2C> ThermalCamera for Mlx90640<I2C>
+where
+    I2C: 'static + i2c::WriteRead,
+    <I2C as i2c::WriteRead>::Error: 'static + StdError + Sync + Send,
+{
+    fn temperature(&mut self) -> anyhow::Result<Temperature> {
+        let temperature = match self.camera.ambient_temperature() {
+            Some(temperature) => temperature,
+            None => {
+                // Call get_image, and do it again!
+                // TODO: Add quick ambient temperature calculation to mlx9064x so
+                // ambient_temperature() can get rid of the Option.
+                self.camera
+                    .generate_image_to(&mut self.temperature_buffer)?;
+                self.camera.ambient_temperature().unwrap()
+            }
+        };
+        Ok(Temperature::Celsius(temperature))
+    }
+
+    fn thermal_image(&mut self) -> anyhow::Result<(image_buffer::ThermalImage, YAxisDirection)> {
+        self.camera
+            .generate_image_if_ready(&mut self.temperature_buffer)?;
+        // mlx9064x uses row-major ordering, so no swapping needed here.
+        let height = 24;
+        let width = 32;
+        let layout = SampleLayout::row_major_packed(1, width, height);
+        let buffer_image = FlatSamples {
+            // TODO: this clone could hurt performance. Investigate a shared container that then
+            // keeps a single reference to the buffer.
+            samples: self.temperature_buffer.clone(),
+            layout,
+            color_hint: None,
+        };
+        let thermal_image = buffer_image
+            .try_into_buffer()
+            .map_err(|e| e.0)
+            .context("Unable to convert ML90640 scratch buffer into an ImageBuffer")?;
+        Ok((thermal_image, YAxisDirection::Down))
+    }
+
+    fn set_frame_rate(&mut self, frame_rate: u8) -> anyhow::Result<()> {
+        // TODO: Add a way to have <1 FPS frame rates
+        let mlx_frame_rate =
+            mlx9064x::FrameRate::try_from(frame_rate).context("Invalid frame rate")?;
+        self.camera
+            .set_frame_rate(mlx_frame_rate)
             .context("Error setting camera frame rate")
     }
 }
