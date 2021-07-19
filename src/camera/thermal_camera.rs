@@ -123,9 +123,11 @@ where
         self.camera
             .generate_image_if_ready(&mut self.temperature_buffer)?;
         // mlx9064x uses row-major ordering, so no swapping needed here.
-        let height = 24;
-        let width = 32;
-        let layout = SampleLayout::row_major_packed(1, width, height);
+        let layout = SampleLayout::row_major_packed(
+            1,
+            self.camera.width() as u32,
+            self.camera.height() as u32,
+        );
         let buffer_image = FlatSamples {
             // TODO: this clone could hurt performance. Investigate a shared container that then
             // keeps a single reference to the buffer.
