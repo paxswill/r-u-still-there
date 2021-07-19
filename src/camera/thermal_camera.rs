@@ -77,7 +77,7 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct Mlx90640<I2C> {
     camera: mlx9064x::Mlx90640Camera<I2C>,
     temperature_buffer: Vec<f32>,
@@ -85,8 +85,9 @@ pub(crate) struct Mlx90640<I2C> {
 
 impl<I2C> Mlx90640<I2C>
 where
-    I2C: i2c::WriteRead,
+    I2C: i2c::WriteRead + i2c::Write,
     <I2C as i2c::WriteRead>::Error: 'static + StdError + Sync + Send,
+    <I2C as i2c::Write>::Error: 'static + StdError + Sync + Send,
 {
     pub(crate) fn new(camera: mlx9064x::Mlx90640Camera<I2C>) -> Self {
         let num_pixels = camera.height() * camera.width();
@@ -99,8 +100,9 @@ where
 
 impl<I2C> ThermalCamera for Mlx90640<I2C>
 where
-    I2C: 'static + i2c::WriteRead,
+    I2C: 'static + i2c::WriteRead + i2c::Write,
     <I2C as i2c::WriteRead>::Error: 'static + StdError + Sync + Send,
+    <I2C as i2c::Write>::Error: 'static + StdError + Sync + Send,
 {
     fn temperature(&mut self) -> anyhow::Result<Temperature> {
         let temperature = match self.camera.ambient_temperature() {
