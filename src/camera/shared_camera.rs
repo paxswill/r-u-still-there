@@ -106,7 +106,7 @@ impl TryFrom<&CameraSettings> for Camera {
             }
             CameraKind::Mlx909640(i2c) => {
                 let bus = I2cdev::try_from(&i2c.bus).context("Unable to create I2C bus")?;
-                let inner_camera = mlx9064x::Mlx90640Camera::new(bus, i2c.address)?;
+                let inner_camera = mlx9064x::Mlx90640Driver::new(bus, i2c.address)?;
                 let mut camera_wrapper = Mlx90640::new(inner_camera);
                 let frame_rate = settings.frame_rate();
                 // TODO: Add support for 0.5 FPS

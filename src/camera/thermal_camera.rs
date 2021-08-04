@@ -79,7 +79,7 @@ where
 
 #[derive(Debug)]
 pub(crate) struct Mlx90640<I2C> {
-    camera: mlx9064x::Mlx90640Camera<I2C>,
+    camera: mlx9064x::Mlx90640Driver<I2C>,
     temperature_buffer: Vec<f32>,
 }
 
@@ -89,7 +89,7 @@ where
     <I2C as i2c::WriteRead>::Error: 'static + StdError + Sync + Send,
     <I2C as i2c::Write>::Error: 'static + StdError + Sync + Send,
 {
-    pub(crate) fn new(camera: mlx9064x::Mlx90640Camera<I2C>) -> Self {
+    pub(crate) fn new(camera: mlx9064x::Mlx90640Driver<I2C>) -> Self {
         let num_pixels = camera.height() * camera.width();
         Self {
             camera,
