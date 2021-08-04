@@ -2,12 +2,12 @@
 use std::convert::TryFrom;
 use std::error::Error as StdError;
 use std::fmt;
+use std::thread::yield_now;
 
 use anyhow::Context as _;
 use embedded_hal::blocking::i2c;
 use image::flat::{FlatSamples, SampleLayout};
-use ndarray::{ArrayViewMut, ShapeBuilder};
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::image_buffer;
 use crate::temperature::Temperature;
@@ -19,7 +19,7 @@ pub(crate) enum YAxisDirection {
     Down,
 }
 
-/// The operations a thermal camera needs to have to be used by r-u-still-there.
+/// The operations a thermal camera needs to implement to be used by r-u-still-there.
 pub(crate) trait ThermalCamera {
     /// Get the temperature of the camera.
     fn temperature(&mut self) -> anyhow::Result<Temperature>;
@@ -28,6 +28,13 @@ pub(crate) trait ThermalCamera {
     fn thermal_image(&mut self) -> anyhow::Result<(image_buffer::ThermalImage, YAxisDirection)>;
 
     fn set_frame_rate(&mut self, frame_rate: u8) -> anyhow::Result<()>;
+
+    /// Block until a new image is available from the camera.
+    ///
+    /// Some camera modules do not synchronize access to their image data, which can result in
+    /// corrupted image data. Not every camera module requires this; those that don't should
+    /// implement it as a no-op.
+    fn synchronize(&mut self) -> anyhow::Result<()>;
 }
 
 impl<I2C> ThermalCamera for amg88::GridEye<I2C>
@@ -75,11 +82,23 @@ where
         self.set_frame_rate(grideye_frame_rate)
             .context("Error setting camera frame rate")
     }
+
+    fn synchronize(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
 }
 
+/// A wrapper over Melexis cameras to implement [`ThermalCamera`]
+///
+/// Melexis cameras only update half of the frame at a time (either in a chessboard pattern or by
+/// interleaving the rows). This wrapper uses an internal buffer so that it can provide the full
+/// image at all times.
 #[derive(Debug)]
 pub(crate) struct Mlx90640<I2C> {
     camera: mlx9064x::Mlx90640Driver<I2C>,
+
+    /// The thermal image buffer.
+    // It needs to be a Vec as different Melexis cameras have different resolutions.
     temperature_buffer: Vec<f32>,
 }
 
@@ -101,8 +120,8 @@ where
 impl<I2C> ThermalCamera for Mlx90640<I2C>
 where
     I2C: 'static + i2c::WriteRead + i2c::Write,
-    <I2C as i2c::WriteRead>::Error: 'static + StdError + Sync + Send,
-    <I2C as i2c::Write>::Error: 'static + StdError + Sync + Send,
+    <I2C as i2c::WriteRead>::Error: 'static + StdError + fmt::Debug + Sync + Send,
+    <I2C as i2c::Write>::Error: 'static + StdError + fmt::Debug + Sync + Send,
 {
     fn temperature(&mut self) -> anyhow::Result<Temperature> {
         let temperature = match self.camera.ambient_temperature() {
@@ -120,8 +139,19 @@ where
     }
 
     fn thermal_image(&mut self) -> anyhow::Result<(image_buffer::ThermalImage, YAxisDirection)> {
-        self.camera
-            .generate_image_if_ready(&mut self.temperature_buffer)?;
+        // TODO: There's something off in how the frames are being timed that I'm still tracking
+        // down.
+        /*
+        while ! self.camera.generate_image_if_ready(&mut self.temperature_buffer)? {
+            yield_now();
+        }
+        */
+        if !self
+            .camera
+            .generate_image_if_ready(&mut self.temperature_buffer)?
+        {
+            warn!("Using stale data!");
+        }
         // mlx9064x uses row-major ordering, so no swapping needed here.
         let layout = SampleLayout::row_major_packed(
             1,
@@ -149,5 +179,10 @@ where
         self.camera
             .set_frame_rate(mlx_frame_rate)
             .context("Error setting camera frame rate")
+    }
+
+    fn synchronize(&mut self) -> anyhow::Result<()> {
+        debug!("Synchronizing frame access");
+        Ok(self.camera.synchronize()?)
     }
 }

@@ -2,16 +2,16 @@
 use anyhow::{anyhow, Context as _};
 use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::sink::Sink;
-use futures::stream::{FuturesUnordered, Stream, StreamExt, TryStream};
+use futures::stream::{BoxStream, FuturesUnordered, Stream, StreamExt, TryStream};
 use http::Response;
 use pin_project::pin_project;
 use rumqttc::{
     AsyncClient, ConnectReturnCode, Event, LastWill, MqttOptions as RuMqttOptions, Packet, QoS,
 };
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{oneshot, Mutex as AsyncMutex};
 use tokio::task::{spawn_blocking, JoinError};
-use tokio::time::{self, Duration};
-use tokio_stream::wrappers::IntervalStream;
+use tokio::time::Duration;
+use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tracing::{debug, debug_span, error, info, info_span, trace, trace_span, warn};
 use tracing_futures::Instrument;
 use warp::Filter;
@@ -19,12 +19,13 @@ use warp::Filter;
 use std::convert::{TryFrom, TryInto};
 use std::marker::PhantomData;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{mpsc, Arc};
 use std::task::{Context, Poll};
+use std::thread::JoinHandle as ThreadJoinHandle;
 use std::vec::Vec;
 
-use crate::camera::Camera;
-use crate::image_buffer::{BytesImage, ThermalImage};
+use crate::camera::{Camera, CameraCommand, Measurement};
+use crate::image_buffer::BytesImage;
 use crate::mqtt::{
     home_assistant as hass, serialize, MqttSettings, Occupancy, OccupancyCount, State, Status,
 };
@@ -45,6 +46,7 @@ type MqttClient = Arc<AsyncMutex<AsyncClient>>;
 type ArcDevice = Arc<hass::Device>;
 type InnerTask = Pin<Box<dyn Future<Output = anyhow::Result<()>>>>;
 type TaskList = FuturesUnordered<InnerTask>;
+type MeasurementStream<'a> = BoxStream<'a, Measurement>;
 
 fn flatten_join_result<E>(join_result: Result<Result<(), E>, JoinError>) -> anyhow::Result<()>
 where
@@ -65,8 +67,8 @@ where
 
 #[pin_project]
 pub(crate) struct Pipeline {
-    camera: Camera,
-    frame_source: spmc::Sender<ThermalImage>,
+    camera_command_channel: mpsc::Sender<CameraCommand>,
+    camera_join_handle: ThreadJoinHandle<anyhow::Result<()>>,
     rendered_source: spmc::Sender<BytesImage>,
     mqtt_client: MqttClient,
     status: State<Status, ArcDevice>,
@@ -81,12 +83,14 @@ impl Pipeline {
     pub(crate) async fn new(config: Settings) -> anyhow::Result<Self> {
         let camera_settings = &config.camera;
         let camera: Camera = camera_settings.try_into()?;
-        let (frame_source, frame_task) = create_frame_source(&camera)?;
+        let camera_command_channel = camera.command_channel();
+        let camera_join_handle = camera.spawn()?;
         let frame_rate_limit = config.streams.common_frame_rate();
+        let measurement_stream = Self::create_measurement_stream(&camera_command_channel).await?;
         let (rendered_source, render_task) =
-            create_renderer(&frame_source, config.render, frame_rate_limit)?;
+            create_renderer(measurement_stream, config.render, frame_rate_limit)?;
         // Once IntoIterator is implemented for arrays, this line can be simplified
-        let tasks: TaskList = std::array::IntoIter::new([frame_task, render_task]).collect();
+        let tasks: TaskList = std::array::IntoIter::new([render_task]).collect();
         debug!("Opening connection to MQTT broker");
         let (mqtt_client, loop_task, status) = connect_mqtt(&config.mqtt).await?;
         tasks.push(loop_task);
@@ -94,8 +98,8 @@ impl Pipeline {
         // being sent.
         let hass_device = Self::create_device(&config.mqtt.name, config.mqtt.unique_id());
         let mut app = Self {
-            camera,
-            frame_source,
+            camera_command_channel,
+            camera_join_handle,
             rendered_source,
             mqtt_client,
             status,
@@ -107,6 +111,26 @@ impl Pipeline {
         app.create_tracker(config.tracker).await?;
         app.create_thermometer().await?;
         Ok(app)
+    }
+
+    // Get a Stream of Measurements from the camera.
+    async fn create_measurement_stream(
+        command_channel: &mpsc::Sender<CameraCommand>,
+    ) -> anyhow::Result<MeasurementStream<'static>> {
+        let (command_tx, command_rx) = oneshot::channel();
+        command_channel.send(CameraCommand::Subscribe(command_tx))?;
+        let new_subscription = command_rx.await.context("Creating subscription stream")?;
+        let measurement_stream =
+            BroadcastStream::new(new_subscription).filter_map(|broadcast_res| async move {
+                match broadcast_res {
+                    Ok(measurement) => Some(measurement),
+                    Err(BroadcastStreamRecvError::Lagged(lag_count)) => {
+                        warn!("Measurement stream lagging {} samples", lag_count);
+                        None
+                    }
+                }
+            });
+        Ok(measurement_stream.boxed())
     }
 
     fn create_device(device_name: &str, unique_id: String) -> ArcDevice {
@@ -234,27 +258,26 @@ impl Pipeline {
             .forward(occupied_sink)
             .boxed();
         self.tasks.push(update_occupied_stream);
-        let frame_stream = self.frame_source.stream();
-        self.tasks
-            .push(ok_stream(frame_stream).forward(tracker).err_into().boxed());
+        let measurement_stream = Self::create_measurement_stream(&self.camera_command_channel)
+            .await?
+            .instrument(info_span!("tracker_measurements"));
+        self.tasks.push(
+            ok_stream(measurement_stream)
+                .forward(tracker)
+                .err_into()
+                .boxed(),
+        );
         Ok(())
     }
 
     async fn create_thermometer(&mut self) -> anyhow::Result<()> {
-        // Clone the camera so that the interval closure has an owned reference to it.
-        let camera = self.camera.clone();
+        info!("Creating thermometer");
         let unit = self.mqtt_config.home_assistant.unit;
-        // Just sticking this on a 1Hz cycle, but I might change it later.
-        let temperature_stream = IntervalStream::new(time::interval(Duration::from_secs(1)))
-            .map(move |_| {
-                camera
-                    .get_temperature()
-                    .context("Unable to retrieve camera ambient temperature")
-            })
-            // Yeah, double map, but keeping these operations somewhat separate for now.
-            .map(move |temperature| {
-                temperature.and_then(|temperature| Ok(temperature.in_unit(&unit)))
-            });
+        let measurement_stream = Self::create_measurement_stream(&self.camera_command_channel)
+            .await?
+            .instrument(info_span!("temperature_measurement"));
+        let temperature_stream =
+            measurement_stream.map(move |measurement| measurement.temperature.in_unit(&unit));
         let state = State::<f32, _>::new_discoverable(
             Arc::clone(&self.mqtt_client),
             Arc::clone(&self.hass_device),
@@ -277,8 +300,11 @@ impl Pipeline {
                 .await?;
         }
         let temperature_sink = state.sink();
-        self.tasks
-            .push(temperature_stream.forward(temperature_sink).boxed());
+        self.tasks.push(
+            ok_stream(temperature_stream)
+                .forward(temperature_sink)
+                .boxed(),
+        );
         Ok(())
     }
 }
@@ -304,15 +330,8 @@ impl Future for Pipeline {
     }
 }
 
-fn create_frame_source(camera: &Camera) -> anyhow::Result<(spmc::Sender<ThermalImage>, InnerTask)> {
-    let frame_stream = camera.frame_stream();
-    let frame_multiplexer = spmc::Sender::default();
-    let frame_future = frame_stream.forward(frame_multiplexer.clone());
-    Ok((frame_multiplexer, frame_future.boxed()))
-}
-
 fn create_renderer(
-    frame_source: &spmc::Sender<ThermalImage>,
+    measurement_stream: MeasurementStream<'static>,
     settings: render::RenderSettings,
     frame_rate_limit: Option<Duration>,
 ) -> anyhow::Result<(spmc::Sender<BytesImage>, InnerTask)> {
@@ -325,11 +344,11 @@ fn create_renderer(
         render::font::default_renderer(),
     );
     let rendered_stream = match frame_rate_limit {
-        None => frame_source.stream().boxed(),
-        Some(limit) => tokio_stream::StreamExt::throttle(frame_source.stream(), limit).boxed(),
+        None => measurement_stream,
+        Some(limit) => tokio_stream::StreamExt::throttle(measurement_stream, limit).boxed(),
     }
-    .instrument(trace_span!("render_stream"))
-    .map(move |temperatures| renderer.render_buffer(&temperatures));
+    .instrument(info_span!("render_stream"))
+    .map(move |measurement| renderer.render_buffer(&measurement.image));
     let rendered_multiplexer = spmc::Sender::default();
     let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
     let task = tokio::spawn(render_future).map(flatten_join_result).boxed();
