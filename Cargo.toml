@@ -9,7 +9,7 @@ description = "Occupancy sensors for home automation using thermal cameras."
 readme = "ReadMe.md"
 
 [dependencies]
-amg88 = "0.4.0"
+amg88 = "0.4.1"
 anyhow = "1.0"
 base64 = "0.13"
 bytes = "1.0.1"
