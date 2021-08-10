@@ -93,21 +93,33 @@ where
 /// interleaving the rows). This wrapper uses an internal buffer so that it can provide the full
 /// image at all times.
 #[derive(Debug)]
-pub(crate) struct Mlx90640<I2C> {
-    camera: mlx9064x::Mlx90640Driver<I2C>,
+pub(crate) struct Mlx9064x<
+    Cam,
+    Clb,
+    I2C,
+    const HEIGHT: usize,
+    const WIDTH: usize,
+    const NUM_BYTES: usize,
+> {
+    camera: mlx9064x::CameraDriver<Cam, Clb, I2C, HEIGHT, WIDTH, NUM_BYTES>,
 
     /// The thermal image buffer.
     // It needs to be a Vec as different Melexis cameras have different resolutions.
     temperature_buffer: Vec<f32>,
 }
 
-impl<I2C> Mlx90640<I2C>
+impl<Cam, Clb, I2C, const HEIGHT: usize, const WIDTH: usize, const NUM_BYTES: usize>
+    Mlx9064x<Cam, Clb, I2C, HEIGHT, WIDTH, NUM_BYTES>
 where
+    Cam: mlx9064x::common::MelexisCamera,
+    Clb: mlx9064x::common::CalibrationData,
     I2C: i2c::WriteRead + i2c::Write,
     <I2C as i2c::WriteRead>::Error: 'static + StdError + Sync + Send,
     <I2C as i2c::Write>::Error: 'static + StdError + Sync + Send,
 {
-    pub(crate) fn new(camera: mlx9064x::Mlx90640Driver<I2C>) -> Self {
+    pub(crate) fn new(
+        camera: mlx9064x::CameraDriver<Cam, Clb, I2C, HEIGHT, WIDTH, NUM_BYTES>,
+    ) -> Self {
         let num_pixels = camera.height() * camera.width();
         Self {
             camera,
@@ -116,8 +128,11 @@ where
     }
 }
 
-impl<I2C> ThermalCamera for Mlx90640<I2C>
+impl<Cam, Clb, I2C, const HEIGHT: usize, const WIDTH: usize, const NUM_BYTES: usize> ThermalCamera
+    for Mlx9064x<Cam, Clb, I2C, HEIGHT, WIDTH, NUM_BYTES>
 where
+    Cam: mlx9064x::common::MelexisCamera,
+    Clb: mlx9064x::common::CalibrationData,
     I2C: 'static + i2c::WriteRead + i2c::Write,
     <I2C as i2c::WriteRead>::Error: 'static + StdError + fmt::Debug + Sync + Send,
     <I2C as i2c::Write>::Error: 'static + StdError + fmt::Debug + Sync + Send,
@@ -173,8 +188,9 @@ where
 
     fn set_frame_rate(&mut self, frame_rate: u8) -> anyhow::Result<()> {
         // TODO: Add a way to have <1 FPS frame rates
-        let mlx_frame_rate = mlx9064x::FrameRate::try_from(frame_rate)
-            .context("Invalid frame rate, only 1, 2, 4, 8, 16, 32, or 64 are valid for MLX9064* cameras")?;
+        let mlx_frame_rate = mlx9064x::FrameRate::try_from(frame_rate).context(
+            "Invalid frame rate, only 1, 2, 4, 8, 16, 32, or 64 are valid for MLX9064* cameras",
+        )?;
         self.camera
             .set_frame_rate(mlx_frame_rate)
             .context("Error setting MLX9064x frame rate")
