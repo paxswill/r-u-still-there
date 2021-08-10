@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use anyhow::{bail, Context};
+use anyhow::Context;
 use image::imageops;
 use linux_embedded_hal::I2cdev;
 use tokio::sync::{broadcast, oneshot};
