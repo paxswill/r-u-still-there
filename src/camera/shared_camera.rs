@@ -173,7 +173,7 @@ impl TryFrom<&CameraSettings> for Camera {
                 );
                 Box::new(cam)
             }
-            CameraKind::Mlx909640(i2c) => {
+            CameraKind::Mlx90640(i2c) => {
                 let bus = I2cdev::try_from(&i2c.bus).context("Unable to create I2C bus")?;
                 let inner_camera = mlx9064x::Mlx90640Driver::new(bus, i2c.address)?;
                 let camera_wrapper = Mlx90640::new(inner_camera);

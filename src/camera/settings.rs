@@ -24,7 +24,7 @@ pub(crate) enum Rotation {
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub(crate) enum CameraKind {
     GridEye(I2cSettings),
-    Mlx909640(I2cSettings),
+    Mlx90640(I2cSettings),
 }
 
 #[derive(Clone, Debug)]
@@ -51,21 +51,21 @@ impl CameraKind {
     fn default_frame_rate(&self) -> u8 {
         match self {
             CameraKind::GridEye(_) => 10,
-            CameraKind::Mlx909640(_) => 2,
+            CameraKind::Mlx90640(_) => 2,
         }
     }
 
     pub(crate) fn set_bus(&mut self, new_bus: Bus) {
         match self {
             CameraKind::GridEye(i2c) => i2c.bus = new_bus,
-            CameraKind::Mlx909640(i2c) => i2c.bus = new_bus,
+            CameraKind::Mlx90640(i2c) => i2c.bus = new_bus,
         }
     }
 
     pub(crate) fn set_address(&mut self, new_address: u8) {
         match self {
             CameraKind::GridEye(i2c) => i2c.address = new_address,
-            CameraKind::Mlx909640(i2c) => i2c.address = new_address,
+            CameraKind::Mlx90640(i2c) => i2c.address = new_address,
         }
     }
 }
@@ -212,7 +212,7 @@ impl<'de, 'a> DeserializeSeed<'de> for CameraSettingsArgs<'a> {
                         debug!(camera_kind = %kind, "using a MLX90640");
                         let bus = bus.ok_or_else(|| de::Error::missing_field("bus"))?;
                         let address = address.ok_or_else(|| de::Error::missing_field("address"))?;
-                        CameraKind::Mlx909640(I2cSettings { bus, address })
+                        CameraKind::Mlx90640(I2cSettings { bus, address })
                     }
                     _ => {
                         error!(camera_kind = %kind, "unknown camera kind");
