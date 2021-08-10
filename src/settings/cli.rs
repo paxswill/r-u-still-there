@@ -22,7 +22,7 @@ pub(crate) struct Args {
     pub(crate) config_path: Option<PathBuf>,
 
     /// The kind of camera being used.
-    #[structopt(short = "C", long, possible_values(&["grideye", "mlx90640"]))]
+    #[structopt(short = "C", long, possible_values(&["grideye", "mlx90640", "mlx90641"]))]
     #[structopt(env = "RUSTILLTHERE_CAMERA")]
     pub(crate) camera_kind: Option<String>,
 

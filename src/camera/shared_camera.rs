@@ -179,6 +179,9 @@ impl TryFrom<&CameraSettings> for Camera {
                 let camera_wrapper = Mlx90640::new(inner_camera);
                 Box::new(camera_wrapper)
             }
+            CameraKind::Mlx90641(i2c) => {
+                todo!();
+            }
         };
         camera.set_frame_rate(settings.frame_rate())?;
         let (measurement_channel, _) = broadcast::channel(1);
