@@ -162,52 +162,25 @@ impl TryFrom<&CameraSettings> for Camera {
     type Error = anyhow::Error;
 
     fn try_from(settings: &CameraSettings) -> anyhow::Result<Self> {
-        let camera: Box<dyn ThermalCamera + Send> = match &settings.kind {
+        let mut camera: Box<dyn ThermalCamera + Send> = match &settings.kind {
             CameraKind::GridEye(i2c) => {
                 let bus = I2cdev::try_from(&i2c.bus).context("Unable to create I2C bus")?;
-                let mut cam = amg88::GridEye::new(
+                let cam = amg88::GridEye::new(
                     bus,
                     i2c.address
                         .try_into()
                         .context("Invalid I2C address given")?,
                 );
-                match settings.frame_rate() {
-                        n @ (1 | 10) => cam.set_frame_rate(n.try_into()?)?,
-                        1..=9 => {
-                            warn!("Polling the camera at a lower frame rate, but camera is still running at 10FPS");
-                            cam.set_frame_rate(10.try_into()?)?
-                        }
-                        _ => bail!("Invalid GridEYE frame rate given. Only 1-10 are valid (and only 1 or 10 preferred)"),
-                    }
                 Box::new(cam)
             }
             CameraKind::Mlx909640(i2c) => {
                 let bus = I2cdev::try_from(&i2c.bus).context("Unable to create I2C bus")?;
                 let inner_camera = mlx9064x::Mlx90640Driver::new(bus, i2c.address)?;
-                let mut camera_wrapper = Mlx90640::new(inner_camera);
-                let frame_rate = settings.frame_rate();
-                // TODO: Add support for 0.5 FPS
-                let mlx_frame_rate = match frame_rate.cmp(&64) {
-                    std::cmp::Ordering::Less | std::cmp::Ordering::Equal => {
-                        if frame_rate.is_power_of_two() {
-                            frame_rate
-                        } else {
-                            let actual_frame_rate = frame_rate.next_power_of_two();
-                            warn!(
-                                    "Polling the camera at a lower frame rate, but camera is still running at {}FPS",
-                                    actual_frame_rate
-                                );
-                            actual_frame_rate
-                        }
-                    }
-                    std::cmp::Ordering::Greater => {
-                        bail!("Invalid MLX90640 frame rate given. Must be between 0 and 64 (powers of two preferred)")
-                    }
-                };
-                camera_wrapper.set_frame_rate(mlx_frame_rate)?;
+                let camera_wrapper = Mlx90640::new(inner_camera);
                 Box::new(camera_wrapper)
             }
         };
+        camera.set_frame_rate(settings.frame_rate())?;
         let (measurement_channel, _) = broadcast::channel(1);
         let (command_sender, command_receiver) = mpsc::channel();
         Ok(Self {
