@@ -82,17 +82,23 @@ pub(crate) struct Pipeline {
 impl Pipeline {
     pub(crate) async fn new(config: Settings) -> anyhow::Result<Self> {
         let camera_settings = &config.camera;
-        let camera: Camera = camera_settings.try_into()?;
+        let camera: Camera = camera_settings
+            .try_into()
+            .context("Error configuring camera")?;
         let camera_command_channel = camera.command_channel();
-        let camera_join_handle = camera.spawn()?;
+        let camera_join_handle = camera.spawn().context("Error starting camera thread")?;
         let frame_rate_limit = config.streams.common_frame_rate();
-        let measurement_stream = Self::create_measurement_stream(&camera_command_channel).await?;
+        let measurement_stream = Self::create_measurement_stream(&camera_command_channel)
+            .await
+            .context("Error requesting measurement stream from camera")?;
         let (rendered_source, render_task) =
             create_renderer(measurement_stream, config.render, frame_rate_limit)?;
         // Once IntoIterator is implemented for arrays, this line can be simplified
         let tasks: TaskList = std::array::IntoIter::new([render_task]).collect();
         debug!("Opening connection to MQTT broker");
-        let (mqtt_client, loop_task, status) = connect_mqtt(&config.mqtt).await?;
+        let (mqtt_client, loop_task, status) = connect_mqtt(&config.mqtt)
+            .await
+            .context("Error connecting to MQTT broker")?;
         tasks.push(loop_task);
         // Create a device for HAss integration. It's still used even if the HAss messages aren;t
         // being sent.
@@ -107,9 +113,14 @@ impl Pipeline {
             mqtt_config: config.mqtt,
             tasks,
         };
-        app.create_streams(config.streams)?;
-        app.create_tracker(config.tracker).await?;
-        app.create_thermometer().await?;
+        app.create_streams(config.streams)
+            .context("Error creating video streams")?;
+        app.create_tracker(config.tracker)
+            .await
+            .context("Error creating occupancy tracker")?;
+        app.create_thermometer()
+            .await
+            .context("Error creating ambient temperature monitor")?;
         Ok(app)
     }
 
@@ -248,13 +259,11 @@ impl Pipeline {
         }
         let count_sink = count.sink();
         let update_count_stream = ok_stream(tracker.count_stream().map(OccupancyCount::from))
-            //.instrument(info_span!("occupancy_count_stream"))
             .forward(count_sink)
             .boxed();
         self.tasks.push(update_count_stream);
         let occupied_sink = occupied.sink();
         let update_occupied_stream = ok_stream(tracker.count_stream().map(Occupancy::from))
-            //.instrument(info_span!("occupancy_count_stream"))
             .forward(occupied_sink)
             .boxed();
         self.tasks.push(update_occupied_stream);

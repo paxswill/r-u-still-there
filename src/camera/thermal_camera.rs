@@ -2,7 +2,6 @@
 use std::convert::TryFrom;
 use std::error::Error as StdError;
 use std::fmt;
-use std::thread::yield_now;
 
 use anyhow::Context as _;
 use embedded_hal::blocking::i2c;
@@ -77,10 +76,10 @@ where
     }
 
     fn set_frame_rate(&mut self, frame_rate: u8) -> anyhow::Result<()> {
-        let grideye_frame_rate =
-            amg88::FrameRateValue::try_from(frame_rate).context("Invalid frame rate")?;
+        let grideye_frame_rate = amg88::FrameRateValue::try_from(frame_rate)
+            .context("Invalid frame rate, only 1 or 10 are valid for GridEYE cameras")?;
         self.set_frame_rate(grideye_frame_rate)
-            .context("Error setting camera frame rate")
+            .context("Error setting GridEYE frame rate")
     }
 
     fn synchronize(&mut self) -> anyhow::Result<()> {
@@ -174,11 +173,11 @@ where
 
     fn set_frame_rate(&mut self, frame_rate: u8) -> anyhow::Result<()> {
         // TODO: Add a way to have <1 FPS frame rates
-        let mlx_frame_rate =
-            mlx9064x::FrameRate::try_from(frame_rate).context("Invalid frame rate")?;
+        let mlx_frame_rate = mlx9064x::FrameRate::try_from(frame_rate)
+            .context("Invalid frame rate, only 1, 2, 4, 8, 16, 32, or 64 are valid for MLX9064* cameras")?;
         self.camera
             .set_frame_rate(mlx_frame_rate)
-            .context("Error setting camera frame rate")
+            .context("Error setting MLX9064x frame rate")
     }
 
     fn synchronize(&mut self) -> anyhow::Result<()> {
