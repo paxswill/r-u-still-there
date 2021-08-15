@@ -90,14 +90,6 @@ impl Camera {
                     }
                 }
             }
-            // Periodically synchronize frame access
-            if self.resync_counter == 0 {
-                self.camera.synchronize()?;
-            } else if self.resync_counter >= FRAME_RESYNC_PERIOD {
-                self.resync_counter = 0;
-            } else {
-                self.resync_counter += 1;
-            }
             // Capture an image and measure the temperature then send it off to any subscribers.
             let start_processing = Instant::now();
             let image = Arc::new(self.get_frame()?);
@@ -108,11 +100,20 @@ impl Camera {
             {
                 self.measurement_channel.send(measurement);
             }
-            // Sleep until the next frame
-            let processing_time = start_processing.elapsed();
-            if processing_time < frame_duration {
-                let until_next_frame = frame_duration - processing_time;
-                thread_sleep(until_next_frame)
+            if self.resync_counter == 0 {
+                self.camera.synchronize()?;
+            } else {
+                let elapsed = start_processing.elapsed();
+                if elapsed < frame_duration {
+                    thread_sleep(frame_duration - elapsed);
+                } else {
+                    warn!("Frame processing took too long {}us", elapsed.as_micros());
+                }
+            }
+            if self.resync_counter >= FRAME_RESYNC_PERIOD {
+                self.resync_counter = 0;
+            } else {
+                self.resync_counter += 1;
             }
         }
     }
