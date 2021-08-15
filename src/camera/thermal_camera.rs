@@ -87,27 +87,33 @@ where
     }
 }
 
+// This is a dirty hack. I was having trouble implementing ThermalCamera while being generic over
+// the underlying mlx9064x::CameraDriver. When GATs are stabilized, there's a 'gat' branch on
+// mlx9064x and 'mlx9064x-gat' branch for r-u-still-there that are much simpler.
+macro_rules! melexis_camera {
+    ($name:ident, $driver:path) => {
+
 /// A wrapper over Melexis cameras to implement [`ThermalCamera`]
 ///
 /// Melexis cameras only update half of the frame at a time (either in a chessboard pattern or by
 /// interleaving the rows). This wrapper uses an internal buffer so that it can provide the full
 /// image at all times.
 #[derive(Debug)]
-pub(crate) struct Mlx90640<I2C> {
-    camera: mlx9064x::Mlx90640Driver<I2C>,
+pub(crate) struct $name<I2C> {
+    camera: $driver,
 
     /// The thermal image buffer.
     // It needs to be a Vec as different Melexis cameras have different resolutions.
     temperature_buffer: Vec<f32>,
 }
 
-impl<I2C> Mlx90640<I2C>
+impl<I2C> $name<I2C>
 where
     I2C: i2c::WriteRead + i2c::Write,
     <I2C as i2c::WriteRead>::Error: 'static + StdError + Sync + Send,
     <I2C as i2c::Write>::Error: 'static + StdError + Sync + Send,
 {
-    pub(crate) fn new(camera: mlx9064x::Mlx90640Driver<I2C>) -> Self {
+    pub(crate) fn new(camera: $driver) -> Self {
         let num_pixels = camera.height() * camera.width();
         Self {
             camera,
@@ -116,7 +122,7 @@ where
     }
 }
 
-impl<I2C> ThermalCamera for Mlx90640<I2C>
+impl<I2C> ThermalCamera for $name<I2C>
 where
     I2C: 'static + i2c::WriteRead + i2c::Write,
     <I2C as i2c::WriteRead>::Error: 'static + StdError + fmt::Debug + Sync + Send,
@@ -140,11 +146,6 @@ where
     fn thermal_image(&mut self) -> anyhow::Result<(image_buffer::ThermalImage, YAxisDirection)> {
         // TODO: There's something off in how the frames are being timed that I'm still tracking
         // down.
-        /*
-        while ! self.camera.generate_image_if_ready(&mut self.temperature_buffer)? {
-            yield_now();
-        }
-        */
         if !self
             .camera
             .generate_image_if_ready(&mut self.temperature_buffer)?
@@ -167,7 +168,7 @@ where
         let thermal_image = buffer_image
             .try_into_buffer()
             .map_err(|e| e.0)
-            .context("Unable to convert ML90640 scratch buffer into an ImageBuffer")?;
+            .context("Unable to convert ML9064x scratch buffer into an ImageBuffer")?;
         Ok((thermal_image, YAxisDirection::Down))
     }
 
@@ -185,3 +186,8 @@ where
         Ok(self.camera.synchronize()?)
     }
 }
+    };
+}
+
+melexis_camera!(Mlx90640, mlx9064x::Mlx90640Driver<I2C>);
+melexis_camera!(Mlx90641, mlx9064x::Mlx90641Driver<I2C>);

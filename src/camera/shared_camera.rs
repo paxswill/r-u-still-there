@@ -11,7 +11,7 @@ use std::thread::{sleep as thread_sleep, Builder, JoinHandle as ThreadJoinHandle
 use std::time::{Duration, Instant};
 
 use super::settings::{CameraKind, CameraSettings, Rotation};
-use super::thermal_camera::{Mlx90640, ThermalCamera, YAxisDirection};
+use super::thermal_camera::{Mlx90640, Mlx90641, ThermalCamera, YAxisDirection};
 use crate::image_buffer::ThermalImage;
 use crate::temperature::Temperature;
 
@@ -181,7 +181,10 @@ impl TryFrom<&CameraSettings> for Camera {
                 Box::new(camera_wrapper)
             }
             CameraKind::Mlx90641(i2c) => {
-                todo!();
+                let bus = I2cdev::try_from(&i2c.bus).context("Unable to create I2C bus")?;
+                let inner_camera = mlx9064x::Mlx90641Driver::new(bus, i2c.address)?;
+                let camera_wrapper = Mlx90641::new(inner_camera);
+                Box::new(camera_wrapper)
             }
         };
         camera.set_frame_rate(settings.frame_rate())?;
