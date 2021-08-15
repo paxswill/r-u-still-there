@@ -72,6 +72,10 @@ impl Camera {
     fn measurement_loop(&mut self) -> anyhow::Result<()> {
         let frame_duration =
             Duration::from_micros(MICROS_IN_SECOND / self.settings.frame_rate() as u64);
+        // The Melexis cameras are slightly slow, but at least they're consistently slow across
+        // frame rates. GridEYEs will tolerate off-frame access as they lock the memory during the
+        // I2C transaction.
+        let frame_duration = frame_duration.mul_f32(1.02);
         loop {
             // Respond to any pending commands
             for cmd in self.command_receiver.try_iter() {
