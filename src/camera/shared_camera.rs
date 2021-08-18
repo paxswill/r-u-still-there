@@ -3,15 +3,14 @@ use anyhow::Context;
 use image::imageops;
 use linux_embedded_hal::I2cdev;
 use tokio::sync::{broadcast, oneshot};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use std::convert::{TryFrom, TryInto};
 use std::sync::{mpsc, Arc};
 use std::thread::{sleep as thread_sleep, Builder, JoinHandle as ThreadJoinHandle};
-use std::time::{Duration, Instant};
 
 use super::settings::{CameraKind, CameraSettings, Rotation};
-use super::thermal_camera::{Mlx90640, Mlx90641, ThermalCamera, YAxisDirection};
+use super::thermal_camera::{GridEye, Mlx90640, Mlx90641, ThermalCamera, YAxisDirection};
 use crate::image_buffer::ThermalImage;
 use crate::temperature::Temperature;
 
@@ -31,11 +30,6 @@ pub(crate) enum CameraCommand {
     Shutdown,
 }
 
-const MICROS_IN_SECOND: u64 = 1_000_000;
-
-/// How many frames to process before synchronizing camera frame access.
-const FRAME_RESYNC_PERIOD: u32 = 1_000_000;
-
 /// Retrieve measurements from a camera.
 ///
 /// This structure runs on a separate thread in an attempt to keep the timing as close to the
@@ -46,7 +40,6 @@ pub(crate) struct Camera {
     measurement_channel: broadcast::Sender<Measurement>,
     command_receiver: mpsc::Receiver<CameraCommand>,
     command_sender: mpsc::Sender<CameraCommand>,
-    resync_counter: u32,
 }
 
 impl Camera {
@@ -70,12 +63,6 @@ impl Camera {
     /// This method is meant to be called from a separate thread. It will only return on error, or
     /// if a [`CameraCommand::Shutdown`] is sent on the command channel.
     fn measurement_loop(&mut self) -> anyhow::Result<()> {
-        let frame_duration =
-            Duration::from_micros(MICROS_IN_SECOND / self.settings.frame_rate() as u64);
-        // The Melexis cameras are slightly slow, but at least they're consistently slow across
-        // frame rates. GridEYEs will tolerate off-frame access as they lock the memory during the
-        // I2C transaction.
-        let frame_duration = frame_duration.mul_f32(1.02);
         loop {
             // Respond to any pending commands
             for cmd in self.command_receiver.try_iter() {
@@ -94,68 +81,46 @@ impl Camera {
                     }
                 }
             }
-            // Capture an image and measure the temperature then send it off to any subscribers.
-            let start_processing = Instant::now();
-            let image = Arc::new(self.get_frame()?);
-            let temperature = self.get_temperature()?;
-            let measurement = Measurement { image, temperature };
+            // Capture a measurement from the camera, apply image transformations, and wait for the
+            // next frame.
+            let super::thermal_camera::Measurement {
+                mut image,
+                y_direction,
+                temperature,
+                frame_delay,
+            } = self.camera.measure()?;
+
+            // If the image returned from the camera is with the Y-Axis pointing up, or if the
+            // user has specified the image should be flipped, we need to flip the image it along
+            // the Y-axis.
+            if y_direction == YAxisDirection::Up || self.settings.flip_vertical {
+                imageops::flip_vertical_in_place(&mut image);
+            }
+            // The rest of the basic image transformations
+            if self.settings.flip_horizontal {
+                imageops::flip_horizontal_in_place(&mut image);
+            }
+            image = match self.settings.rotation {
+                Rotation::Zero => image,
+                Rotation::Ninety => imageops::rotate90(&image),
+                Rotation::OneEighty => {
+                    imageops::rotate180_in_place(&mut image);
+                    image
+                }
+                Rotation::TwoSeventy => imageops::rotate270(&image),
+            };
+            let channel_measurement = Measurement {
+                image: Arc::new(image),
+                temperature,
+            };
             // Don't care if it fails or not, as failures are temporary.
             #[allow(unused_must_use)]
             {
-                self.measurement_channel.send(measurement);
+                self.measurement_channel.send(channel_measurement);
             }
-            if self.resync_counter == 0 {
-                self.camera.synchronize()?;
-            } else {
-                let elapsed = start_processing.elapsed();
-                if elapsed < frame_duration {
-                    thread_sleep(frame_duration - elapsed);
-                } else {
-                    warn!("Frame processing took too long {}us", elapsed.as_micros());
-                }
-            }
-            if self.resync_counter >= FRAME_RESYNC_PERIOD {
-                self.resync_counter = 0;
-            } else {
-                self.resync_counter += 1;
-            }
+            trace!("Waiting {}us for the next frame", frame_delay.as_micros());
+            thread_sleep(frame_delay);
         }
-    }
-
-    /// Retrieves a frame from the camera.
-    ///
-    /// The image has any transformations applied to it at this stage.
-    fn get_frame(&mut self) -> anyhow::Result<ThermalImage> {
-        let (mut temperatures, y_axis) = self
-            .camera
-            .thermal_image()
-            .context("Unable to retrieve thermal image")?;
-        // At the end of this function, the expected Y-axis direction is pointing down. If the
-        // camera is returning an image different from that, or the user has said the image should
-        // be flipped, we need to flip the image.
-        // (writing this out to make sure I got the logic right)
-        if y_axis == YAxisDirection::Up || self.settings.flip_vertical {
-            imageops::flip_vertical_in_place(&mut temperatures);
-        }
-        // The rest of the basic image transformations
-        if self.settings.flip_horizontal {
-            imageops::flip_horizontal_in_place(&mut temperatures);
-        }
-        temperatures = match self.settings.rotation {
-            Rotation::Zero => temperatures,
-            Rotation::Ninety => imageops::rotate90(&temperatures),
-            Rotation::OneEighty => {
-                imageops::rotate180_in_place(&mut temperatures);
-                temperatures
-            }
-            Rotation::TwoSeventy => imageops::rotate270(&temperatures),
-        };
-        Ok(temperatures)
-    }
-
-    /// Get the current temperature from the camera's thermal sensor (if it has one).
-    fn get_temperature(&mut self) -> anyhow::Result<Temperature> {
-        self.camera.temperature()
     }
 
     pub(crate) fn command_channel(&self) -> mpsc::Sender<CameraCommand> {
@@ -170,12 +135,12 @@ impl TryFrom<&CameraSettings> for Camera {
         let mut camera: Box<dyn ThermalCamera + Send> = match &settings.kind {
             CameraKind::GridEye(i2c) => {
                 let bus = I2cdev::try_from(&i2c.bus).context("Unable to create I2C bus")?;
-                let cam = amg88::GridEye::new(
+                let cam = GridEye::new(
                     bus,
                     i2c.address
                         .try_into()
                         .context("Invalid I2C address given")?,
-                );
+                )?;
                 Box::new(cam)
             }
             CameraKind::Mlx90640(i2c) => {
@@ -200,7 +165,6 @@ impl TryFrom<&CameraSettings> for Camera {
             measurement_channel,
             command_receiver,
             command_sender,
-            resync_counter: 0,
         })
     }
 }
