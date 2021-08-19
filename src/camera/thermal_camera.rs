@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 use image::flat::{FlatSamples, SampleLayout};
 use linux_embedded_hal::I2cdev;
-use tracing::debug;
+use tracing::{debug, trace};
 
 use crate::image_buffer;
+use crate::moving_average::{BoxcarFilter, MovingAverage};
 use crate::temperature::Temperature;
 
 // The direction the Y-axis points in a thermal image.
@@ -114,6 +115,8 @@ impl ThermalCamera for GridEye {
     }
 }
 
+const MELEXIS_MOVING_AVERAGE_LEN: usize = 10;
+
 // This is a dirty hack. I was having trouble implementing ThermalCamera while being generic over
 // the underlying mlx9064x::CameraDriver. When GATs are stabilized, there's a 'gat' branch on
 // mlx9064x and 'mlx9064x-gat' branch for r-u-still-there that are much simpler.
@@ -133,6 +136,8 @@ pub(crate) struct $name {
     temperature_buffer: Vec<f32>,
 
     frame_duration: Option<Duration>,
+
+    average_check_duration: BoxcarFilter<Duration, MELEXIS_MOVING_AVERAGE_LEN>,
 }
 
 impl $name
@@ -143,6 +148,7 @@ impl $name
             camera,
             temperature_buffer: vec![0f32; num_pixels],
             frame_duration: None,
+            average_check_duration: BoxcarFilter::new(),
         }
     }
 
@@ -175,13 +181,9 @@ impl ThermalCamera for $name {
             Some(duration) => duration,
             None => {
                 let full_frame_duration: Duration = self.camera.frame_rate()?.into();
-                // Start with 20% faster than the frame rate, as that's what the datasheet
-                // recommends. The actual frame rate will eventually be found by this function
-                // anyways.
-                let frame_duration = full_frame_duration.mul_f32(0.8);
-                self.frame_duration = Some(frame_duration);
+                self.frame_duration = Some(full_frame_duration);
                 self.camera.synchronize()?;
-                frame_duration
+                full_frame_duration
             }
         };
 
@@ -191,12 +193,15 @@ impl ThermalCamera for $name {
         let mut num_data_checks: i32 = 0;
         let subpage = loop {
             num_data_checks += 1;
-            if let Some(subpage) = self.camera.data_available()? {
+            let data_available_start = Instant::now();
+            let check_result = self.camera.data_available()?;
+            let check_duration = data_available_start.elapsed();
+            self.average_check_duration.push(check_duration);
+            if let Some(subpage) = check_result {
                 break subpage;
             }
             std::thread::yield_now();
         };
-        let data_available_wait_duration = start.elapsed();
         self.camera.generate_image_subpage_to(subpage, &mut self.temperature_buffer)?;
         self.camera.reset_data_available()?;
         let image = self.clone_thermal_image()?;
@@ -211,7 +216,7 @@ impl ThermalCamera for $name {
         // (checking twice so we know we're accessing a frame as soon as it's available). If fewer
         // checks are performed than expected, the frame rate is slowed down. If more checks that
         // expected are performed, the frame rate is sped up.
-        let data_available_check_duration = data_available_wait_duration / num_data_checks as u32;
+        let data_available_check_duration = self.average_check_duration.current_value().unwrap();
         let data_check_difference = num_data_checks - 2;
         if data_check_difference < 0 {
             // Not enough data checks. Only going to slow down by one at a time, as:
