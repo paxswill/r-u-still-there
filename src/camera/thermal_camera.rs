@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::convert::TryFrom;
+use std::ops::RangeInclusive;
 use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
@@ -95,7 +96,7 @@ impl ThermalCamera for GridEye {
         };
         let frame_delay = frame_duration
             .checked_sub(start.elapsed())
-            .unwrap_or(Duration::from_secs(0));
+            .unwrap_or_default();
         Ok(Measurement {
             image,
             y_direction: YAxisDirection::Up,
@@ -113,6 +114,22 @@ impl ThermalCamera for GridEye {
         self.frame_rate = grideye_frame_rate;
         Ok(())
     }
+}
+
+/// The result of polling for a new frame of data to be available from a Melexis camera.
+#[derive(Copy, Clone, Debug, PartialEq)]
+struct MelexisFramePoll {
+    /// The point in time when the data became available.
+    ///
+    /// If there was more than one check made for data, we can be sure that we caught the frame as
+    /// soon as it became available.
+    frame_start: Option<Instant>,
+
+    /// The number of checks for new data made.
+    data_checks: i32,
+
+    /// Which subpage is ready to be read from the camera.
+    subpage: mlx9064x::Subpage,
 }
 
 const MELEXIS_MOVING_AVERAGE_LEN: usize = 10;
@@ -135,19 +152,32 @@ pub(crate) struct $name {
     // It needs to be a Vec as different Melexis cameras have different resolutions.
     temperature_buffer: Vec<f32>,
 
-    frame_duration: Option<Duration>,
+    previous_frame_start: Option<Instant>,
+
+    average_frame_duration: BoxcarFilter<Duration, MELEXIS_MOVING_AVERAGE_LEN>,
 
     average_check_duration: BoxcarFilter<Duration, MELEXIS_MOVING_AVERAGE_LEN>,
 }
 
-impl $name
-{
+impl $name {
+    /// The number of poll durations to shorten the frame duration by while resynchronizing with
+    /// the camera.
+    const SHORTEN_POLL_COUNT: u32 = 2;
+
+    /// The bounds for the number of checks to make.
+    const NUM_CHECKS_BOUNDS: RangeInclusive<i32> = 3..=4;
+
+    /// The weight for phase corrections. Applying the full phase correction usually ends up
+    /// overshooting the target and then a resync is needed.
+    const PHASE_GAIN: f32 = 0.75;
+
     pub(crate) fn new(camera: $driver) -> Self {
         let num_pixels = camera.height() * camera.width();
         Self {
             camera,
             temperature_buffer: vec![0f32; num_pixels],
-            frame_duration: None,
+            previous_frame_start: None,
+            average_frame_duration: BoxcarFilter::new(),
             average_check_duration: BoxcarFilter::new(),
         }
     }
@@ -171,25 +201,8 @@ impl $name
             .map_err(|e| e.0)
             .context("Unable to convert ML9064x scratch buffer into an ImageBuffer")
     }
-}
 
-impl ThermalCamera for $name {
-    fn measure(&mut self) -> anyhow::Result<Measurement> {
-        // When frame_duration is None, read the current frame rate from the camera, then
-        // synchronize with the camera
-        let mut frame_duration = match self.frame_duration {
-            Some(duration) => duration,
-            None => {
-                let full_frame_duration: Duration = self.camera.frame_rate()?.into();
-                self.frame_duration = Some(full_frame_duration);
-                self.camera.synchronize()?;
-                full_frame_duration
-            }
-        };
-
-        let start = Instant::now();
-        // Get the thermal image first, as the temperature is retrieved and calculated as part of
-        // that process.
+    fn poll_frame(&mut self) -> anyhow::Result<MelexisFramePoll> {
         let mut num_data_checks: i32 = 0;
         let subpage = loop {
             num_data_checks += 1;
@@ -202,54 +215,100 @@ impl ThermalCamera for $name {
             }
             std::thread::yield_now();
         };
-        self.camera.generate_image_subpage_to(subpage, &mut self.temperature_buffer)?;
+        let frame_start = if num_data_checks > 1 {
+            Some(Instant::now())
+        } else {
+            None
+        };
+        Ok(MelexisFramePoll {
+            frame_start,
+            data_checks: num_data_checks,
+            subpage,
+        })
+    }
+
+    fn calculate_frame_delay(&mut self, poll_result: &MelexisFramePoll) -> Duration {
+        // Safe to unwrap as self.poll_frame() populates average_check_duration
+        let poll_duration = self.average_check_duration.current_value().unwrap();
+        match (self.previous_frame_start, poll_result.frame_start) {
+            (Some(prev_frame), Some(this_frame)) => {
+                // Since we know both when this frame and the last frame started, we can assume the
+                // frame rate is fairly close to the actual value. In this case there is no frame
+                // length adjustment required.
+                let frame_duration = self.average_frame_duration.update(this_frame.duration_since(prev_frame));
+                // Only if we're synced up with the frame signal should phase corrections be
+                // applied. We also know that the number of data checks for this frame was > 1, as
+                // otherwise frame_start would be None.
+                let phase_correction = if !Self::NUM_CHECKS_BOUNDS.contains(&poll_result.data_checks) {
+                    poll_result.data_checks - Self::NUM_CHECKS_BOUNDS.end()
+                } else {
+                    0
+                };
+                trace!(
+                    ?poll_result,
+                    ?poll_duration,
+                    ?frame_duration,
+                    ?phase_correction,
+                    "Calculating base frame duration from actual frames."
+                );
+                let phase_correction = phase_correction as f32 * Self::PHASE_GAIN;
+                if phase_correction < 0f32 {
+                    frame_duration - poll_duration.mul_f32(phase_correction.abs())
+                } else if phase_correction > 0f32 {
+                    frame_duration + poll_duration.mul_f32(phase_correction)
+                } else {
+                    frame_duration
+                }
+            }
+            _ => {
+                // If we're not synced with the frame signal, start shortening the current frame
+                // rate until we get back in sync.
+                // If we would end up with a negative duration, default to 0
+                let current_duration = self.average_frame_duration
+                    .current_value()
+                    .and_then(|d| d.checked_sub(poll_duration * Self::SHORTEN_POLL_COUNT))
+                    .unwrap_or_default();
+                trace!(
+                    ?poll_result,
+                    ?poll_duration,
+                    frame_duration = ?current_duration,
+                    "Shortening current frame duration."
+                );
+                current_duration
+            }
+        }
+    }
+}
+
+impl ThermalCamera for $name {
+
+    fn measure(&mut self) -> anyhow::Result<Measurement> {
+        let start = Instant::now();
+        let poll_result = self.poll_frame()?;
+        // Get the thermal image first, as the temperature is retrieved and calculated as part of
+        // that process.
+        self.camera.generate_image_subpage_to(poll_result.subpage, &mut self.temperature_buffer)?;
         self.camera.reset_data_available()?;
         let image = self.clone_thermal_image()?;
         // Safe to unwrap as the temperature is calculated when the image is retrieved.
         let temperature = Temperature::Celsius(self.camera.ambient_temperature().unwrap());
-        // Calculate how long to wait for. In a perfect world, this would be the per-frame
-        // duration, less how long it takes to retrieve and calculate the thermal image and
-        // temperature. In the real world, Melexis cameras run about 1-2% slow. The slow down is
-        // (usually) consistent for a single frame rate, but is not consistent across camera
-        // models. To correct for this, the frame duration is tracked within this wrapper struct,
-        // and is adjusted so that the camera status register is checked twice for each frame
-        // (checking twice so we know we're accessing a frame as soon as it's available). If fewer
-        // checks are performed than expected, the frame rate is slowed down. If more checks that
-        // expected are performed, the frame rate is sped up.
-        let data_available_check_duration = self.average_check_duration.current_value().unwrap();
-        let data_check_difference = num_data_checks - 2;
-        if data_check_difference < 0 {
-            // Not enough data checks. Only going to slow down by one at a time, as:
-            // A) That's the only duration we have
-            // B) We don't want to overshoot and go too slow
-            // Also guard against transient spikes in latency by skipping the adjustment if it
-            // is larger than the frame duration itself.
-            if data_available_check_duration < frame_duration {
-                frame_duration -= data_available_check_duration;
-            } else {
-                debug!(
-                    "Skipping frame duration adjustment as {}us >= {}us",
-                    data_available_check_duration.as_micros(),
-                    frame_duration.as_micros()
-                );
-            }
-        } else if data_check_difference > 0 {
-            frame_duration += data_available_check_duration * data_check_difference as u32;
-        }
+        // The basic frame delay, without compensating for how long the measurement took
+        let base_frame_delay = self.calculate_frame_delay(&poll_result);
+        // Update the frame start
+        self.previous_frame_start = poll_result.frame_start;
         let measurement_duration = start.elapsed();
-        let frame_delay = match frame_duration.checked_sub(measurement_duration) {
+        let frame_delay = match base_frame_delay.checked_sub(measurement_duration) {
             None => {
                 debug!(
                     ?measurement_duration,
-                    ?frame_duration,
+                    ?base_frame_delay,
                     "Measurement time is greater than the frame duration"
                 );
                 // Just wait for the next frame, hopefully it will be better
-                frame_duration
+                base_frame_delay
             }
             Some(frame_delay) => frame_delay,
         };
-        self.frame_duration = Some(frame_duration);
         Ok(Measurement {
             image,
             y_direction: YAxisDirection::Down,
@@ -265,8 +324,8 @@ impl ThermalCamera for $name {
         self.camera
             .set_frame_rate(mlx_frame_rate)
             .context("Error setting MLX9064x frame rate")?;
-        // Let measure() know that a resync is needed
-        self.frame_duration = None;
+        // Reset the frame duration average.
+        self.average_frame_duration = BoxcarFilter::new();
         Ok(())
     }
 }
