@@ -7,7 +7,7 @@ use serde::de::{self, Deserialize, DeserializeSeed, Deserializer, MapAccess, Vis
 use serde_repr::Deserialize_repr;
 use tracing::{debug, error};
 
-use super::{Bus, I2cSettings};
+use super::I2cSettings;
 use crate::settings::Args;
 
 // This enum is purely used to restrict the acceptable values for rotation
@@ -24,6 +24,8 @@ pub(crate) enum Rotation {
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub(crate) enum CameraKind {
     GridEye(I2cSettings),
+    Mlx90640(I2cSettings),
+    Mlx90641(I2cSettings),
 }
 
 #[derive(Clone, Debug)]
@@ -50,18 +52,8 @@ impl CameraKind {
     fn default_frame_rate(&self) -> u8 {
         match self {
             CameraKind::GridEye(_) => 10,
-        }
-    }
-
-    pub(crate) fn set_bus(&mut self, new_bus: Bus) {
-        match self {
-            CameraKind::GridEye(i2c) => i2c.bus = new_bus,
-        }
-    }
-
-    pub(crate) fn set_address(&mut self, new_address: u8) {
-        match self {
-            CameraKind::GridEye(i2c) => i2c.address = new_address,
+            CameraKind::Mlx90640(_) => 2,
+            CameraKind::Mlx90641(_) => 2,
         }
     }
 }
@@ -174,9 +166,9 @@ impl<'de, 'a> DeserializeSeed<'de> for CameraSettingsArgs<'a> {
                         Field::Unknown(_) => {}
                     }
                 }
-                // kind is required, and depending on the kind there may be other required fields.
-                // kid is required, and can be given either by being deserialized, or as a CLI
-                // argument in Args
+                // kind is required, and can be given either by being deserialized, or as a CLI
+                // argument in Args. There may also be other required fields depending on the value
+                // of kind.
                 let kind = self
                     .0
                     .camera_kind
@@ -203,6 +195,18 @@ impl<'de, 'a> DeserializeSeed<'de> for CameraSettingsArgs<'a> {
                         let bus = bus.ok_or_else(|| de::Error::missing_field("bus"))?;
                         let address = address.ok_or_else(|| de::Error::missing_field("address"))?;
                         CameraKind::GridEye(I2cSettings { bus, address })
+                    }
+                    "mlx90640" => {
+                        debug!(camera_kind = %kind, "using a MLX90640");
+                        let bus = bus.ok_or_else(|| de::Error::missing_field("bus"))?;
+                        let address = address.ok_or_else(|| de::Error::missing_field("address"))?;
+                        CameraKind::Mlx90640(I2cSettings { bus, address })
+                    }
+                    "mlx90641" => {
+                        debug!(camera_kind = %kind, "using a MLX90641");
+                        let bus = bus.ok_or_else(|| de::Error::missing_field("bus"))?;
+                        let address = address.ok_or_else(|| de::Error::missing_field("address"))?;
+                        CameraKind::Mlx90641(I2cSettings { bus, address })
                     }
                     _ => {
                         error!(camera_kind = %kind, "unknown camera kind");

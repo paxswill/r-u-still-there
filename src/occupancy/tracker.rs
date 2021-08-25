@@ -14,6 +14,7 @@ use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
 
 use super::Threshold;
+use crate::camera::Measurement;
 use crate::image_buffer::ThermalImage;
 
 #[derive(Clone, Debug)]
@@ -91,7 +92,7 @@ impl Default for Tracker {
     }
 }
 
-impl Sink<ThermalImage> for Tracker {
+impl Sink<Measurement> for Tracker {
     type Error = Infallible;
 
     fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
@@ -99,8 +100,8 @@ impl Sink<ThermalImage> for Tracker {
         Poll::Ready(Ok(()))
     }
 
-    fn start_send(mut self: Pin<&mut Self>, image: ThermalImage) -> Result<(), Self::Error> {
-        self.update(&image);
+    fn start_send(mut self: Pin<&mut Self>, measurement: Measurement) -> Result<(), Self::Error> {
+        self.update(&measurement.image);
         Ok(())
     }
 

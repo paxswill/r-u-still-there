@@ -151,6 +151,30 @@ r-u-still-there better addresses:
 All that being said, I'm still very thankful to room-assistant for inspiring me
 to create r-u-still-there.
 
+#### What are the warning messages about a measurement stream lagging about?
+
+This usually happens if the CPU can't keep up with the frames coming off of the
+camera. Try some of the suggestions above for reducing CPU usage.
+
+#### How can I stop r-u-still-there from crashing after a few minutes when using a Melexis Camera on a Raspberry Pi?
+
+The Raspberry Pi's I2C clocks are based off of the core clock, and the core
+clock will (by default) vary based on the overall system's CPU usage. To stop
+this, you need to set `core_freq=250`. It is also possible to set
+`force_turbo=1`, but be aware that if you have *any* of the `over_voltage_*`
+values set the warranty bit will be permanently set. See the documentation on
+[overlocking options][rpi-oc] for more details.
+
+[rpi-oc]: https://www.raspberrypi.org/documentation/computers/config_txt.html#overclocking-options
+
+If you have `enable_uart` set, `core_freq=250` is implicitly set, so you don;t
+need to make any changes *unless you have also disabled Bluetooth*.
+
+If you hook a logic analyzer up to your I2C bus, this issue will manifest as the
+first few frames being transferred at full speed (default is 100kHz, but 400kHz
+is the recommended setting for r-u-still-there), then dropping to either 62.5%
+(older Pis) or 40% (Pi 4) of the normal speed.
+
 ## Development
 
 This repository should just build with `cargo` once checked out from git:

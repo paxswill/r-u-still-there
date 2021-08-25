@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::convert;
 use std::ops::{self, DerefMut};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use std::vec::Vec;
 
 use bytes::{Bytes, BytesMut};
@@ -12,7 +13,6 @@ use image::{ImageBuffer, Pixel, Primitive};
 pub trait Average<Div, Result = Self> {
     fn add(&self, rhs: &Self) -> Result;
     fn sub(&self, rhs: &Self) -> Result;
-    fn mul(&self, rhs: &Self) -> Result;
     fn div(&self, rhs: &Div) -> Result;
 }
 
@@ -34,9 +34,6 @@ macro_rules! average_primitive {
             fn sub(&self, rhs: &Self) -> Self {
                 self - rhs
             }
-            fn mul(&self, rhs: &Self) -> Self {
-                self * rhs
-            }
             fn div(&self, rhs: &Div) -> Self {
                 let divisor: $primitive = Into::<$primitive>::into(*rhs);
                 self / divisor
@@ -47,7 +44,7 @@ macro_rules! average_primitive {
             Div: convert::Into<$primitive> + Copy,
         {
             fn add_assign(&mut self, rhs: &Self) {
-                *self += rhs;
+                *self += *rhs;
             }
 
             fn sub_assign(&mut self, rhs: &Self) {
@@ -62,6 +59,30 @@ average_primitive!(f64);
 average_primitive!(u8);
 average_primitive!(u16);
 average_primitive!(u32);
+
+impl Average<u16> for Duration {
+    fn add(&self, rhs: &Self) -> Self {
+        *self + *rhs
+    }
+
+    fn sub(&self, rhs: &Self) -> Self {
+        *self - *rhs
+    }
+
+    fn div(&self, rhs: &u16) -> Self {
+        *self / *rhs as u32
+    }
+}
+
+impl AverageMut<u16> for Duration {
+    fn add_assign(&mut self, rhs: &Self) {
+        *self += *rhs
+    }
+
+    fn sub_assign(&mut self, rhs: &Self) {
+        *self -= *rhs
+    }
+}
 
 // It'd be nice if I could make this generic over types that implemented Deref<Target=[T]>, but
 // Rust says no (at least until sealed traits (or maybe negative constraints) are a thing?).
@@ -93,10 +114,6 @@ macro_rules! average_container {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
                 self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
             }
-            fn mul(&self, other: &Self) -> Self {
-                assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs * *rhs).collect()
-            }
             fn div(&self, rhs: &Div) -> $return_typ {
                 let divisor: $inner_typ = Into::<$inner_typ>::into(*rhs);
                 self.iter().map(|lhs| *lhs / divisor).collect()
@@ -119,10 +136,6 @@ macro_rules! average_container {
             fn sub(&self, other: &Self) -> $return_typ {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
                 self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
-            }
-            fn mul(&self, other: &Self) -> $return_typ {
-                assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs * *rhs).collect()
             }
             fn div(&self, rhs: &Div) -> $return_typ {
                 let divisor: T = Into::<T>::into(*rhs);
@@ -197,12 +210,6 @@ where
     }
 
     fn sub(&self, rhs: &Self) -> Self {
-        let new_raw = self.as_raw().sub(rhs.as_raw());
-        ImageBuffer::from_raw(self.width(), self.height(), new_raw)
-            .expect("An identically sized Vec to work as an image")
-    }
-
-    fn mul(&self, rhs: &Self) -> Self {
         let new_raw = self.as_raw().sub(rhs.as_raw());
         ImageBuffer::from_raw(self.width(), self.height(), new_raw)
             .expect("An identically sized Vec to work as an image")
