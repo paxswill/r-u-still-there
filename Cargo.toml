@@ -4,7 +4,7 @@ edition = "2018"
 license = "GPL-3.0-or-later"
 name = "r-u-still-there"
 repository = "https://git.sr.ht/~paxswill/r-u-still-there"
-version = "0.1.1"
+version = "0.2.0"
 description = "Occupancy sensors for home automation using thermal cameras."
 readme = "ReadMe.md"
 
