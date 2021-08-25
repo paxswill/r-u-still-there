@@ -21,8 +21,6 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::sync::{mpsc, Arc};
 use std::task::{Context, Poll};
-use std::thread::JoinHandle as ThreadJoinHandle;
-use std::vec::Vec;
 
 use crate::camera::{Camera, CameraCommand, Measurement};
 use crate::image_buffer::BytesImage;
@@ -68,7 +66,6 @@ where
 #[pin_project]
 pub(crate) struct Pipeline {
     camera_command_channel: mpsc::Sender<CameraCommand>,
-    camera_join_handle: ThreadJoinHandle<anyhow::Result<()>>,
     rendered_source: spmc::Sender<BytesImage>,
     mqtt_client: MqttClient,
     status: State<Status, ArcDevice>,
@@ -86,7 +83,12 @@ impl Pipeline {
             .try_into()
             .context("Error configuring camera")?;
         let camera_command_channel = camera.command_channel();
-        let camera_join_handle = camera.spawn().context("Error starting camera thread")?;
+        let camera_task = spawn_blocking(move || {
+                camera.measurement_loop()
+                    .context("Error within camera frame thread")
+            })
+            .map(flatten_join_result)
+            .boxed();
         let frame_rate_limit = config.streams.common_frame_rate();
         let measurement_stream = Self::create_measurement_stream(&camera_command_channel)
             .await
@@ -94,7 +96,7 @@ impl Pipeline {
         let (rendered_source, render_task) =
             create_renderer(measurement_stream, config.render, frame_rate_limit)?;
         // Once IntoIterator is implemented for arrays, this line can be simplified
-        let tasks: TaskList = std::array::IntoIter::new([render_task]).collect();
+        let tasks: TaskList = std::array::IntoIter::new([render_task, camera_task]).collect();
         debug!("Opening connection to MQTT broker");
         let (mqtt_client, loop_task, status) = connect_mqtt(&config.mqtt)
             .await
@@ -105,7 +107,6 @@ impl Pipeline {
         let hass_device = Self::create_device(&config.mqtt.name, config.mqtt.unique_id());
         let mut app = Self {
             camera_command_channel,
-            camera_join_handle,
             rendered_source,
             mqtt_client,
             status,

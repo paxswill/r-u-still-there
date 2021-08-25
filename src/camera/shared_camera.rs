@@ -3,11 +3,11 @@ use anyhow::Context;
 use image::imageops;
 use linux_embedded_hal::I2cdev;
 use tokio::sync::{broadcast, oneshot};
-use tracing::{debug, error, info, trace, warn};
+use tracing::{debug, info, trace, warn};
 
 use std::convert::{TryFrom, TryInto};
 use std::sync::{mpsc, Arc};
-use std::thread::{sleep as thread_sleep, Builder, JoinHandle as ThreadJoinHandle};
+use std::thread::sleep as thread_sleep;
 
 use super::settings::{CameraKind, CameraSettings, Rotation};
 use super::thermal_camera::{GridEye, Mlx90640, Mlx90641, ThermalCamera, YAxisDirection};
@@ -43,26 +43,11 @@ pub(crate) struct Camera {
 }
 
 impl Camera {
-    /// Spawn the camera thread.
-    pub(crate) fn spawn(mut self) -> std::io::Result<ThreadJoinHandle<anyhow::Result<()>>> {
-        Builder::new()
-            .name("camera frame access".to_string())
-            .spawn(move || {
-                // Log the error, so if the join handle isn't checked before termination we still
-                // get logs out of it
-                let res = self.measurement_loop();
-                if let Err(ref error) = res {
-                    error!("Camera loop error: {:?}", error)
-                }
-                res
-            })
-    }
-
     /// Retrieve and publish measurements from the camera at the specified frame rate
     ///
-    /// This method is meant to be called from a separate thread. It will only return on error, or
-    /// if a [`CameraCommand::Shutdown`] is sent on the command channel.
-    fn measurement_loop(&mut self) -> anyhow::Result<()> {
+    /// This is a blocking function that won't return until a [`CommandChannel::Shutdown`] is sent
+    /// through a command channel from another thread (or it encounters an error).
+    pub(crate) fn measurement_loop(mut self) -> anyhow::Result<()> {
         loop {
             // Respond to any pending commands
             for cmd in self.command_receiver.try_iter() {
