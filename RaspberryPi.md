@@ -118,7 +118,7 @@ headless access, step 5 is where the interesting stuff starts.
 
    printf "Package: *\nPin: origin deb.paxswill.com\nPin-Priority: -1\n\n" | sudo tee /etc/apt/preferences.d/paxswill
 
-   for PKG in r-u-still-there{,-v6,-v7}; do printf "Package: %s\nPin: origin deb.paxswill.com\nPin-Priority: 2\n\n" "$PKG"; done | sudo tee --append /etc/apt/preferences.d/paxswill
+   for PKG in r-u-still-there{,-v6,-v7}; do printf "Package: %s\nPin: origin deb.paxswill.com\nPin-Priority: 100\n\n" "$PKG"; done | sudo tee --append /etc/apt/preferences.d/paxswill
    ```
    Now we update apt and install r-u-still-there. Do note that there are two
    packages for 32-bit ARM processors. If you're using a Raspberry Pi 1 or Zero,
