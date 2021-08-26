@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use image::RgbaImage;
+use image::GrayImage;
 
 use crate::image_buffer::ThermalImage;
 use crate::temperature::TemperatureUnit;
@@ -8,19 +8,17 @@ pub(super) const DEJA_VU_SANS: &[u8] = include_bytes!("DejaVuSans-Numbers.ttf");
 pub(super) const FONT_SIZE: f32 = 12.0;
 
 pub(crate) trait FontRenderer: std::fmt::Debug {
-    /// Render the text for temperatures from `temperatures` on to `grid_image`, in the temperature
-    /// units specified. The colors in `temperature_colors` can be used to choose a text color with
-    /// for better contrast. Each temperature "pixel" in `temperatures` corresponds to a pixel in
-    /// `temperature_colors`. Each temperature is represented by a `grid_size` pixel square in
-    /// `grid_image`.
+    /// Render the text for temperatures onto a mask image
+    ///
+    /// Each temperature in temperatures corresponds to a square `grid_size` pixels wide. The
+    /// temperatures in `temperatures` are `f32` values in Celsius, and should be rendered as the
+    /// units specified in `units`.
     fn render_text(
         &self,
         grid_size: usize,
         units: TemperatureUnit,
         temperatures: &ThermalImage,
-        temperature_colors: &RgbaImage,
-        grid_image: &mut RgbaImage,
-    ) -> anyhow::Result<()>;
+    ) -> anyhow::Result<GrayImage>;
 }
 
 /// Create a font renderer based on what has been enabled for this build.

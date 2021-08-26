@@ -4,20 +4,19 @@
 use std::fmt;
 use std::sync::{Arc, Mutex};
 
-use bytes::Bytes;
 use fontdue::layout::{
     CoordinateSystem, HorizontalAlign, Layout, LayoutSettings, TextStyle, VerticalAlign,
 };
 use fontdue::{Font, FontSettings};
 
+use image::error::ImageResult;
 use image::imageops::overlay;
-use image::{GenericImage, GrayImage, ImageBuffer, Pixel, Rgb, RgbaImage};
+use image::{GenericImage, GrayImage, ImageBuffer};
 use lru::LruCache;
 use tracing::trace;
 
 use super::font;
-use crate::image_buffer::{BytesImage, ThermalImage};
-use crate::render::color;
+use crate::image_buffer::ThermalImage;
 use crate::temperature::{Temperature, TemperatureUnit};
 
 // Just choosing 50, it felt like a good number.
@@ -27,7 +26,7 @@ pub(crate) struct FontdueRenderer {
     layout: Arc<Mutex<Layout>>,
     // We can use just the temperature as the key as the text color is dependent on the
     // temperature as well.
-    cache: Arc<Mutex<LruCache<(Temperature, u32), BytesImage>>>,
+    cache: Arc<Mutex<LruCache<(Temperature, u32), GrayImage>>>,
 }
 
 #[cfg(feature = "render_fontdue")]
@@ -41,12 +40,7 @@ impl FontdueRenderer {
         }
     }
 
-    fn render_cell(
-        &self,
-        temperature: Temperature,
-        text_color: color::Color,
-        grid_size: u32,
-    ) -> BytesImage {
+    fn render_cell(&self, temperature: Temperature, grid_size: u32) -> GrayImage {
         // Reset the fontdue context to a known default
         let mut layout = self.layout.lock().unwrap();
         layout.reset(&LayoutSettings {
@@ -72,17 +66,7 @@ impl FontdueRenderer {
                 .expect("the provided buffer to be large enough");
             overlay(&mut mask, &bitmap, glyph.x as u32, glyph.y as u32)
         }
-        // Combine the provided color (`text_color`) with the opacity in `mask`. Also expand to an RGBA image
-        // at this point.
-        let text_color_pixel: Rgb<_> = text_color.as_array().into();
-        let mut cell = RgbaImage::from_pixel(grid_size, grid_size, text_color_pixel.to_rgba());
-        cell.pixels_mut()
-            .zip(mask.pixels().map(|pixel| pixel.0[0]))
-            .for_each(|(pixel, opacity)| {
-                pixel.channels_mut()[3] = opacity;
-            });
-        ImageBuffer::from_raw(grid_size, grid_size, Bytes::from(cell.into_raw()))
-            .expect("the conversion from a Vec ImageBuffer to a Bytes ImageBuffer to work")
+        mask
     }
 }
 
@@ -104,38 +88,29 @@ impl font::FontRenderer for FontdueRenderer {
         grid_size: usize,
         units: TemperatureUnit,
         temperatures: &ThermalImage,
-        temperature_colors: &RgbaImage,
-        grid_image: &mut RgbaImage,
-    ) -> anyhow::Result<()> {
+    ) -> anyhow::Result<GrayImage> {
         let grid_size = grid_size as u32;
+        let mut full_mask = GrayImage::new(
+            grid_size * temperatures.width(),
+            grid_size * temperatures.height(),
+        );
         temperatures
             .enumerate_pixels()
-            .zip(temperature_colors.pixels())
             // Map the temperature in Celsius to whatever the requested unit is.
-            .for_each(|((col, row, temperature_pixel), color_pixel)| {
+            .map(|(col, row, temperature_pixel)| {
                 let temperature = Temperature::Celsius(temperature_pixel.0[0]).as_unit(&units);
-                let cell = {
-                    let mut cache = self.cache.lock().unwrap();
-                    let mut cached_cell = cache.get(&(temperature, grid_size));
-                    if cached_cell.is_none() {
-                        trace!(?temperature, "cache miss");
-                        let text_color = color::Color::from(color_pixel).foreground_color();
-                        let mask = self.render_cell(temperature, text_color, grid_size);
-                        cache.put((temperature, grid_size), mask);
-                        cached_cell = cache.get(&(temperature, grid_size));
-                    }
-                    cached_cell.unwrap().clone()
-                };
-                // It'd be nice to use image::imageops::overlay, but it's slow as it has to
-                // handle all the cases with alpha channels and such. In our case, we have an
-                // opaque background, and a mostly transparent foregound. We can skip all
-                // completely transparent foregound pixels and then just blend only those remaining.
-                let mut sub_image =
-                    grid_image.sub_image(col * grid_size, row * grid_size, grid_size, grid_size);
-                cell.enumerate_pixels()
-                    .filter(|(_, _, pixel)| pixel.0[3] != 0)
-                    .for_each(|(x, y, pixel)| sub_image.blend_pixel(x, y, *pixel));
-            });
-        Ok(())
+                let mut cache = self.cache.lock().unwrap();
+                let mut cached_cell = cache.get(&(temperature, grid_size));
+                if cached_cell.is_none() {
+                    trace!(?temperature, "cache miss");
+                    let mask = self.render_cell(temperature, grid_size);
+                    cache.put((temperature, grid_size), mask);
+                    cached_cell = cache.get(&(temperature, grid_size));
+                }
+                let cell = cached_cell.unwrap();
+                full_mask.copy_from(cell, col * grid_size, row * grid_size)
+            })
+            .collect::<ImageResult<()>>()?;
+        Ok(full_mask)
     }
 }

@@ -2,9 +2,25 @@
 use serde::Deserialize;
 use structopt::StructOpt;
 
-use crate::render::{Limit, TemperatureDisplay};
+use crate::render::TemperatureDisplay;
 use crate::settings::gradient;
-use crate::temperature::TemperatureUnit;
+use crate::temperature::{Temperature, TemperatureUnit};
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub(crate) enum Limit {
+    /// Set the maximum (or minimum) to the largest (or smallest) value in the current image.
+    Dynamic,
+
+    /// Set the maximum (or minimum) to the given value.
+    Static(Temperature),
+}
+
+impl Default for Limit {
+    fn default() -> Self {
+        Self::Dynamic
+    }
+}
 
 fn default_grid_size() -> usize {
     50
@@ -112,8 +128,7 @@ impl Default for RenderSettings {
 
 #[cfg(test)]
 mod render_test {
-    use super::{RenderSettings, TemperatureUnit};
-    use crate::render::Limit;
+    use super::{Limit, RenderSettings, TemperatureUnit};
 
     #[test]
     fn defaults() {

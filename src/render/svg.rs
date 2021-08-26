@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::anyhow;
-use image::RgbaImage;
+use image::GrayImage;
 use lazy_static::lazy_static;
 use svg::node::element::{Group, Rectangle, Text as TextElement};
 use svg::node::Text as TextNode;
 use svg::Document;
-use tiny_skia::PixmapMut;
+use tiny_skia::{Pixmap, PixmapMut};
 use tracing::instrument;
 use usvg::{FitTo, Tree};
 
@@ -83,7 +83,6 @@ fn create_document(
     grid_size: u32,
     units: TemperatureUnit,
     temperatures: &ThermalImage,
-    temperature_colors: &image::RgbaImage,
 ) -> Document {
     // `temperatures` and `temperature_colors` are the same size, and each pixel of
     // `temperature_colors` is the color of the background in that grid square.
@@ -96,9 +95,9 @@ fn create_document(
     //   * Set a couple of attributes on the parent SVG document to get the size right.
     temperatures
         .enumerate_pixels()
-        .zip(temperature_colors.pixels())
-        .map(|((col, row, temperature_pixel), color_pixel)| {
-            let text_color = color::Color::from(color_pixel).foreground_color();
+        .map(|(col, row, temperature_pixel)| {
+            // Everything is black
+            let text_color = color::Color::BLACK;
             let grid_cell = Rectangle::new()
                 .set("fill", "none")
                 .set("width", grid_size)
@@ -135,30 +134,30 @@ pub(crate) struct SvgRenderer();
 
 impl font::FontRenderer for SvgRenderer {
     /// Draw the text for temperatures on top of an existing grid.
-    #[instrument(
-        level = "trace",
-        skip(grid_size, units, temperatures, temperature_colors, grid_image)
-    )]
+    #[instrument(level = "trace", skip(grid_size, units, temperatures))]
     fn render_text(
         &self,
         grid_size: usize,
         units: TemperatureUnit,
         temperatures: &ThermalImage,
-        temperature_colors: &RgbaImage,
-        grid_image: &mut RgbaImage,
-    ) -> anyhow::Result<()> {
-        let width = grid_image.width();
-        let height = grid_image.height();
-        let mut samples = grid_image.as_flat_samples_mut();
-        let image_slice = samples.image_mut_slice().ok_or(anyhow!(
-            "Unable to access a mutable slice of the grid image data"
+    ) -> anyhow::Result<GrayImage> {
+        let width = grid_size as u32 * temperatures.width();
+        let height = grid_size as u32 * temperatures.height();
+        let mut pixmap = Pixmap::new(width, height).ok_or(anyhow!(
+            "A Pixmap was not able to be created during SVG rendering"
         ))?;
-        let pixmap = PixmapMut::from_bytes(image_slice, width, height)
-            .ok_or(anyhow!("Unable to create Pixmap for SVG text rendering"))?;
-        let svg = create_document(grid_size as u32, units, temperatures, temperature_colors);
+        let svg = create_document(grid_size as u32, units, temperatures);
         let tree = Tree::from_str(&svg.to_string(), &SVG_OPTS)?;
-        resvg::render(&tree, FitTo::Original, pixmap)
+        resvg::render(&tree, FitTo::Original, pixmap.as_mut())
             .ok_or(anyhow!("Unable to render SVG for text rendering."))?;
-        Ok(())
+        let opacities: Vec<u8> = pixmap
+            .take()
+            .chunks_exact(4)
+            // Safe to unwrap as chunks_exact ensures there's always 4 elements
+            .map(|chunk| *chunk.last().unwrap())
+            .collect();
+        GrayImage::from_vec(width, height, opacities).ok_or(anyhow!(
+            "Unable to convert SVG opacities to ImageBuffer mask"
+        ))
     }
 }
