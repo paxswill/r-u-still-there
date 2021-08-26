@@ -52,6 +52,18 @@ impl From<Color> for (u8, u8, u8) {
     }
 }
 
+impl From<Color> for image::Rgb<u8> {
+    fn from(color: Color) -> Self {
+        color.as_array().into()
+    }
+}
+
+impl From<Color> for image::Rgba<u8> {
+    fn from(color: Color) -> Self {
+        [color.red(), color.green(), color.blue(), u8::MAX].into()
+    }
+}
+
 impl fmt::LowerHex for Color {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -77,13 +89,13 @@ impl fmt::UpperHex for Color {
 }
 
 impl Color {
-    const BLACK: Self = Self {
+    pub const BLACK: Self = Self {
         red: u8::MIN,
         green: u8::MIN,
         blue: u8::MIN,
     };
 
-    const WHITE: Self = Self {
+    pub const WHITE: Self = Self {
         red: u8::MAX,
         green: u8::MAX,
         blue: u8::MAX,
