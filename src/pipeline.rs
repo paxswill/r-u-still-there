@@ -9,7 +9,7 @@ use rumqttc::{
     AsyncClient, ConnectReturnCode, Event, LastWill, MqttOptions as RuMqttOptions, Packet, QoS,
 };
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
-use tokio::task::{spawn_blocking, JoinError};
+use tokio::task::spawn_blocking;
 use tokio::time::Duration;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
 use tracing::{debug, debug_span, error, info, info_span, trace, trace_span, warn};
@@ -29,6 +29,7 @@ use crate::mqtt::{
 };
 use crate::occupancy::Tracker;
 use crate::settings::{Settings, TrackerSettings};
+use crate::util::flatten_join_result;
 use crate::{render, spmc, stream};
 
 const MQTT_BASE_TOPIC: &str = "r-u-still-there";
@@ -45,23 +46,6 @@ type ArcDevice = Arc<hass::Device>;
 type InnerTask = Pin<Box<dyn Future<Output = anyhow::Result<()>>>>;
 type TaskList = FuturesUnordered<InnerTask>;
 type MeasurementStream<'a> = BoxStream<'a, Measurement>;
-
-fn flatten_join_result<E>(join_result: Result<Result<(), E>, JoinError>) -> anyhow::Result<()>
-where
-    anyhow::Error: From<E>,
-{
-    match join_result {
-        Ok(inner_result) => Ok(inner_result?),
-        Err(join_error) => {
-            if join_error.is_panic() {
-                join_error.into_panic();
-                unreachable!()
-            } else {
-                Err(join_error.into())
-            }
-        }
-    }
-}
 
 #[pin_project]
 pub(crate) struct Pipeline {

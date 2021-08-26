@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use num_traits::Num;
+use tokio::task::JoinError;
 
 /// Parse an unsigned integer from a base-10 or base-16 string representation.
 ///
@@ -12,5 +13,24 @@ pub fn parse_int_decimal_hex<U: Num>(num_str: &str) -> Result<U, <U as Num>::Fro
         U::from_str_radix(hex_str, 16)
     } else {
         U::from_str_radix(num_str.as_str(), 10)
+    }
+}
+
+pub(crate) fn flatten_join_result<T, E>(
+    join_result: Result<Result<T, E>, JoinError>,
+) -> anyhow::Result<T>
+where
+    anyhow::Error: From<E>,
+{
+    match join_result {
+        Ok(inner_result) => Ok(inner_result?),
+        Err(join_error) => {
+            if join_error.is_panic() {
+                join_error.into_panic();
+                unreachable!()
+            } else {
+                Err(join_error.into())
+            }
+        }
     }
 }
