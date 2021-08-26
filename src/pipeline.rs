@@ -84,11 +84,12 @@ impl Pipeline {
             .context("Error configuring camera")?;
         let camera_command_channel = camera.command_channel();
         let camera_task = spawn_blocking(move || {
-                camera.measurement_loop()
-                    .context("Error within camera frame thread")
-            })
-            .map(flatten_join_result)
-            .boxed();
+            camera
+                .measurement_loop()
+                .context("Error within camera frame thread")
+        })
+        .map(flatten_join_result)
+        .boxed();
         let frame_rate_limit = config.streams.common_frame_rate();
         let measurement_stream = Self::create_measurement_stream(&camera_command_channel)
             .await
