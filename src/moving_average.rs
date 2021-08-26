@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::collections::VecDeque;
 use std::convert;
-use std::ops::{self, DerefMut};
+use std::ops::{self, Deref, DerefMut};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::vec::Vec;
@@ -254,6 +254,12 @@ impl<T, const N: usize> BoxcarFilter<T, N> {
     }
 }
 
+impl<T, const N: usize> Default for BoxcarFilter<T, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T, const N: usize> MovingAverage<T, N> for BoxcarFilter<T, N>
 where
     T: AverageMut<u16> + Clone,
@@ -287,3 +293,16 @@ where
         sums.as_ref().map(|sums| sums.clone().div(&num_frames))
     }
 }
+
+impl<T, const N: usize> PartialEq for BoxcarFilter<T, N>
+where
+    T: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        let left = self.frames.read().unwrap();
+        let right = other.frames.read().unwrap();
+        left.deref() == right.deref()
+    }
+}
+
+impl<T, const N: usize> Eq for BoxcarFilter<T, N> where T: Eq {}
