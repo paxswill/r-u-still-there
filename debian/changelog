@@ -1,3 +1,10 @@
+r-u-still-there (0.3.0-1) UNRELEASED; urgency=medium
+
+  * Dynamic temperatures for rendering scale are now based on a moving average
+    and have a minimum range applied.
+
+ -- Will Ross <paxswill@paxswill.com>  Thu, 26 Aug 2021 15:33:30 -0400
+
 r-u-still-there (0.2.0-2) buster; urgency=medium
 
   * Add Melexis camera values to config example.
