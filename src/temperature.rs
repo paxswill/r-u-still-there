@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::borrow::Borrow;
 use std::cmp;
+use std::convert::Into;
 use std::fmt;
 use std::hash::Hash;
 use std::mem::discriminant;
@@ -9,6 +10,7 @@ use std::str::FromStr;
 use num_traits::Float;
 use serde::{Deserialize, Serialize};
 
+use crate::moving_average::{Average, AverageMut};
 use crate::mqtt::{home_assistant as hass, DiscoveryValue};
 
 #[derive(Clone, Copy, Debug, Deserialize, Hash, PartialEq, Eq, Serialize)]
@@ -113,15 +115,15 @@ where
     /// Get the unit this temperature is in.
     pub fn unit(&self) -> TemperatureUnit {
         match self {
-            Temperature::Celsius(_) => TemperatureUnit::Celsius,
-            Temperature::Fahrenheit(_) => TemperatureUnit::Fahrenheit,
+            Self::Celsius(_) => TemperatureUnit::Celsius,
+            Self::Fahrenheit(_) => TemperatureUnit::Fahrenheit,
         }
     }
 
     fn value(&self) -> T {
         let value = match self {
-            Temperature::Celsius(c) => *c,
-            Temperature::Fahrenheit(f) => *f,
+            Self::Celsius(c) => *c,
+            Self::Fahrenheit(f) => *f,
         };
         // Normalize the value, so that Eq and Hash can be implemented on Temperature.
         // NaN and negative zero are normalized to positive zero.
@@ -129,6 +131,13 @@ where
             T::zero()
         } else {
             value
+        }
+    }
+
+    fn new(unit: TemperatureUnit, value: T) -> Self {
+        match unit {
+            TemperatureUnit::Celsius => Self::Celsius(value),
+            TemperatureUnit::Fahrenheit => Self::Fahrenheit(value),
         }
     }
 }
@@ -221,6 +230,44 @@ where
         config.set_unit_of_measurement(Some("°".to_string()));
         config.set_device_class(hass::AnalogSensorClass::Temperature);
         config
+    }
+}
+
+impl<T, Div> Average<Div> for Temperature<T>
+where
+    T: Float,
+    Div: Into<T> + Copy,
+{
+    fn add(&self, rhs: &Self) -> Self {
+        let new_value = self.value() + rhs.in_unit(&self.unit());
+        Self::new(self.unit(), new_value)
+    }
+
+    fn sub(&self, rhs: &Self) -> Self {
+        let new_value = self.value() - rhs.in_unit(&self.unit());
+        Self::new(self.unit(), new_value)
+    }
+
+    fn div(&self, rhs: &Div) -> Self {
+        let divisor: T = (*rhs).into();
+        let new_value = self.value() / divisor;
+        Self::new(self.unit(), new_value)
+    }
+}
+
+impl<T, Div> AverageMut<Div> for Temperature<T>
+where
+    T: Float,
+    Div: Into<T> + Copy,
+{
+    fn add_assign(&mut self, rhs: &Self) {
+        let new_value = self.value() + rhs.in_unit(&self.unit());
+        *self = Self::new(self.unit(), new_value)
+    }
+
+    fn sub_assign(&mut self, rhs: &Self) {
+        let new_value = self.value() - rhs.in_unit(&self.unit());
+        *self = Self::new(self.unit(), new_value)
     }
 }
 
