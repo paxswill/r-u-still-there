@@ -47,6 +47,7 @@ impl FontdueRenderer {
         text_color: color::Color,
         grid_size: u32,
     ) -> BytesImage {
+        // Reset the fontdue context to a known default
         let mut layout = self.layout.lock().unwrap();
         layout.reset(&LayoutSettings {
             x: 0.0,
@@ -57,23 +58,26 @@ impl FontdueRenderer {
             vertical_align: VerticalAlign::Middle,
             ..LayoutSettings::default()
         });
+        // Add the text we're rendering to the fontdue context
         let text = format!("{:.2}", &temperature);
         let style = TextStyle::new(&text, font::FONT_SIZE, 0);
         layout.append(&[&self.font], &style);
-        let mut opacity = GrayImage::new(grid_size, grid_size);
+        // Transfer the rasterized glyphs from fontdue onto an image mask. The mask is just the
+        // opacity for each pixel in a cell.
+        let mut mask = GrayImage::new(grid_size, grid_size);
         let glyphs = layout.glyphs().clone();
         for glyph in glyphs.iter() {
             let (metrics, bitmap) = self.font.rasterize_config(glyph.key);
             let bitmap = ImageBuffer::from_vec(metrics.width as u32, metrics.height as u32, bitmap)
                 .expect("the provided buffer to be large enough");
-            overlay(&mut opacity, &bitmap, glyph.x as u32, glyph.y as u32)
+            overlay(&mut mask, &bitmap, glyph.x as u32, glyph.y as u32)
         }
-        // Combine the provided color with the opacity in `cell`. Also expand to an RGBA image
+        // Combine the provided color (`text_color`) with the opacity in `mask`. Also expand to an RGBA image
         // at this point.
         let text_color_pixel: Rgb<_> = text_color.as_array().into();
         let mut cell = RgbaImage::from_pixel(grid_size, grid_size, text_color_pixel.to_rgba());
         cell.pixels_mut()
-            .zip(opacity.pixels().map(|pixel| pixel.0[0]))
+            .zip(mask.pixels().map(|pixel| pixel.0[0]))
             .for_each(|(pixel, opacity)| {
                 pixel.channels_mut()[3] = opacity;
             });
