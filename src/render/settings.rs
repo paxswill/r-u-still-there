@@ -69,7 +69,7 @@ mod from_test {
     }
 }
 
-#[derive(Debug, Deserialize, StructOpt)]
+#[derive(Copy, Clone, Debug, Deserialize, StructOpt)]
 pub(crate) struct RenderSettings {
     /// The size (in pixels) each camera pixel should be rendered as.
     #[structopt(short, long, default_value = "50")]
