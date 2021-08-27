@@ -1,16 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::anyhow;
+use async_trait::async_trait;
+use futures::FutureExt;
 use image::GrayImage;
 use lazy_static::lazy_static;
 use svg::node::element::{Group, Rectangle, Text as TextElement};
 use svg::node::Text as TextNode;
 use svg::Document;
-use tiny_skia::{Pixmap, PixmapMut};
+use tiny_skia::Pixmap;
+use tokio::task::spawn_blocking;
 use tracing::instrument;
 use usvg::{FitTo, Tree};
 
+use crate::camera::Measurement;
 use crate::image_buffer::ThermalImage;
 use crate::temperature::{Temperature, TemperatureUnit};
+use crate::util::flatten_join_result;
 
 use super::{color, font};
 
@@ -132,32 +137,38 @@ fn create_document(
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct SvgRenderer();
 
+#[async_trait]
 impl font::FontRenderer for SvgRenderer {
     /// Draw the text for temperatures on top of an existing grid.
-    #[instrument(level = "trace", skip(grid_size, units, temperatures))]
-    fn render_text(
+    #[instrument(level = "trace", skip(grid_size, units, measurement))]
+    async fn render(
         &self,
         grid_size: usize,
         units: TemperatureUnit,
-        temperatures: &ThermalImage,
+        measurement: Measurement,
     ) -> anyhow::Result<GrayImage> {
-        let width = grid_size as u32 * temperatures.width();
-        let height = grid_size as u32 * temperatures.height();
-        let mut pixmap = Pixmap::new(width, height).ok_or(anyhow!(
-            "A Pixmap was not able to be created during SVG rendering"
-        ))?;
-        let svg = create_document(grid_size as u32, units, temperatures);
-        let tree = Tree::from_str(&svg.to_string(), &SVG_OPTS)?;
-        resvg::render(&tree, FitTo::Original, pixmap.as_mut())
-            .ok_or(anyhow!("Unable to render SVG for text rendering."))?;
-        let opacities: Vec<u8> = pixmap
-            .take()
-            .chunks_exact(4)
-            // Safe to unwrap as chunks_exact ensures there's always 4 elements
-            .map(|chunk| *chunk.last().unwrap())
-            .collect();
-        GrayImage::from_vec(width, height, opacities).ok_or(anyhow!(
-            "Unable to convert SVG opacities to ImageBuffer mask"
-        ))
+        spawn_blocking(move || {
+            let temperatures = measurement.image;
+            let width = grid_size as u32 * temperatures.width();
+            let height = grid_size as u32 * temperatures.height();
+            let mut pixmap = Pixmap::new(width, height).ok_or(anyhow!(
+                "A Pixmap was not able to be created during SVG rendering"
+            ))?;
+            let svg = create_document(grid_size as u32, units, &temperatures);
+            let tree = Tree::from_str(&svg.to_string(), &SVG_OPTS)?;
+            resvg::render(&tree, FitTo::Original, pixmap.as_mut())
+                .ok_or(anyhow!("Unable to render SVG for text rendering."))?;
+            let opacities: Vec<u8> = pixmap
+                .take()
+                .chunks_exact(4)
+                // Safe to unwrap as chunks_exact ensures there's always 4 elements
+                .map(|chunk| *chunk.last().unwrap())
+                .collect();
+            GrayImage::from_vec(width, height, opacities).ok_or(anyhow!(
+                "Unable to convert SVG opacities to ImageBuffer mask"
+            ))
+        })
+        .map(flatten_join_result)
+        .await
     }
 }
