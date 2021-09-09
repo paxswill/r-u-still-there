@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use image::GrayImage;
 
 use crate::camera::Measurement;
-use crate::image_buffer::ThermalImage;
 use crate::temperature::TemperatureUnit;
 
 pub(super) const DEJA_VU_SANS: &[u8] = include_bytes!("DejaVuSans-Numbers.ttf");
