@@ -330,19 +330,25 @@ fn create_renderer(
     settings: render::RenderSettings,
     frame_rate_limit: Option<Duration>,
 ) -> anyhow::Result<(spmc::Sender<BytesImage>, InnerTask)> {
-    let renderer = render::layer::ImageLayers::from(settings);
+    let renderer = Arc::new(AsyncMutex::new(render::layer::ImageLayers::try_from(
+        settings,
+    )?));
     let rendered_stream = match frame_rate_limit {
         None => measurement_stream,
         Some(limit) => tokio_stream::StreamExt::throttle(measurement_stream, limit).boxed(),
     }
     .instrument(info_span!("render_stream"))
     .then(move |measurement| {
-        let renderer = renderer.clone();
-        async move { renderer.render(measurement).await.unwrap() }
+        let renderer = Arc::clone(&renderer);
+        async move {
+            let unlocked_renderer = renderer.lock().await;
+            unlocked_renderer.render(measurement).await
+        }
     });
     let rendered_multiplexer = spmc::Sender::default();
-    let render_future = ok_stream(rendered_stream).forward(rendered_multiplexer.clone());
-    let task = tokio::spawn(render_future).map(flatten_join_result).boxed();
+    let task = rendered_stream
+        .forward(rendered_multiplexer.clone())
+        .boxed();
     Ok((rendered_multiplexer, task))
 }
 

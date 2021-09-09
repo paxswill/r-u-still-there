@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use std::sync::{Arc, Mutex};
+use std::convert::TryFrom;
 
 use anyhow::anyhow;
 use bytes::Bytes;
@@ -9,15 +9,17 @@ use image::{Pixel, Rgba};
 use crate::camera::Measurement;
 use crate::image_buffer::BytesImage;
 
-use super::background::{BackgroundRenderer, ImageBackground};
 use super::color::Color;
+use super::color_map::{ColorMapper, ImageColorMap};
 use super::font::{default_renderer, FontRenderer};
+use super::resize::{Resizer, PointResize};
 use super::settings::RenderSettings;
 use super::TemperatureDisplay;
 
 #[derive(Debug)]
 pub(crate) struct ImageLayers {
-    background_renderer: ImageBackground,
+    color_mapper: Box<dyn ColorMapper + Send + Sync>,
+    resizer: Box<dyn Resizer + Send + Sync>,
     font_renderer: Option<Box<dyn FontRenderer + Send + Sync>>,
     display: TemperatureDisplay,
     grid_size: usize,
@@ -28,7 +30,9 @@ impl ImageLayers {
     pub(crate) async fn render(&self, measurement: Measurement) -> anyhow::Result<BytesImage> {
         // Cloning the measurement is (comparatively) cheap, as the thermal image is tucked behind
         // an Arc
-        let background_task = self.background_renderer.render(measurement.clone());
+        // TODO: figure out a way to do the color mapping asynchronously
+        let colors = self.color_mapper.render(measurement.clone()).await?;
+        let background_task = self.resizer.enlarge(colors);
         let font_task = match self.display_temperature {
             TemperatureDisplay::Disabled => future::ok(None).boxed(),
             // Look at the size of that...
@@ -42,8 +46,7 @@ impl ImageLayers {
                     .boxed()
             }
         };
-        let (background_result, font_layer_result) = futures::join!(background_task, font_task);
-        let mut background = background_result?;
+        let (mut background, font_layer_result) = futures::join!(background_task, font_task);
         let font_layer = font_layer_result?;
         // Flatten layers
         if let Some(font_mask) = font_layer {
@@ -69,15 +72,19 @@ impl ImageLayers {
     }
 }
 
-impl From<RenderSettings> for ImageLayers {
-    fn from(settings: RenderSettings) -> Self {
+impl TryFrom<RenderSettings> for ImageLayers {
+    type Error = anyhow::Error;
+
+    fn try_from(settings: RenderSettings) -> anyhow::Result<Self> {
         let font_renderer = settings.units.map(|_| default_renderer());
-        Self {
-            background_renderer: ImageBackground::from(&settings),
+        let resizer = PointResize::try_from(&settings)?;
+        Ok(Self {
+            color_mapper: Box::new(ImageColorMap::from(&settings)),
+            resizer: Box::new(resizer),
             font_renderer,
             display: settings.units.into(),
             grid_size: settings.grid_size,
             display_temperature: settings.units.into(),
-        }
+        })
     }
 }

@@ -2,8 +2,8 @@
 
 use crate::temperature::TemperatureUnit;
 
-pub(crate) mod background;
 pub(crate) mod color;
+pub(crate) mod color_map;
 pub(crate) mod font;
 pub(crate) mod layer;
 mod resize;

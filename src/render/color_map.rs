@@ -18,7 +18,7 @@ use super::settings::{self, RenderSettings};
 
 const DYNAMIC_AVERAGE_NUM: usize = 10;
 
-/// The limits as used by background renderers.
+/// The limits as used by color mappers.
 #[derive(Clone, Debug, PartialEq)]
 enum Limit {
     /// Set the maximum (or minimum) to the largest (or smallest) value in the current image.
@@ -74,32 +74,27 @@ impl From<settings::Limit> for Limit {
 }
 
 #[async_trait]
-pub(crate) trait BackgroundRenderer<'a>: From<&'a RenderSettings> {
-    type Error;
-
-    async fn render(&self, measurement: Measurement) -> Result<RgbaImage, Self::Error>;
+pub(crate) trait ColorMapper: std::fmt::Debug {
+    async fn render(&self, measurement: Measurement) -> anyhow::Result<RgbaImage>;
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct ImageBackground {
+pub(crate) struct ImageColorMap {
     scale_min: Arc<Mutex<Limit>>,
     scale_max: Arc<Mutex<Limit>>,
-    grid_size: usize,
     gradient: colorous::Gradient,
 }
 
-/// A background renderer using the [`image`] crate.
-impl ImageBackground {
+/// A color mapper using the [`image`] crate.
+impl ImageColorMap {
     pub(crate) fn new(
         scale_min: settings::Limit,
         scale_max: settings::Limit,
-        grid_size: usize,
         gradient: colorous::Gradient,
     ) -> Self {
         Self {
             scale_min: Arc::new(Mutex::new(scale_min.into())),
             scale_max: Arc::new(Mutex::new(scale_max.into())),
-            grid_size,
             gradient,
         }
     }
@@ -111,37 +106,32 @@ impl ImageBackground {
     const MINIMUM_DYNAMIC_RANGE: f32 = 5.0;
 }
 
-impl Default for ImageBackground {
+impl Default for ImageColorMap {
     fn default() -> Self {
         Self::new(
             settings::Limit::default(),
             settings::Limit::default(),
-            50,
             colorous::TURBO,
         )
     }
 }
 
-impl<'a> From<&'a RenderSettings> for ImageBackground {
+impl<'a> From<&'a RenderSettings> for ImageColorMap {
     fn from(settings: &'a RenderSettings) -> Self {
         Self::new(
             settings.lower_limit.into(),
             settings.upper_limit.into(),
-            settings.grid_size,
             settings.colors,
         )
     }
 }
 
 #[async_trait]
-impl<'a> BackgroundRenderer<'a> for ImageBackground {
-    type Error = anyhow::Error;
-
+impl ColorMapper for ImageColorMap {
     #[instrument(level = "debug", skip(measurement))]
-    async fn render(&self, measurement: Measurement) -> Result<RgbaImage, Self::Error> {
+    async fn render(&self, measurement: Measurement) -> anyhow::Result<RgbaImage> {
         let scale_min = Arc::clone(&self.scale_min);
         let scale_max = Arc::clone(&self.scale_max);
-        let grid_size = self.grid_size as u32;
         let gradient = self.gradient;
         spawn_blocking(move || {
             // Map the thermal image to an actual RGB image. We're converting to RGBA at the same time
@@ -191,9 +181,6 @@ impl<'a> BackgroundRenderer<'a> for ImageBackground {
                 *dest = gradient_color.to_rgba();
             }
             trace!("mapped temperatures to colors");
-            if grid_size > 1 {
-                temperature_colors = enlarge_color_image(grid_size, &temperature_colors);
-            }
             let full_width = temperature_colors.width();
             let full_height = temperature_colors.height();
             trace!(
@@ -203,43 +190,9 @@ impl<'a> BackgroundRenderer<'a> for ImageBackground {
                 enlarged_height = full_height,
                 "enlarged source image"
             );
-            Result::<RgbaImage, Self::Error>::Ok(temperature_colors)
+            anyhow::Result::<RgbaImage>::Ok(temperature_colors)
         })
         .map(flatten_join_result)
         .await
     }
-}
-
-/// This is a fast way to enlarge a grid of individual pixels. Each input pixel will be
-/// enlarged to a `grid_size` square.
-///
-/// The current implementation builds a series of mono-color image views (using
-/// [image::flat::FlatSamples::with_monocolor]), then drawing these grid squares on to the
-/// final image using [image::imageops::replace]. Alternative implementations that were tested
-/// include:
-///
-/// * [image::imageops::resize] with [nearest neighbor][image::imageops::FilterType::Nearest]
-///   filtering. This seems to increase runtime exponentially; with a 30 pixel grid size, a
-///   BeagleBone Black/Green could (barely) keep up with a 10 FPS GridEYE image, but at 50
-///   pixels would lag to roughly 2 FPS.
-/// * Duplicating individual pixels using `flat_map`, `repeat` and `take`, then `collect`ing
-///   everything into a vector. This was faster than `resize`, but still not fast enough.
-/// * As above, but pre-allocating the vector. No significant change.
-///
-/// With this implementation, a BeagleBone Black/Green can server up an MJPEG stream with 50
-/// pixel grid squares at 10 FPS while keeping CPU usage below 50%.
-fn enlarge_color_image<I, P>(grid_size: u32, colors: &I) -> image::ImageBuffer<P, Vec<P::Subpixel>>
-where
-    I: image::GenericImageView<Pixel = P>,
-    P: Pixel + 'static,
-    P::Subpixel: 'static,
-{
-    let mut full_image =
-        image::ImageBuffer::new(colors.width() * grid_size, colors.height() * grid_size);
-    for (x, y, pixel) in colors.pixels() {
-        let tile = image::flat::FlatSamples::with_monocolor(&pixel, grid_size, grid_size);
-        let tile_view = tile.as_view().unwrap();
-        image::imageops::replace(&mut full_image, &tile_view, x * grid_size, y * grid_size);
-    }
-    full_image
 }
