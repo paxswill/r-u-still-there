@@ -6,6 +6,8 @@ use crate::render::TemperatureDisplay;
 use crate::settings::gradient;
 use crate::temperature::{Temperature, TemperatureUnit};
 
+use super::resize::Method;
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
 #[serde(untagged)]
 pub(crate) enum Limit {
@@ -91,6 +93,10 @@ pub(crate) struct RenderSettings {
     #[structopt(short = "C", long, parse(try_from_str = gradient::from_str), default_value = "turbo")]
     #[serde(default = "default_colors", deserialize_with = "gradient::deserialize")]
     pub(crate) colors: colorous::Gradient,
+
+    #[structopt(skip)]
+    #[serde(default)]
+    pub(crate) scaling_method: Method,
 }
 
 impl PartialEq for RenderSettings {
@@ -122,6 +128,7 @@ impl Default for RenderSettings {
             upper_limit: Limit::default(),
             lower_limit: Limit::default(),
             colors: default_colors(),
+            scaling_method: Method::default(),
         }
     }
 }

@@ -6,6 +6,7 @@ pub(crate) mod background;
 pub(crate) mod color;
 pub(crate) mod font;
 pub(crate) mod layer;
+mod resize;
 mod settings;
 pub(crate) use settings::RenderSettings;
 
