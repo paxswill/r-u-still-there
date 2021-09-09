@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::panic;
+
 use num_traits::Num;
 use tokio::task::JoinError;
 
@@ -26,8 +28,7 @@ where
         Ok(inner_result) => Ok(inner_result?),
         Err(join_error) => {
             if join_error.is_panic() {
-                join_error.into_panic();
-                unreachable!()
+                panic::resume_unwind(join_error.into_panic());
             } else {
                 Err(join_error.into())
             }
