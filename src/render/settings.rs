@@ -24,14 +24,6 @@ impl Default for Limit {
     }
 }
 
-fn default_grid_size() -> usize {
-    50
-}
-
-fn default_colors() -> colorous::Gradient {
-    colorous::TURBO
-}
-
 impl From<Option<TemperatureUnit>> for TemperatureDisplay {
     fn from(optional_unit: Option<TemperatureUnit>) -> Self {
         match optional_unit {
@@ -75,7 +67,7 @@ mod from_test {
 pub(crate) struct RenderSettings {
     /// The size (in pixels) each camera pixel should be rendered as.
     #[structopt(short, long, default_value = "50")]
-    #[serde(default = "default_grid_size")]
+    #[serde(default = "RenderSettings::default_grid_size")]
     pub(crate) grid_size: usize,
 
     #[structopt(short, long)]
@@ -91,12 +83,25 @@ pub(crate) struct RenderSettings {
     pub(crate) lower_limit: Limit,
 
     #[structopt(short = "C", long, parse(try_from_str = gradient::from_str), default_value = "turbo")]
-    #[serde(default = "default_colors", deserialize_with = "gradient::deserialize")]
+    #[serde(
+        default = "RenderSettings::default_colors",
+        deserialize_with = "gradient::deserialize"
+    )]
     pub(crate) colors: colorous::Gradient,
 
     #[structopt(skip)]
     #[serde(default)]
     pub(crate) scaling_method: Method,
+}
+
+impl RenderSettings {
+    fn default_colors() -> colorous::Gradient {
+        colorous::TURBO
+    }
+
+    fn default_grid_size() -> usize {
+        50
+    }
 }
 
 impl PartialEq for RenderSettings {
@@ -123,11 +128,11 @@ impl PartialEq for RenderSettings {
 impl Default for RenderSettings {
     fn default() -> Self {
         Self {
-            grid_size: default_grid_size(),
+            grid_size: Self::default_grid_size(),
             units: None,
             upper_limit: Limit::default(),
             lower_limit: Limit::default(),
-            colors: default_colors(),
+            colors: Self::default_colors(),
             scaling_method: Method::default(),
         }
     }
