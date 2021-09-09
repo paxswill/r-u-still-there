@@ -5,7 +5,7 @@ use std::fmt;
 use std::panic;
 
 use async_trait::async_trait;
-use image::RgbaImage;
+use image::{imageops, RgbaImage};
 use serde::Deserialize;
 use tokio::task::spawn_blocking;
 
@@ -131,6 +131,53 @@ impl Resizer for PointResize {
             Ok(resized) => resized,
             Err(join_error) => {
                 // This will panic itself if the error isn't a panic error already.
+                panic::resume_unwind(join_error.into_panic());
+            }
+        }
+    }
+}
+
+/// A resizer that uses [`image::imageops`].
+#[derive(Clone, Debug)]
+pub(crate) struct ImageResize {
+    grid_size: u32,
+    filter_type: imageops::FilterType,
+}
+
+impl<'a> TryFrom<&'a RenderSettings> for ImageResize {
+    type Error = ResizeError;
+
+    fn try_from(settings: &'a RenderSettings) -> Result<Self, Self::Error> {
+        let filter_type = match settings.scaling_method {
+            Method::Nearest => imageops::Nearest,
+            Method::Triangle => imageops::Triangle,
+            Method::CatmullRom => imageops::CatmullRom,
+            Method::Lanczos3 => imageops::Lanczos3,
+            _ => {
+                return Err(ResizeError::UnsupportedMethod);
+            }
+        };
+        Ok(Self {
+            grid_size: settings.grid_size as u32,
+            filter_type,
+        })
+    }
+}
+
+#[async_trait]
+impl Resizer for ImageResize {
+    async fn enlarge(&self, colors: RgbaImage) -> RgbaImage {
+        let new_width = colors.width() * self.grid_size;
+        let new_height = colors.height() * self.grid_size;
+        let filter_type = self.filter_type;
+        let resized_result = spawn_blocking(move || {
+            let colors = colors;
+            imageops::resize(&colors, new_width, new_height, filter_type)
+        })
+        .await;
+        match resized_result {
+            Ok(resized) => resized,
+            Err(join_error) => {
                 panic::resume_unwind(join_error.into_panic());
             }
         }
