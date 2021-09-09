@@ -12,7 +12,7 @@ use crate::image_buffer::BytesImage;
 use super::color::Color;
 use super::color_map::{ColorMapper, ImageColorMap};
 use super::font::{default_renderer, FontRenderer};
-use super::resize::{PointResize, Resizer};
+use super::resize::{preferred_resizer, Resizer};
 use super::settings::RenderSettings;
 use super::TemperatureDisplay;
 
@@ -77,10 +77,10 @@ impl TryFrom<RenderSettings> for ImageLayers {
 
     fn try_from(settings: RenderSettings) -> anyhow::Result<Self> {
         let font_renderer = settings.units.map(|_| default_renderer());
-        let resizer = PointResize::try_from(&settings)?;
+        let resizer = preferred_resizer(&settings)?;
         Ok(Self {
             color_mapper: Box::new(ImageColorMap::from(&settings)),
-            resizer: Box::new(resizer),
+            resizer,
             font_renderer,
             display: settings.units.into(),
             grid_size: settings.grid_size,

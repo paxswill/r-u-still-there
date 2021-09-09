@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use image::{imageops, RgbaImage};
 use serde::Deserialize;
 use tokio::task::spawn_blocking;
+use tracing::{debug, warn};
 
 use super::settings::RenderSettings;
 
@@ -181,5 +182,21 @@ impl Resizer for ImageResize {
                 panic::resume_unwind(join_error.into_panic());
             }
         }
+    }
+}
+
+pub(crate) fn preferred_resizer(
+    settings: &RenderSettings,
+) -> Result<Box<dyn Resizer + Send + Sync>, ResizeError> {
+    // Prefer the point resizer, then the imageops resizer
+    if let Ok(resizer) = PointResize::try_from(settings) {
+        debug!(method = ?settings.scaling_method, "Using custom point scaling");
+        Ok(Box::new(resizer))
+    } else if let Ok(resizer) = ImageResize::try_from(settings) {
+        debug!(method = ?settings.scaling_method, "Using image::imageops for resizing");
+        Ok(Box::new(resizer))
+    } else {
+        warn!(method = ?settings.scaling_method, "Unable to find a resizer for requested scaling method");
+        Err(ResizeError::UnsupportedMethod)
     }
 }
