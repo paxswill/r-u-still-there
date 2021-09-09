@@ -2,10 +2,12 @@
 use std::convert::TryFrom;
 use std::error::Error as StdError;
 use std::fmt;
+use std::panic;
 
 use async_trait::async_trait;
 use image::RgbaImage;
 use serde::Deserialize;
+use tokio::task::spawn_blocking;
 
 use super::settings::RenderSettings;
 
@@ -76,6 +78,7 @@ pub(crate) trait Resizer: fmt::Debug {
     async fn enlarge(&self, colors: RgbaImage) -> RgbaImage;
 }
 
+/// A resize implementation that can only do nearest neighbor, but it's pretty fast at that.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PointResize(u32);
 
@@ -113,13 +116,23 @@ impl Resizer for PointResize {
 
     async fn enlarge(&self, colors: RgbaImage) -> RgbaImage {
         let grid_size = self.0;
-        let mut full_image =
-            image::ImageBuffer::new(colors.width() * grid_size, colors.height() * grid_size);
-        for (x, y, pixel) in colors.enumerate_pixels() {
-            let tile = image::flat::FlatSamples::with_monocolor(pixel, grid_size, grid_size);
-            let tile_view = tile.as_view().unwrap();
-            image::imageops::replace(&mut full_image, &tile_view, x * grid_size, y * grid_size);
+        let resized_result = spawn_blocking(move || {
+            let mut full_image =
+                image::ImageBuffer::new(colors.width() * grid_size, colors.height() * grid_size);
+            for (x, y, pixel) in colors.enumerate_pixels() {
+                let tile = image::flat::FlatSamples::with_monocolor(pixel, grid_size, grid_size);
+                let tile_view = tile.as_view().unwrap();
+                image::imageops::replace(&mut full_image, &tile_view, x * grid_size, y * grid_size);
+            }
+            full_image
+        })
+        .await;
+        match resized_result {
+            Ok(resized) => resized,
+            Err(join_error) => {
+                // This will panic itself if the error isn't a panic error already.
+                panic::resume_unwind(join_error.into_panic());
+            }
         }
-        full_image
     }
 }
