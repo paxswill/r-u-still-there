@@ -9,16 +9,9 @@ use std::convert::{TryFrom, TryInto};
 use std::sync::{mpsc, Arc};
 use std::thread::sleep as thread_sleep;
 
+use super::measurement::Measurement;
 use super::settings::{CameraKind, CameraSettings, Rotation};
 use super::thermal_camera::{GridEye, Mlx90640, Mlx90641, ThermalCamera, YAxisDirection};
-use crate::image_buffer::ThermalImage;
-use crate::temperature::Temperature;
-
-#[derive(Clone, Debug)]
-pub(crate) struct Measurement {
-    pub(crate) image: Arc<ThermalImage>,
-    pub(crate) temperature: Temperature,
-}
 
 #[derive(Debug)]
 pub(crate) enum CameraCommand {
