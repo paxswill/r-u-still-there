@@ -94,10 +94,15 @@ default = ["mjpeg", "mozjpeg", "render_fontdue"]
 mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
 render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
 render_fontdue = ["fontdue", "lru"]
+# Enables recording the data read from cameras and later playing back that data.
+# Useful mainly for development purposes, so you don't need an actual camera
+# present as well as for benchmarking changes.
+mock_camera = []
 
 [dev-dependencies]
 float-cmp = "0.8.0"
 fontdb = "0.5.1"
+serde_test = "1.0"
 tempfile = "3"
 ttf-parser = "0.12.0"
 
