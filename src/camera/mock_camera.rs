@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use anyhow::anyhow;
 use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Serialize, SerializeStruct};
+use tracing::trace;
 
 use crate::image_buffer::ThermalImage;
 use crate::temperature::TaggedTemperature;
@@ -175,6 +177,71 @@ impl<'de> Deserialize<'de> for MeasurementData {
         const FIELDS: &'static [&'static str] =
             &["values", "width", "height", "temperature", "delay"];
         deserializer.deserialize_struct("MeasurementData", FIELDS, DataVisitor)
+    }
+}
+
+pub(crate) struct MockCamera {
+    frame_rate: f32,
+    measurements: Box<dyn Iterator<Item = MeasurementData> + Send + Sync>,
+    last_delay: Duration,
+}
+
+impl MockCamera {
+    pub(crate) fn new_repeating<I>(measurements: I) -> Self
+    where
+        I: IntoIterator<Item = MeasurementData>,
+        <I as IntoIterator>::IntoIter: 'static + Clone + Send + Sync,
+    {
+        Self {
+            frame_rate: 1.0,
+            measurements: Box::new(measurements.into_iter().cycle()),
+            last_delay: Duration::default(),
+        }
+    }
+
+    pub(crate) fn new_finite<I>(measurements: I) -> Self
+    where
+        I: IntoIterator<Item = MeasurementData>,
+        <I as IntoIterator>::IntoIter: 'static + Send + Sync,
+    {
+        Self {
+            frame_rate: 1.0,
+            measurements: Box::new(measurements.into_iter()),
+            last_delay: Duration::default(),
+        }
+    }
+}
+
+impl ThermalCamera for MockCamera {
+    fn measure(&mut self) -> anyhow::Result<ThermalMeasurement> {
+        let data = self
+            .measurements
+            .next()
+            .ok_or(anyhow!("No more measurements in record"))?;
+        // When we loop, the first delay is 0. Instead, just repeat the previous delay. For the
+        // very first frame, the delay *will* be zero, as the initial value for `last_delay` is
+        // zero.
+        if data.delay != Duration::ZERO {
+            self.last_delay = data.delay;
+        }
+        let scaled_delay = self.last_delay.mul_f32(self.frame_rate);
+        // Keep the last delay around for if we loop
+        trace!(original_delay = ?data.delay, ?scaled_delay, scale = ?self.frame_rate, "Scaled frame rate delay");
+        let image = Arc::try_unwrap(data.measurement.image).unwrap_or_else(|arc| {
+            // If we can't take ownership of the Arc, clone the inner data instead.
+            arc.as_ref().clone()
+        });
+        Ok(ThermalMeasurement {
+            image: image,
+            y_direction: YAxisDirection::Down,
+            temperature: data.measurement.temperature,
+            frame_delay: scaled_delay,
+        })
+    }
+
+    fn set_frame_rate(&mut self, frame_rate: u8) -> anyhow::Result<()> {
+        self.frame_rate = frame_rate.into();
+        Ok(())
     }
 }
 

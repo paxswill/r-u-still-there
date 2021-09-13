@@ -110,4 +110,12 @@ pub(crate) struct Args {
     /// Disable Home Assistant integration.
     #[structopt(long = "no-home-assistant", group = "home_assistant")]
     pub(super) disable_home_assistant: bool,
+
+    /// The file to use for mock camera data.
+    ///
+    /// When the mock camera is being used, this given path is used as the source of camera data.
+    /// When other cameras are being used, their data is written to this file. When used as a
+    /// destination, any existing data will be overwritten.
+    #[structopt(env = "RUSTILLTHERE_MOCK_FILE", long = "mock-file", parse(from_os_str))]
+    pub(crate) path: Option<PathBuf>,
 }

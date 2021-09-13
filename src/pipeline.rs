@@ -18,6 +18,7 @@ use warp::Filter;
 
 use std::convert::{TryFrom, TryInto};
 use std::marker::PhantomData;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{mpsc, Arc};
 use std::task::{Context, Poll};
@@ -99,6 +100,9 @@ impl Pipeline {
             mqtt_config: config.mqtt,
             tasks,
         };
+        app.record_measurements(config.camera.path)
+            .await
+            .context("Error configuring camera frame recording")?;
         app.create_streams(config.streams)
             .context("Error creating video streams")?;
         app.create_tracker(config.tracker)
@@ -301,6 +305,51 @@ impl Pipeline {
                 .boxed(),
         );
         Ok(())
+    }
+
+    // No-op version for when the mock_camera feature isn't enabled.
+    #[cfg(not(feature = "mock_camera"))]
+    async fn record_measurements(&mut self, _path: Option<PathBuf>) -> anyhow::Result<()> {
+        warn!("Mock camera recording path set, but mock camera support has not been enabled.");
+        Ok(())
+    }
+
+    #[cfg(feature = "mock_camera")]
+    async fn record_measurements(&mut self, path: Option<PathBuf>) -> anyhow::Result<()> {
+        if let Some(record_path) = path {
+            info!(path = ?record_path, "Recording measurement data");
+            let file = tokio::fs::File::create(record_path).await?;
+            // Should there be a BufWriter in here? I don't think so, as I won't be able to ensure
+            // that flush() is called.
+            let bincode_sink: async_bincode::AsyncBincodeWriter<
+                tokio::fs::File,
+                crate::camera::MeasurementData,
+                async_bincode::SyncDestination,
+            > = file.into();
+            let measurement_stream = Self::create_measurement_stream(&self.camera_command_channel)
+                .await?
+                .instrument(info_span!("mock_recording"))
+                .scan(
+                    None,
+                    |last_frame_time: &mut Option<std::time::Instant>, measurement: Measurement| {
+                        // Swap in the measurement time for this frame for the previous time. The first
+                        // frame has `None` as the previous time, so it uses 0 for the duration.
+                        let previous_instant = last_frame_time.replace(std::time::Instant::now());
+                        let frame_delay = previous_instant.map_or(Duration::ZERO, |i| i.elapsed());
+                        let timed_measurement =
+                            crate::camera::MeasurementData::new(measurement, frame_delay);
+                        std::future::ready(Some(timed_measurement))
+                    },
+                );
+            let recording_task = ok_stream(measurement_stream)
+                .forward(bincode_sink)
+                .err_into()
+                .boxed();
+            self.tasks.push(recording_task);
+            Ok(())
+        } else {
+            Ok(())
+        }
     }
 }
 

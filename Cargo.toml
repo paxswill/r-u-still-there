@@ -11,8 +11,10 @@ readme = "ReadMe.md"
 [dependencies]
 amg88 = "0.4.1"
 anyhow = "1.0"
+async-bincode = {version = "0.6", optional = true }
 async-trait = "0.1"
 base64 = "0.13"
+bincode = { version = "1.3", optional = true }
 bytes = "1.0.1"
 colorous = "1.0.5"
 delegate = "0.5"
@@ -97,7 +99,7 @@ render_fontdue = ["fontdue", "lru"]
 # Enables recording the data read from cameras and later playing back that data.
 # Useful mainly for development purposes, so you don't need an actual camera
 # present as well as for benchmarking changes.
-mock_camera = []
+mock_camera = ["async-bincode", "bincode", "tokio/fs"]
 
 [dev-dependencies]
 float-cmp = "0.8.0"
