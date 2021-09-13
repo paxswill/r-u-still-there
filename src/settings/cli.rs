@@ -11,6 +11,11 @@ use crate::mqtt::MqttUrl;
 use crate::temperature::TemperatureUnit;
 use crate::util::parse_int_decimal_hex;
 
+#[cfg(feature = "mock_camera")]
+const CAMERA_KINDS: &[&str] = &["grideye", "mlx90640", "mlx90641", "mock"];
+#[cfg(not(feature = "mock_camera"))]
+const CAMERA_KINDS: &[&str] = &["grideye", "mlx90640", "mlx90641"];
+
 #[derive(Clone, Debug, Default, StructOpt)]
 #[structopt(setting(AppSettings::DeriveDisplayOrder))]
 #[structopt(group = ArgGroup::with_name("mjpeg"))]
@@ -22,7 +27,7 @@ pub(crate) struct Args {
     pub(crate) config_path: Option<PathBuf>,
 
     /// The kind of camera being used.
-    #[structopt(short = "C", long, possible_values(&["grideye", "mlx90640", "mlx90641"]))]
+    #[structopt(short = "C", long, possible_values(CAMERA_KINDS))]
     #[structopt(env = "RUSTILLTHERE_CAMERA")]
     pub(crate) camera_kind: Option<String>,
 

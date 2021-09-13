@@ -27,6 +27,9 @@ pub(crate) enum CameraKind {
     GridEye(I2cSettings),
     Mlx90640(I2cSettings),
     Mlx90641(I2cSettings),
+    #[cfg(feature = "mock_camera")]
+    #[serde(rename = "mock")]
+    MockCamera(PathBuf),
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +61,10 @@ impl CameraKind {
             CameraKind::GridEye(_) => 10,
             CameraKind::Mlx90640(_) => 2,
             CameraKind::Mlx90641(_) => 2,
+
+            // NOTE: The frame rate for the mock camera is a multiplier for the recorded speed.
+            #[cfg(feature = "mock_camera")]
+            CameraKind::MockCamera(_) => 1,
         }
     }
 }
@@ -222,6 +229,20 @@ impl<'de, 'a> DeserializeSeed<'de> for CameraSettingsArgs<'a> {
                         let bus = bus.ok_or_else(|| de::Error::missing_field("bus"))?;
                         let address = address.ok_or_else(|| de::Error::missing_field("address"))?;
                         CameraKind::Mlx90641(I2cSettings { bus, address })
+                    }
+                    #[cfg(feature = "mock_camera")]
+                    "mock" => {
+                        // The mock camera's field will just be ignored by the other cameras
+                        // (until there's a camera that takes a path).
+                        debug!(camera_kind = %kind, "using the mock camera");
+                        let path = path
+                            // When `path` is Some, `Pipeline` adds a subscriber to the camera
+                            // stream that saves all measurement data to a file. Because a mock
+                            // camera is supposed to be *reading* from that file, `path` needs to
+                            // be None.
+                            .take()
+                            .ok_or_else(|| de::Error::missing_field("path"))?;
+                        CameraKind::MockCamera(path)
                     }
                     _ => {
                         error!(camera_kind = %kind, "unknown camera kind");
@@ -495,6 +516,33 @@ mod de_tests {
             flip_vertical: false,
             frame_rate: Some(NonZeroU8::new(8).unwrap()),
             path: Some("/foo/var/baz.bin".into()),
+        };
+        assert_eq!(parsed, expected);
+    }
+
+    /// Ensure that `MockCamera` clears `path`, and that the value specified in path is used for
+    /// the field within `MockCamera`. Also testing that `bus` and `address` are ignored for
+    /// `MockCamera` (but can still be present).
+    #[cfg(feature = "mock_camera")]
+    #[test]
+    fn mock_camera() {
+        let source = r#"
+        kind = "mock"
+        bus = 1
+        address = 0x33
+        frame_rate = 3
+        path = "/tmp/qux.bin"
+        "#;
+        let parsed = toml::from_str(source);
+        assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
+        let parsed: CameraSettings = parsed.unwrap();
+        let expected = CameraSettings {
+            kind: CameraKind::MockCamera("/tmp/qux.bin".into()),
+            rotation: Rotation::default(),
+            flip_horizontal: false,
+            flip_vertical: false,
+            frame_rate: Some(NonZeroU8::new(3).unwrap()),
+            path: None,
         };
         assert_eq!(parsed, expected);
     }

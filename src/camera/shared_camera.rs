@@ -5,9 +5,15 @@ use linux_embedded_hal::I2cdev;
 use tokio::sync::{broadcast, oneshot};
 use tracing::{debug, info, trace, warn};
 
+#[cfg(feature = "mock_camera")]
+use bincode::Options;
+
 use std::convert::{TryFrom, TryInto};
 use std::sync::{mpsc, Arc};
 use std::thread::sleep as thread_sleep;
+
+#[cfg(feature = "mock_camera")]
+use std::io::{Read, Seek};
 
 use super::measurement::Measurement;
 use super::settings::{CameraKind, CameraSettings, Rotation};
@@ -132,6 +138,34 @@ impl TryFrom<&CameraSettings> for Camera {
                 let inner_camera = mlx9064x::Mlx90641Driver::new(bus, i2c.address)?;
                 let camera_wrapper = Mlx90641::new(inner_camera);
                 Box::new(camera_wrapper)
+            }
+            #[cfg(feature = "mock_camera")]
+            CameraKind::MockCamera(data_path) => {
+                let extension = data_path.extension().map(|s| s.to_str()).flatten();
+                let measurements: Vec<super::MeasurementData> = match extension {
+                    Some("toml") => {
+                        let data_string = std::fs::read_to_string(data_path)?;
+                        toml::from_str(&data_string).map_err(anyhow::Error::from)
+                    }
+                    // treat everything as bincode if we don't know to extension
+                    _ => {
+                        let mut measurements = Vec::new();
+                        let mut file = std::fs::File::open(data_path)?;
+                        let file_size = file.metadata()?.len();
+                        // These are the options async-bincode uses (but skipping the limit).
+                        let bincode_options = bincode::options()
+                            .with_fixint_encoding()
+                            .allow_trailing_bytes();
+                        while file.stream_position()? < file_size {
+                            // Have to keep cloning as bincode_options would otherwise be consumed
+                            let frame = bincode_options.clone().deserialize_from(file.by_ref())?;
+                            measurements.push(frame);
+                        }
+                        Ok(measurements)
+                    }
+                }?;
+                let mock_cam = super::mock_camera::MockCamera::new_repeating(measurements);
+                Box::new(mock_cam)
             }
         };
         camera.set_frame_rate(settings.frame_rate())?;
