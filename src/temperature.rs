@@ -53,7 +53,7 @@ impl FromStr for TemperatureUnit {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
-#[serde(from = "DeserializedTemperature<T>", into = "SerializedTemperature<T>")]
+#[serde(from = "UntaggedTemperature<T>", into = "TaggedTemperature<T>")]
 pub enum Temperature<T = f32>
 where
     T: Float,
@@ -275,17 +275,17 @@ where
 // it can accept either a raw number or a map of a unit to a number.
 #[derive(Copy, Clone, Debug, Deserialize)]
 #[serde(untagged)]
-enum DeserializedTemperature<T>
+enum UntaggedTemperature<T>
 where
     T: Float,
 {
     Number(T),
-    Wrapped(SerializedTemperature<T>),
+    Wrapped(TaggedTemperature<T>),
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
-enum SerializedTemperature<T = f32>
+pub enum TaggedTemperature<T = f32>
 where
     T: Float,
 {
@@ -296,31 +296,31 @@ where
     Fahrenheit(T),
 }
 
-impl<T> From<DeserializedTemperature<T>> for Temperature<T>
+impl<T> From<UntaggedTemperature<T>> for Temperature<T>
 where
     T: Float,
 {
-    fn from(maybe_wrapped: DeserializedTemperature<T>) -> Self {
+    fn from(maybe_wrapped: UntaggedTemperature<T>) -> Self {
         match maybe_wrapped {
-            DeserializedTemperature::Number(temperature) => temperature.into(),
-            DeserializedTemperature::Wrapped(temperature) => temperature.into(),
+            UntaggedTemperature::Number(temperature) => temperature.into(),
+            UntaggedTemperature::Wrapped(temperature) => temperature.into(),
         }
     }
 }
 
-impl<T> From<SerializedTemperature<T>> for Temperature<T>
+impl<T> From<TaggedTemperature<T>> for Temperature<T>
 where
     T: Float,
 {
-    fn from(value: SerializedTemperature<T>) -> Self {
+    fn from(value: TaggedTemperature<T>) -> Self {
         match value {
-            SerializedTemperature::Celsius(c) => Self::Celsius(c),
-            SerializedTemperature::Fahrenheit(f) => Self::Fahrenheit(f),
+            TaggedTemperature::Celsius(c) => Self::Celsius(c),
+            TaggedTemperature::Fahrenheit(f) => Self::Fahrenheit(f),
         }
     }
 }
 
-impl<T> From<Temperature<T>> for SerializedTemperature<T>
+impl<T> From<Temperature<T>> for TaggedTemperature<T>
 where
     T: Float,
 {
