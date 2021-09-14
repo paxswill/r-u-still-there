@@ -164,7 +164,8 @@ impl TryFrom<&CameraSettings> for Camera {
                         Ok(measurements)
                     }
                 }?;
-                let mock_cam = super::mock_camera::MockCamera::new_repeating(measurements);
+                let mock_cam =
+                    super::mock_camera::MockCamera::new(measurements, super::RepeatMode::default());
                 Box::new(mock_cam)
             }
         };

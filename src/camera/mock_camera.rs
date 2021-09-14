@@ -182,42 +182,68 @@ impl<'de> Deserialize<'de> for MeasurementData {
 
 pub(crate) struct MockCamera {
     frame_rate: f32,
-    measurements: Box<dyn Iterator<Item = MeasurementData> + Send + Sync>,
+    measurements: Vec<MeasurementData>,
+    index: Box<dyn Iterator<Item = usize> + Send + Sync>,
     last_delay: Duration,
 }
 
-impl MockCamera {
-    pub(crate) fn new_repeating<I>(measurements: I) -> Self
-    where
-        I: IntoIterator<Item = MeasurementData>,
-        <I as IntoIterator>::IntoIter: 'static + Clone + Send + Sync,
-    {
-        Self {
-            frame_rate: 1.0,
-            measurements: Box::new(measurements.into_iter().cycle()),
-            last_delay: Duration::default(),
-        }
-    }
+/// Controls how measurements are repeated by [`MockCamera`].
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum RepeatMode {
+    /// Don't repeat.
+    ///
+    /// Once the end of the measurements has been reached, an error is returned.
+    None,
 
-    pub(crate) fn new_finite<I>(measurements: I) -> Self
-    where
-        I: IntoIterator<Item = MeasurementData>,
-        <I as IntoIterator>::IntoIter: 'static + Send + Sync,
-    {
+    /// Loop over the measurements.
+    ///
+    /// Once the end of the measurements has been reached, the list is restarted from the
+    /// beginning, reusing the last delay for the first frame. This is the default mode.
+    Loop,
+
+    /// Alternate between forward and reverse playback.
+    ///
+    /// Once the end of the measurements has been reached, playback continues backwards. Once the
+    /// beginning has been reached, playback continues forwards. The measurements at either end of
+    /// the list of data are *not* repeated.
+    Bounce,
+}
+
+impl Default for RepeatMode {
+    fn default() -> Self {
+        Self::Loop
+    }
+}
+
+impl MockCamera {
+    pub(crate) fn new(measurements: Vec<MeasurementData>, repeat: RepeatMode) -> Self {
+        let num_measurements = measurements.len();
+        let index: Box<dyn Iterator<Item = usize> + Send + Sync> = match repeat {
+            RepeatMode::None => Box::new(0..num_measurements),
+            RepeatMode::Loop => Box::new((0..num_measurements).cycle()),
+            RepeatMode::Bounce => {
+                let forwards = 0..num_measurements;
+                let backwards = (1..(num_measurements - 1)).rev();
+                Box::new(forwards.chain(backwards).cycle())
+            }
+        };
         Self {
             frame_rate: 1.0,
-            measurements: Box::new(measurements.into_iter()),
-            last_delay: Duration::default(),
+            measurements,
+            index,
+            last_delay: Duration::ZERO,
         }
     }
 }
 
 impl ThermalCamera for MockCamera {
     fn measure(&mut self) -> anyhow::Result<ThermalMeasurement> {
-        let data = self
-            .measurements
+        let index = self
+            .index
             .next()
             .ok_or(anyhow!("No more measurements in record"))?;
+        let data = self.measurements[index].clone();
         // When we loop, the first delay is 0. Instead, just repeat the previous delay. For the
         // very first frame, the delay *will* be zero, as the initial value for `last_delay` is
         // zero.
@@ -226,7 +252,11 @@ impl ThermalCamera for MockCamera {
         }
         let scaled_delay = self.last_delay.mul_f32(self.frame_rate);
         // Keep the last delay around for if we loop
-        trace!(original_delay = ?data.delay, ?scaled_delay, scale = ?self.frame_rate, "Scaled frame rate delay");
+        trace!(
+            original_delay = ?data.delay,
+            ?scaled_delay,
+            scale = ?self.frame_rate, "Scaled frame rate delay"
+        );
         let image = Arc::try_unwrap(data.measurement.image).unwrap_or_else(|arc| {
             // If we can't take ownership of the Arc, clone the inner data instead.
             arc.as_ref().clone()
@@ -250,13 +280,15 @@ mod test {
     use std::sync::Arc;
     use std::time::Duration;
 
+    use image::Pixel;
     use serde_test::{assert_tokens, Token};
 
     use crate::camera::Measurement;
     use crate::image_buffer::ThermalImage;
     use crate::temperature::Temperature;
 
-    use super::MeasurementData;
+    use super::super::thermal_camera::{Measurement as ThermalMeasurement, ThermalCamera};
+    use super::{MeasurementData, MockCamera, RepeatMode};
 
     #[test]
     fn measurement_data_format() {
@@ -319,5 +351,108 @@ mod test {
             Token::StructEnd,
         ]);
         assert_tokens(&record, &tokens[..]);
+    }
+
+    const START_IMAGE_TEMP: f32 = 20.0;
+
+    const START_AMBIENT_TEMP: f32 = 30.0;
+
+    const NUM_TINY_MEASUREMENTS: usize = 10;
+
+    fn tiny_measurements() -> Vec<MeasurementData> {
+        let delay = Duration::from_millis(25);
+        (0..NUM_TINY_MEASUREMENTS)
+            .map(|offset| {
+                let offset = offset as f32;
+                let temperature = Temperature::Celsius(START_AMBIENT_TEMP + offset);
+                let image = ThermalImage::from_pixel(1, 1, [START_IMAGE_TEMP + offset].into());
+                MeasurementData::new(
+                    Measurement {
+                        image: Arc::new(image),
+                        temperature,
+                    },
+                    delay,
+                )
+            })
+            .collect()
+    }
+
+    fn assert_measurements(repeat_mode: RepeatMode, image_temps: &[f32], ambient_temps: &[f32]) {
+        assert_eq!(
+            image_temps.len(),
+            ambient_temps.len(),
+            "image_temps and ambient_temps must be the same length"
+        );
+        let mut cam = MockCamera::new(tiny_measurements(), repeat_mode);
+        let measurements: Vec<ThermalMeasurement> = std::iter::from_fn(move || cam.measure().ok())
+            .fuse()
+            .take(30)
+            .collect();
+        let expected_length = image_temps.len();
+        assert_eq!(
+            measurements.len(),
+            expected_length,
+            "Unexpected number of measurements"
+        );
+        let actual_image_temps: Vec<f32> = measurements
+            .iter()
+            .map(|m| m.image[(0, 0)].channels()[0])
+            .collect();
+        let actual_ambient_temps: Vec<f32> = measurements
+            .iter()
+            .map(|m| m.temperature.in_celsius())
+            .collect();
+        assert_eq!(
+            &actual_image_temps[..],
+            image_temps,
+            "image tmperatures do not match"
+        );
+        assert_eq!(
+            &actual_ambient_temps[..],
+            ambient_temps,
+            "ambient tmperatures do not match"
+        );
+    }
+
+    #[test]
+    fn repeat_none() {
+        let expected_image = [20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0];
+        let expected_ambient = [30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0];
+        assert_measurements(RepeatMode::None, &expected_image[..], &expected_ambient[..])
+    }
+
+    #[test]
+    fn repeat_loop() {
+        let expected_image = [
+            20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 20.0, 21.0, 22.0, 23.0,
+            24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0,
+            28.0, 29.0,
+        ];
+        let expected_ambient = [
+            30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 30.0, 31.0, 32.0, 33.0,
+            34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0,
+            38.0, 39.0,
+        ];
+        assert_measurements(RepeatMode::Loop, &expected_image[..], &expected_ambient[..])
+    }
+
+    #[test]
+    fn repeat_bounce() {
+        // NOTE: bounce does *not* repeat each end of the loop
+        let expected_image = [
+            20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0, 28.0, 27.0, 26.0, 25.0,
+            24.0, 23.0, 22.0, 21.0, 20.0, 21.0, 22.0, 23.0, 24.0, 25.0, 26.0, 27.0, 28.0, 29.0,
+            28.0, 27.0,
+        ];
+        let expected_ambient = [
+            30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0, 38.0, 37.0, 36.0, 35.0,
+            34.0, 33.0, 32.0, 31.0, 30.0, 31.0, 32.0, 33.0, 34.0, 35.0, 36.0, 37.0, 38.0, 39.0,
+            38.0, 37.0,
+        ];
+        assert_measurements(
+            RepeatMode::Bounce,
+            &expected_image[..],
+            &expected_ambient[..],
+        )
     }
 }
