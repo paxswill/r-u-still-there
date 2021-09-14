@@ -57,9 +57,9 @@ pub(crate) struct Args {
     pub(crate) temperature_units: Option<TemperatureUnit>,
 
     /// The color scheme to use when rendering the thermal image.
-    #[structopt(short = "o", long, parse(try_from_str = super::gradient::from_str))]
+    #[structopt(short = "o", long)]
     #[structopt(env = "RUSTILLTHERE_COLORS")]
-    pub(crate) colors: Option<colorous::Gradient>,
+    pub(crate) colors: Option<super::gradient::Gradient>,
 
     /// The IP address the streaming server should listen on.
     #[structopt(short = "l", long = "listen-address")]

@@ -121,7 +121,7 @@ impl<'a> From<&'a RenderSettings> for ImageColorMap {
         Self::new(
             settings.lower_limit.into(),
             settings.upper_limit.into(),
-            settings.colors,
+            settings.colors.into(),
         )
     }
 }

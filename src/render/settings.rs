@@ -82,12 +82,9 @@ pub(crate) struct RenderSettings {
     #[serde(default)]
     pub(crate) lower_limit: Limit,
 
-    #[structopt(short = "C", long, parse(try_from_str = gradient::from_str), default_value = "turbo")]
-    #[serde(
-        default = "RenderSettings::default_colors",
-        deserialize_with = "gradient::deserialize"
-    )]
-    pub(crate) colors: colorous::Gradient,
+    #[structopt(short = "C", long, default_value = "turbo")]
+    #[serde(default = "RenderSettings::default_colors")]
+    pub(crate) colors: gradient::Gradient,
 
     #[structopt(skip)]
     #[serde(default)]
@@ -95,8 +92,8 @@ pub(crate) struct RenderSettings {
 }
 
 impl RenderSettings {
-    fn default_colors() -> colorous::Gradient {
-        colorous::TURBO
+    fn default_colors() -> gradient::Gradient {
+        gradient::Gradient::Turbo
     }
 
     fn default_grid_size() -> usize {
