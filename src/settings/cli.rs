@@ -129,6 +129,14 @@ pub(crate) struct Args {
     /// destination, any existing data will be overwritten.
     #[structopt(env = "RUSTILLTHERE_MOCK_FILE", long = "mock-file", parse(from_os_str))]
     pub(crate) path: Option<PathBuf>,
+
+    #[cfg(feature = "mock_camera")]
+    /// How mock camera data should be repeated.
+    ///
+    /// This option is only relevant when the mock camera is being used. If not specified, "loop"
+    /// is used.
+    #[structopt(long = "repeat-mode", possible_values(&["none", "loop", "bounce"]))]
+    pub(crate) mock_repeat_mode: Option<crate::camera::RepeatMode>,
 }
 
 /// DRY macro for merging in optional CLI arguments.
@@ -261,13 +269,22 @@ impl Args {
             "enabled"
         );
         #[cfg(feature = "mock_camera")]
-        merge_arg!(
-            config,
-            String,
-            self.path.as_deref().map(|p| p.to_string_lossy()),
-            "camera",
-            "path"
-        );
+        {
+            merge_arg!(
+                config,
+                String,
+                self.path.as_deref().map(|p| p.to_string_lossy()),
+                "camera",
+                "path"
+            );
+            merge_arg!(
+                config,
+                String,
+                self.mock_repeat_mode,
+                "camera",
+                "repeat_mode"
+            );
+        }
         // Use the updated table to deserialize from
         Settings::deserialize(Value::Table(config)).map_err(anyhow::Error::from)
     }

@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
-use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
+use serde::de::{self, Deserialize, Deserializer, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::{Serialize, SerializeStruct};
 use tracing::trace;
 
@@ -213,6 +215,25 @@ pub(crate) enum RepeatMode {
 impl Default for RepeatMode {
     fn default() -> Self {
         Self::Loop
+    }
+}
+
+impl FromStr for RepeatMode {
+    type Err = serde::de::value::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        RepeatMode::deserialize(s.into_deserializer())
+    }
+}
+
+impl fmt::Display for RepeatMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            RepeatMode::None => "none",
+            RepeatMode::Loop => "loop",
+            RepeatMode::Bounce => "bounce",
+        };
+        write!(f, "{}", s)
     }
 }
 

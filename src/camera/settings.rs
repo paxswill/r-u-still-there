@@ -155,6 +155,9 @@ pub(crate) enum CameraSettings {
         path: PathBuf,
         frame_rate: f32,
 
+        #[serde(default)]
+        repeat_mode: super::RepeatMode,
+
         #[serde(flatten)]
         common: CommonCameraSettings,
     },
@@ -254,12 +257,14 @@ impl CameraSettings {
                 ))
             }
             #[cfg(feature = "mock_camera")]
-            Self::MockCamera { path, .. } => {
+            Self::MockCamera {
+                path, repeat_mode, ..
+            } => {
                 use std::io::{Read, Seek};
 
                 use bincode::Options;
 
-                use crate::camera::mock_camera::{MeasurementData, MockCamera, RepeatMode};
+                use crate::camera::mock_camera::{MeasurementData, MockCamera};
 
                 let extension = path.extension().map(|s| s.to_str()).flatten();
                 let measurements: Vec<MeasurementData> = match extension {
@@ -284,7 +289,7 @@ impl CameraSettings {
                         Ok(measurements)
                     }
                 }?;
-                let mock_cam = MockCamera::new(measurements, RepeatMode::default());
+                let mock_cam = MockCamera::new(measurements, *repeat_mode);
                 Box::new(mock_cam)
             }
         })
@@ -510,6 +515,7 @@ mod de_tests {
         let expected = CameraSettings::MockCamera {
             path: PathBuf::from("/tmp/qux.bin"),
             frame_rate: 3.0,
+            repeat_mode: crate::camera::RepeatMode::default(),
             common: CommonCameraSettings {
                 extra,
                 ..CommonCameraSettings::default()
