@@ -10,17 +10,12 @@ use std::net;
 use std::num::NonZeroU8;
 use std::path::PathBuf;
 
-use crate::camera::Bus;
+use crate::camera::{Bus, CameraSettings};
 use crate::mqtt::MqttUrl;
 use crate::temperature::TemperatureUnit;
 use crate::util::parse_int_decimal_hex;
 
 use super::Settings;
-
-#[cfg(feature = "mock_camera")]
-const CAMERA_KINDS: &[&str] = &["grideye", "mlx90640", "mlx90641", "mock"];
-#[cfg(not(feature = "mock_camera"))]
-const CAMERA_KINDS: &[&str] = &["grideye", "mlx90640", "mlx90641"];
 
 #[derive(Clone, Debug, Default, StructOpt)]
 #[structopt(setting(AppSettings::DeriveDisplayOrder))]
@@ -33,7 +28,7 @@ pub(crate) struct Args {
     pub(crate) config_path: Option<PathBuf>,
 
     /// The kind of camera being used.
-    #[structopt(short = "C", long, possible_values(CAMERA_KINDS))]
+    #[structopt(short = "C", long, possible_values(CameraSettings::KINDS))]
     #[structopt(env = "RUSTILLTHERE_CAMERA")]
     pub(crate) camera_kind: Option<String>,
 
@@ -136,7 +131,7 @@ pub(crate) struct Args {
     ///
     /// This option is only relevant when the mock camera is being used. If not specified, "loop"
     /// is used.
-    #[structopt(long = "repeat-mode", possible_values(&["none", "loop", "bounce"]))]
+    #[structopt(long = "repeat-mode", possible_values(crate::camera::RepeatMode::KINDS))]
     pub(crate) mock_repeat_mode: Option<crate::camera::RepeatMode>,
 }
 

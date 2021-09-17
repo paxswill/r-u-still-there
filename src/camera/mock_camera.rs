@@ -212,6 +212,10 @@ pub(crate) enum RepeatMode {
     Bounce,
 }
 
+impl RepeatMode {
+    pub(crate) const KINDS: &'static [&'static str] = &["none", "loop", "bounce"];
+}
+
 impl Default for RepeatMode {
     fn default() -> Self {
         Self::Loop

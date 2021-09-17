@@ -164,6 +164,14 @@ pub(crate) enum CameraSettings {
 }
 
 impl CameraSettings {
+    /// A list of the different camera kind identifiers
+    // It'd be nice at some point to have these be automatically generated, as serde sees all this
+    // information.
+    #[cfg(feature = "mock_camera")]
+    pub(crate) const KINDS: &'static [&'static str] = &["grideye", "mlx90640", "mlx90641", "mock"];
+    #[cfg(not(feature = "mock_camera"))]
+    pub(crate) const KINDS: &'static [&'static str] = &["grideye", "mlx90640", "mlx90641"];
+
     /// Convenience method for accessing common camera settings.
     fn common(&self) -> &CommonCameraSettings {
         match self {
