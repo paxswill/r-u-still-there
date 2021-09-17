@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::convert::{Infallible, TryFrom};
+use std::fmt;
 use std::path::PathBuf;
 use std::str::FromStr;
 
@@ -9,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::util::parse_int_decimal_hex;
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(untagged)]
 pub(crate) enum Bus {
     Number(u32),
@@ -22,6 +23,13 @@ impl Bus {
             Bus::Number(n) => PathBuf::from(format!("/dev/i2c-{}", n)),
             Bus::Path(p) => p.clone(),
         }
+    }
+}
+
+impl PartialEq for Bus {
+    /// Compare `Bus` only by the output of [Bus::path].
+    fn eq(&self, other: &Self) -> bool {
+        self.path().eq(&other.path())
     }
 }
 
@@ -53,6 +61,12 @@ impl TryFrom<&Bus> for I2cdev {
 
     fn try_from(bus: &Bus) -> Result<Self, Self::Error> {
         I2cdev::new(bus.path())
+    }
+}
+
+impl fmt::Display for Bus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.path().to_string_lossy())
     }
 }
 

@@ -3,7 +3,7 @@ use anyhow::anyhow;
 use hmac::{Hmac, Mac, NewMac};
 use machine_uid::machine_id::get_machine_id;
 use rumqttc::{ClientConfig, Transport};
-use serde::de::{self, Deserialize, DeserializeSeed, Deserializer, MapAccess, Visitor};
+use serde::Deserialize;
 use sha2::Sha256;
 use tracing::{debug, trace, warn};
 use url::Url;
@@ -12,7 +12,6 @@ use std::convert::{TryFrom, TryInto};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::settings::Args;
 use crate::temperature::TemperatureUnit;
 
 use super::external_value::ExternalValue;
@@ -24,7 +23,7 @@ const DEFAULT_MQTTS_PORT: u16 = 8883;
 const APPLICATION_KEY: &[u8; 16] =
     b"\x64\x6c\x30\xc3\x41\xd7\x47\x40\x8b\x1e\xe0\x78\xf7\x4c\x73\xe0";
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Deserialize)]
 pub(crate) struct MqttSettings {
     /// A name for the base topic for this device.
     pub(crate) name: String,
@@ -54,10 +53,11 @@ pub(crate) struct MqttSettings {
     pub(crate) keep_alive: Option<u16>,
 
     /// All the various Home Assistant settings.
+    #[serde(default)]
     pub(crate) home_assistant: HomeAssistantSettings,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(try_from = "Url")]
 pub(crate) struct MqttUrl(Url);
 
@@ -85,6 +85,12 @@ impl TryFrom<Url> for MqttUrl {
             }
         }
         Ok(Self(url))
+    }
+}
+
+impl fmt::Display for MqttUrl {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
 
@@ -182,145 +188,6 @@ impl fmt::Debug for MqttSettings {
             .field("keep_alive", &self.keep_alive)
             .field("home_assistant", &self.home_assistant)
             .finish()
-    }
-}
-
-const MQTT_FIELDS: &[&str] = &[
-    "name",
-    "username",
-    "password",
-    "server",
-    "keep_alive",
-    "home_assistant",
-];
-
-pub(crate) struct MqttSettingsArgs<'a>(pub(crate) &'a Args);
-
-// Manually implementing Derserialize as there isn't a way to derive DeserializeSeed
-impl<'de, 'a> DeserializeSeed<'de> for MqttSettingsArgs<'a> {
-    type Value = MqttSettings;
-
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(serde::Deserialize)]
-        #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field<'a> {
-            Name,
-            Username,
-            Password,
-            Server,
-            KeepAlive,
-            HomeAssistant,
-            Unknown(&'a str),
-        }
-
-        struct MqttVisitor<'a>(&'a Args);
-
-        impl<'de, 'a> Visitor<'de> for MqttVisitor<'a> {
-            type Value = MqttSettings;
-
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("MQTT settings structure")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<Self::Value, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut name = None;
-                let mut username = None;
-                let mut password = None;
-                let mut server = None;
-                let mut keep_alive = None;
-                let mut home_assistant = None;
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Name => {
-                            if name.is_some() {
-                                return Err(de::Error::duplicate_field("name"));
-                            }
-                            name = Some(map.next_value()?);
-                        }
-                        Field::Username => {
-                            if username.is_some() {
-                                return Err(de::Error::duplicate_field("username"));
-                            }
-                            username = Some(map.next_value()?);
-                        }
-                        Field::Password => {
-                            if password.is_some() {
-                                return Err(de::Error::duplicate_field("password"));
-                            }
-                            password = Some(map.next_value()?);
-                        }
-                        Field::Server => {
-                            if server.is_some() {
-                                return Err(de::Error::duplicate_field("server"));
-                            }
-                            server = Some(map.next_value()?);
-                        }
-                        Field::KeepAlive => {
-                            if keep_alive.is_some() {
-                                return Err(de::Error::duplicate_field("keep_alive"));
-                            }
-                            keep_alive = Some(map.next_value()?);
-                        }
-                        Field::HomeAssistant => {
-                            if home_assistant.is_some() {
-                                return Err(de::Error::duplicate_field("home_assistant"));
-                            }
-                            home_assistant = Some(map.next_value()?);
-                        }
-                        Field::Unknown(s) => {
-                            warn!("Unknown field: {}", s);
-                        }
-                    }
-                }
-                // Name is required, but can come from either CLI arguments or from the config
-                // file, with the CLI arguments being preferred.
-                let name = self
-                    .0
-                    .mqtt_name
-                    .as_ref()
-                    .cloned()
-                    .or(name)
-                    .ok_or_else(|| de::Error::missing_field("name"))?;
-                let username = username.unwrap_or_default();
-                let password = password.unwrap_or_default();
-                // Same situation as name: CLI args before config file.
-                let server = self
-                    .0
-                    .mqtt_server
-                    .as_ref()
-                    .cloned()
-                    .or(server)
-                    .ok_or_else(|| de::Error::missing_field("server"))?;
-                let keep_alive = keep_alive.unwrap_or_default();
-                let home_assistant = home_assistant.unwrap_or_default();
-                Ok(MqttSettings {
-                    name,
-                    username,
-                    password,
-                    server,
-                    keep_alive,
-                    home_assistant,
-                })
-            }
-        }
-        let visitor = MqttVisitor(self.0);
-        deserializer.deserialize_struct("MqttSettings", MQTT_FIELDS, visitor)
-    }
-}
-
-impl<'de> Deserialize<'de> for MqttSettings {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let args = Args::default();
-        MqttSettingsArgs(&args).deserialize(deserializer)
     }
 }
 

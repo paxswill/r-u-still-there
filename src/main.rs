@@ -70,7 +70,7 @@ fn create_config() -> anyhow::Result<Settings> {
     } else {
         "".to_string()
     };
-    Ok(Settings::from_str_with_args(&config_data, &args)?)
+    args.apply_to_config_str(&config_data)
 }
 
 // Just picking values for these.
