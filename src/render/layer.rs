@@ -12,7 +12,7 @@ use crate::image_buffer::BytesImage;
 use super::color::Color;
 use super::color_map::{ColorMapper, ImageColorMap};
 use super::font::{default_renderer, FontRenderer};
-use super::resize::{Resizer, PointResize};
+use super::resize::{PointResize, Resizer};
 use super::settings::RenderSettings;
 use super::TemperatureDisplay;
 
