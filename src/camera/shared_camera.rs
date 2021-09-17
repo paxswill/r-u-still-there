@@ -1,23 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use anyhow::Context;
 use image::imageops;
-use linux_embedded_hal::I2cdev;
 use tokio::sync::{broadcast, oneshot};
 use tracing::{debug, info, trace, warn};
 
-#[cfg(feature = "mock_camera")]
-use bincode::Options;
-
-use std::convert::{TryFrom, TryInto};
+use std::convert::TryFrom;
 use std::sync::{mpsc, Arc};
 use std::thread::sleep as thread_sleep;
 
-#[cfg(feature = "mock_camera")]
-use std::io::{Read, Seek};
-
 use super::measurement::Measurement;
-use super::settings::{CameraKind, CameraSettings, Rotation};
-use super::thermal_camera::{GridEye, Mlx90640, Mlx90641, ThermalCamera, YAxisDirection};
+use super::settings::{CameraSettings, Rotation};
+use super::thermal_camera::{ThermalCamera, YAxisDirection};
 
 #[derive(Debug)]
 pub(crate) enum CameraCommand {
@@ -35,7 +27,9 @@ pub(crate) enum CameraCommand {
 /// camera frame rate as possible.
 pub(crate) struct Camera {
     camera: Box<dyn ThermalCamera + Send>,
-    settings: CameraSettings,
+    rotation: Rotation,
+    flip_vertical: bool,
+    flip_horizontal: bool,
     measurement_channel: broadcast::Sender<Measurement>,
     command_receiver: mpsc::Receiver<CameraCommand>,
     command_sender: mpsc::Sender<CameraCommand>,
@@ -77,14 +71,14 @@ impl Camera {
             // If the image returned from the camera is with the Y-Axis pointing up, or if the
             // user has specified the image should be flipped, we need to flip the image it along
             // the Y-axis.
-            if y_direction == YAxisDirection::Up || self.settings.flip_vertical {
+            if y_direction == YAxisDirection::Up || self.flip_vertical {
                 imageops::flip_vertical_in_place(&mut image);
             }
             // The rest of the basic image transformations
-            if self.settings.flip_horizontal {
+            if self.flip_horizontal {
                 imageops::flip_horizontal_in_place(&mut image);
             }
-            image = match self.settings.rotation {
+            image = match self.rotation {
                 Rotation::Zero => image,
                 Rotation::Ninety => imageops::rotate90(&image),
                 Rotation::OneEighty => {
@@ -115,66 +109,16 @@ impl Camera {
 impl TryFrom<&CameraSettings> for Camera {
     type Error = anyhow::Error;
 
-    fn try_from(settings: &CameraSettings) -> anyhow::Result<Self> {
-        let mut camera: Box<dyn ThermalCamera + Send> = match &settings.kind {
-            CameraKind::GridEye(i2c) => {
-                let bus = I2cdev::try_from(&i2c.bus).context("Unable to create I2C bus")?;
-                let cam = GridEye::new(
-                    bus,
-                    i2c.address
-                        .try_into()
-                        .context("Invalid I2C address given")?,
-                )?;
-                Box::new(cam)
-            }
-            CameraKind::Mlx90640(i2c) => {
-                let bus = I2cdev::try_from(&i2c.bus).context("Unable to create I2C bus")?;
-                let inner_camera = mlx9064x::Mlx90640Driver::new(bus, i2c.address)?;
-                let camera_wrapper = Mlx90640::new(inner_camera);
-                Box::new(camera_wrapper)
-            }
-            CameraKind::Mlx90641(i2c) => {
-                let bus = I2cdev::try_from(&i2c.bus).context("Unable to create I2C bus")?;
-                let inner_camera = mlx9064x::Mlx90641Driver::new(bus, i2c.address)?;
-                let camera_wrapper = Mlx90641::new(inner_camera);
-                Box::new(camera_wrapper)
-            }
-            #[cfg(feature = "mock_camera")]
-            CameraKind::MockCamera(data_path) => {
-                let extension = data_path.extension().map(|s| s.to_str()).flatten();
-                let measurements: Vec<super::MeasurementData> = match extension {
-                    Some("toml") => {
-                        let data_string = std::fs::read_to_string(data_path)?;
-                        toml::from_str(&data_string).map_err(anyhow::Error::from)
-                    }
-                    // treat everything as bincode if we don't know to extension
-                    _ => {
-                        let mut measurements = Vec::new();
-                        let mut file = std::fs::File::open(data_path)?;
-                        let file_size = file.metadata()?.len();
-                        // These are the options async-bincode uses (but skipping the limit).
-                        let bincode_options = bincode::options()
-                            .with_fixint_encoding()
-                            .allow_trailing_bytes();
-                        while file.stream_position()? < file_size {
-                            // Have to keep cloning as bincode_options would otherwise be consumed
-                            let frame = bincode_options.clone().deserialize_from(file.by_ref())?;
-                            measurements.push(frame);
-                        }
-                        Ok(measurements)
-                    }
-                }?;
-                let mock_cam =
-                    super::mock_camera::MockCamera::new(measurements, super::RepeatMode::default());
-                Box::new(mock_cam)
-            }
-        };
+    fn try_from(settings: &CameraSettings) -> Result<Self, Self::Error> {
+        let mut camera = settings.create_camera()?;
         camera.set_frame_rate(settings.frame_rate())?;
         let (measurement_channel, _) = broadcast::channel(1);
         let (command_sender, command_receiver) = mpsc::channel();
         Ok(Self {
             camera,
-            settings: settings.clone(),
+            rotation: settings.rotation(),
+            flip_vertical: settings.flip_vertical(),
+            flip_horizontal: settings.flip_horizontal(),
             measurement_channel,
             command_receiver,
             command_sender,

@@ -1,18 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use std::borrow::Cow;
+use std::collections::HashMap;
+use std::convert::TryFrom;
 use std::fmt;
-use std::num::NonZeroU8;
+use std::marker::PhantomData;
 use std::path::PathBuf;
 
-use serde::de::{self, Deserialize, DeserializeSeed, Deserializer, MapAccess, Visitor};
-use serde_repr::Deserialize_repr;
-use tracing::{debug, error};
+use anyhow::Context as _;
+use linux_embedded_hal::I2cdev;
+use serde::de::{Deserialize, Deserializer, Error};
+use serde::ser::{Serialize, Serializer};
+use serde_repr::{Deserialize_repr, Serialize_repr};
 
-use super::I2cSettings;
-use crate::settings::Args;
+use super::thermal_camera::{self, ThermalCamera};
 
-// This enum is purely used to restrict the acceptable values for rotation
-#[derive(Clone, Copy, Deserialize_repr, PartialEq, Debug)]
+/// The type for the map of extra keys found in a camera config.
+type ExtraMap = HashMap<String, toml::Value>;
+
+// This enum is purely used to restrict the acceptable values for rotation.
+#[derive(Clone, Copy, Deserialize_repr, Serialize_repr, PartialEq, Debug)]
 #[repr(u16)]
 pub(crate) enum Rotation {
     Zero = 0,
@@ -21,307 +26,278 @@ pub(crate) enum Rotation {
     TwoSeventy = 270,
 }
 
-#[derive(Clone, Debug, serde::Deserialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "lowercase")]
-pub(crate) enum CameraKind {
-    GridEye(I2cSettings),
-    Mlx90640(I2cSettings),
-    Mlx90641(I2cSettings),
-    #[cfg(feature = "mock_camera")]
-    #[serde(rename = "mock")]
-    MockCamera(PathBuf),
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct CameraSettings {
-    pub(crate) kind: CameraKind,
-
-    pub(crate) rotation: Rotation,
-
-    pub(crate) flip_horizontal: bool,
-
-    pub(crate) flip_vertical: bool,
-
-    frame_rate: Option<NonZeroU8>,
-
-    /// If `Some`, [measurements][crate::camera::Measurement] should be saved to this path.
-    pub(crate) path: Option<PathBuf>,
-}
-
 impl Default for Rotation {
     fn default() -> Self {
         Self::Zero
     }
 }
 
-impl CameraKind {
-    /// Get the default frame rate for a camera module
-    fn default_frame_rate(&self) -> u8 {
-        match self {
-            CameraKind::GridEye(_) => 10,
-            CameraKind::Mlx90640(_) => 2,
-            CameraKind::Mlx90641(_) => 2,
+/// Newtype wrapper around `bool` for flipping the image.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+#[serde(transparent)]
+struct Flip(bool);
 
-            // NOTE: The frame rate for the mock camera is a multiplier for the recorded speed.
-            #[cfg(feature = "mock_camera")]
-            CameraKind::MockCamera(_) => 1,
-        }
+impl Default for Flip {
+    fn default() -> Self {
+        Flip(false)
     }
 }
 
-const CAMERA_KINDS: &[&str] = &["grideye"];
-
-const CAMERA_FIELDS: &[&str] = &[
-    "bus",
-    "address",
-    "rotation",
-    "flip_horizontal",
-    "flip_vertical",
-    "frame_rate",
-    "kind",
-    "path",
-];
-
-pub(crate) struct CameraSettingsArgs<'a>(&'a Args);
-
-impl<'a> CameraSettingsArgs<'a> {
-    pub(crate) fn new(args: &'a Args) -> Self {
-        Self(args)
+impl From<bool> for Flip {
+    fn from(value: bool) -> Self {
+        Flip(value)
     }
 }
 
-// Manually implementing Derserialize as there isn't a way to derive DeserializeSeed
-impl<'de, 'a> DeserializeSeed<'de> for CameraSettingsArgs<'a> {
-    type Value = CameraSettings;
+impl From<Flip> for bool {
+    fn from(wrapped: Flip) -> Self {
+        wrapped.0
+    }
+}
 
-    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+#[derive(Clone, Default, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
+pub(crate) struct CommonCameraSettings {
+    #[serde(default)]
+    rotation: Rotation,
+
+    #[serde(default)]
+    flip_horizontal: Flip,
+
+    #[serde(default)]
+    flip_vertical: Flip,
+
+    // By annotating this field with 'flatten', any unknown keys will be collected into this map.
+    #[serde(default, flatten)]
+    extra: ExtraMap,
+}
+
+/// Duplicating [amg88::Address] to have [serde::Deserialize] implemented for it.
+///
+/// This is used to validate that the address specified is one of the two valid addresses.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize_repr, Serialize_repr)]
+#[serde(remote = "amg88::Address")]
+#[repr(u8)]
+enum GridEyeAddress {
+    Low = 0x68,
+    High = 0x69,
+}
+
+fn default_grideye_frame_rate() -> amg88::FrameRateValue {
+    amg88::FrameRateValue::Fps10
+}
+
+struct TryFromNum<U>(PhantomData<U>);
+
+impl<U> TryFromNum<U> {
+    #[allow(dead_code)]
+    pub(super) fn serialize<S, T>(value: &T, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+        U: From<T> + Serialize + Copy,
+        T: Copy,
+    {
+        U::from(*value).serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D, T>(deserializer: D) -> Result<T, D::Error>
     where
         D: Deserializer<'de>,
+        T: TryFrom<U>,
+        <T as TryFrom<U>>::Error: fmt::Display,
+        U: Deserialize<'de>,
     {
-        #[derive(serde::Deserialize)]
-        #[serde(field_identifier, rename_all = "snake_case")]
-        enum Field<'a> {
-            Bus,
-            Address,
-            Rotation,
-            FlipHorizontal,
-            FlipVertical,
-            FrameRate,
-            Kind,
-            Path,
-            Unknown(&'a str),
-        }
-
-        struct CameraVisitor<'a>(&'a Args);
-
-        impl<'de, 'a> Visitor<'de> for CameraVisitor<'a> {
-            type Value = CameraSettings;
-
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("enum CameraSettings")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<CameraSettings, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut bus = None;
-                let mut address = None;
-                let mut rotation = None;
-                let mut flip_horizontal = None;
-                let mut flip_vertical = None;
-                let mut frame_rate = None;
-                let mut kind: Option<Cow<'_, str>> = None;
-                let mut path: Option<PathBuf> = None;
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Bus => {
-                            if bus.is_some() {
-                                return Err(de::Error::duplicate_field("bus"));
-                            }
-                            bus = Some(map.next_value()?);
-                        }
-                        Field::Address => {
-                            if address.is_some() {
-                                return Err(de::Error::duplicate_field("address"));
-                            }
-                            address = Some(map.next_value()?);
-                        }
-                        Field::Rotation => {
-                            if rotation.is_some() {
-                                return Err(de::Error::duplicate_field("rotation"));
-                            }
-                            rotation = Some(map.next_value()?);
-                        }
-                        Field::FlipHorizontal => {
-                            if flip_horizontal.is_some() {
-                                return Err(de::Error::duplicate_field("flip_horizontal"));
-                            }
-                            flip_horizontal = Some(map.next_value()?);
-                        }
-                        Field::FlipVertical => {
-                            if flip_vertical.is_some() {
-                                return Err(de::Error::duplicate_field("flip_vertical"));
-                            }
-                            flip_vertical = Some(map.next_value()?);
-                        }
-                        Field::FrameRate => {
-                            if frame_rate.is_some() {
-                                return Err(de::Error::duplicate_field("frame_rate"));
-                            }
-                            frame_rate = Some(map.next_value()?);
-                        }
-                        Field::Kind => {
-                            if kind.is_some() {
-                                return Err(de::Error::duplicate_field("kind"));
-                            }
-                            kind = Some(map.next_value()?);
-                        }
-                        Field::Path => {
-                            if path.is_some() {
-                                return Err(de::Error::duplicate_field("path"));
-                            }
-                            path = Some(map.next_value()?);
-                        }
-                        Field::Unknown(_) => {}
-                    }
-                }
-                // kind is required, and can be given either by being deserialized, or as a CLI
-                // argument in Args. There may also be other required fields depending on the value
-                // of kind.
-                let kind = self
-                    .0
-                    .camera_kind
-                    .as_ref()
-                    .map(|kind| Cow::Owned(kind.clone()))
-                    .or(kind)
-                    .ok_or_else(|| de::Error::missing_field("kind"))?;
-                // Fields with defaults
-                let rotation: Rotation = rotation.unwrap_or_default();
-                let flip_horizontal = flip_horizontal.unwrap_or(false);
-                let flip_vertical = flip_vertical.unwrap_or(false);
-                let frame_rate = frame_rate.unwrap_or_default();
-                // bus and address are required depending on the kind of camera, so they may come
-                // from being deserialized or from CLI args.
-                debug!("I2C bus from config: {:?}", bus);
-                debug!("I2C bus from CLI: {:?}", self.0.i2c_bus);
-                let bus = self.0.i2c_bus.as_ref().cloned().or(bus);
-                debug!("I2C address from config: {:?}", address);
-                debug!("I2C address from CLI: {:?}", self.0.i2c_address);
-                let address = self.0.i2c_address.or(address);
-                // Path is required for mock cameras, so it's handled in here as well.
-                path = self.0.path.as_ref().cloned().or(path);
-                let kind = match kind.as_ref() {
-                    "grideye" => {
-                        debug!(camera_kind = %kind, "using a GridEYE camera");
-                        let bus = bus.ok_or_else(|| de::Error::missing_field("bus"))?;
-                        let address = address.ok_or_else(|| de::Error::missing_field("address"))?;
-                        CameraKind::GridEye(I2cSettings { bus, address })
-                    }
-                    "mlx90640" => {
-                        debug!(camera_kind = %kind, "using a MLX90640");
-                        let bus = bus.ok_or_else(|| de::Error::missing_field("bus"))?;
-                        let address = address.ok_or_else(|| de::Error::missing_field("address"))?;
-                        CameraKind::Mlx90640(I2cSettings { bus, address })
-                    }
-                    "mlx90641" => {
-                        debug!(camera_kind = %kind, "using a MLX90641");
-                        let bus = bus.ok_or_else(|| de::Error::missing_field("bus"))?;
-                        let address = address.ok_or_else(|| de::Error::missing_field("address"))?;
-                        CameraKind::Mlx90641(I2cSettings { bus, address })
-                    }
-                    #[cfg(feature = "mock_camera")]
-                    "mock" => {
-                        // The mock camera's field will just be ignored by the other cameras
-                        // (until there's a camera that takes a path).
-                        debug!(camera_kind = %kind, "using the mock camera");
-                        let path = path
-                            // When `path` is Some, `Pipeline` adds a subscriber to the camera
-                            // stream that saves all measurement data to a file. Because a mock
-                            // camera is supposed to be *reading* from that file, `path` needs to
-                            // be None.
-                            .take()
-                            .ok_or_else(|| de::Error::missing_field("path"))?;
-                        CameraKind::MockCamera(path)
-                    }
-                    _ => {
-                        error!(camera_kind = %kind, "unknown camera kind");
-                        return Err(de::Error::unknown_variant(kind.as_ref(), CAMERA_KINDS));
-                    }
-                };
-                Ok(CameraSettings {
-                    kind,
-                    rotation,
-                    flip_horizontal,
-                    flip_vertical,
-                    frame_rate,
-                    path,
-                })
-            }
-        }
-        let visitor = CameraVisitor(self.0);
-        // Just a "hint" that this is a struct when it's actually deserializing an enum.
-        deserializer.deserialize_struct("CameraSettings", CAMERA_FIELDS, visitor)
+        let value: U = U::deserialize(deserializer)?;
+        T::try_from(value).map_err(|err| D::Error::custom(err))
     }
 }
 
-impl<'de> Deserialize<'de> for CameraSettings {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let args = Args::default();
-        CameraSettingsArgs(&args).deserialize(deserializer)
-    }
+type TryFromU8 = TryFromNum<u8>;
+type TryFromF32 = TryFromNum<f32>;
+
+#[derive(Clone, Debug, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase", tag = "kind")]
+pub(crate) enum CameraSettings {
+    GridEye {
+        bus: super::i2c::Bus,
+
+        #[serde(with = "TryFromU8")]
+        address: amg88::Address,
+
+        #[serde(default = "default_grideye_frame_rate", with = "TryFromU8")]
+        frame_rate: amg88::FrameRateValue,
+
+        #[serde(flatten)]
+        common: CommonCameraSettings,
+    },
+    Mlx90640 {
+        bus: super::i2c::Bus,
+        address: u8,
+
+        #[serde(default, with = "TryFromF32")]
+        frame_rate: mlx9064x::FrameRate,
+
+        #[serde(flatten)]
+        common: CommonCameraSettings,
+    },
+    Mlx90641 {
+        bus: super::i2c::Bus,
+        address: u8,
+
+        #[serde(with = "TryFromF32")]
+        frame_rate: mlx9064x::FrameRate,
+
+        #[serde(flatten)]
+        common: CommonCameraSettings,
+    },
+    #[cfg(feature = "mock_camera")]
+    #[serde(rename = "mock")]
+    MockCamera {
+        path: PathBuf,
+        frame_rate: f32,
+
+        #[serde(flatten)]
+        common: CommonCameraSettings,
+    },
 }
 
 impl CameraSettings {
-    pub(crate) fn new(kind: CameraKind) -> Self {
-        Self {
-            kind: kind,
-            rotation: Rotation::default(),
-            flip_horizontal: false,
-            flip_vertical: false,
-            frame_rate: None,
-            path: None,
+    /// Convenience method for accessing common camera settings.
+    fn common(&self) -> &CommonCameraSettings {
+        match self {
+            Self::GridEye { common, .. } => common,
+            Self::Mlx90640 { common, .. } => common,
+            Self::Mlx90641 { common, .. } => common,
+            #[cfg(feature = "mock_camera")]
+            Self::MockCamera { common, .. } => common,
         }
     }
 
-    /// Get the configured frame rate.
-    pub(crate) fn frame_rate(&self) -> u8 {
-        self.frame_rate
-            .map(NonZeroU8::get)
-            .unwrap_or_else(|| self.kind.default_frame_rate())
+    /// The requested rotation of the image.
+    pub(crate) fn rotation(&self) -> Rotation {
+        self.common().rotation
     }
 
-    /// Set the requested frame rate in the configuration.
+    /// Whether the image should be flipped horizontally.
+    pub(crate) fn flip_horizontal(&self) -> bool {
+        self.common().flip_horizontal.into()
+    }
+
+    /// Whether the image should be flipped vertically.
+    pub(crate) fn flip_vertical(&self) -> bool {
+        self.common().flip_vertical.into()
+    }
+
+    /// Access any unprocessed keys from the configuration.
+    pub(crate) fn extra(&self) -> &ExtraMap {
+        &self.common().extra
+    }
+
+    /// If the camera is connected over I2C, this method creates the [I2cdev] for that bus.
     ///
-    /// Note, this does not actually set the frame rate itself, it sets the *configured* frame
-    /// rate. the actual frame rate is determined in [shared_camera::Camera::frame_stream].
-    pub(crate) fn set_frame_rate(&mut self, frame_rate: NonZeroU8) {
-        self.frame_rate = Some(frame_rate)
+    /// If the camera does not use I2C, this method returns `None`.
+    fn i2c_bus(&self) -> Option<anyhow::Result<I2cdev>> {
+        match self {
+            Self::GridEye { bus, .. } => Some(bus),
+            Self::Mlx90640 { bus, .. } => Some(bus),
+            Self::Mlx90641 { bus, .. } => Some(bus),
+            _ => None,
+        }
+        .map(|bus| I2cdev::try_from(bus).context("Unable to connect to I2C bus"))
     }
-}
 
-impl PartialEq for CameraSettings {
-    fn eq(&self, other: &Self) -> bool {
-        self.kind == other.kind
-            && self.rotation == other.rotation
-            && self.flip_horizontal == other.flip_horizontal
-            && self.flip_vertical == other.flip_vertical
-            && self.frame_rate() == other.frame_rate()
+    pub(crate) fn frame_rate(&self) -> u8 {
+        match self {
+            Self::GridEye {
+                frame_rate: amg88::FrameRateValue::Fps1,
+                ..
+            } => 1,
+            Self::GridEye {
+                frame_rate: amg88::FrameRateValue::Fps10,
+                ..
+            } => 10,
+            // Clamp the 0.5 FPS frame rate for Melexis cameras to 1 until non-integer frame rates
+            // are implemented.
+            Self::Mlx90640 {
+                frame_rate: mlx9064x::FrameRate::Half,
+                ..
+            } => 1,
+            Self::Mlx90641 {
+                frame_rate: mlx9064x::FrameRate::Half,
+                ..
+            } => 1,
+            // Safe to truncate the floats to integers as the values are only the powers of 2, (0
+            // through 6, so 2 through 64).
+            Self::Mlx90640 { frame_rate, .. } => f32::from(*frame_rate) as u8,
+            Self::Mlx90641 { frame_rate, .. } => f32::from(*frame_rate) as u8,
+            // Just clamp the mock frame rate between 1 and u8::MAX
+            #[cfg(feature = "mock_camera")]
+            Self::MockCamera { frame_rate, .. } => frame_rate.max(1.0).min(u8::MAX as f32) as u8,
+        }
+    }
+
+    pub(crate) fn create_camera(&self) -> anyhow::Result<Box<dyn ThermalCamera + Send>> {
+        Ok(match self {
+            Self::GridEye { address, .. } => Box::new(thermal_camera::GridEye::new(
+                self.i2c_bus().expect("GridEye uses I2C")?,
+                *address,
+            )?),
+            Self::Mlx90640 { address, .. } => {
+                let bus = self.i2c_bus().expect("MLX90640 uses I2C")?;
+                Box::new(thermal_camera::Mlx90640::new(
+                    mlx9064x::Mlx90640Driver::new(bus, *address)?,
+                ))
+            }
+            Self::Mlx90641 { address, .. } => {
+                let bus = self.i2c_bus().expect("MLX90641 uses I2C")?;
+                Box::new(thermal_camera::Mlx90641::new(
+                    mlx9064x::Mlx90641Driver::new(bus, *address)?,
+                ))
+            }
+            #[cfg(feature = "mock_camera")]
+            Self::MockCamera { path, .. } => {
+                use std::io::{Read, Seek};
+
+                use bincode::Options;
+
+                use crate::camera::mock_camera::{MeasurementData, MockCamera, RepeatMode};
+
+                let extension = path.extension().map(|s| s.to_str()).flatten();
+                let measurements: Vec<MeasurementData> = match extension {
+                    Some("toml") => {
+                        let data_string = std::fs::read_to_string(path)?;
+                        toml::from_str(&data_string).map_err(anyhow::Error::from)
+                    }
+                    // treat everything as bincode if we don't know the extension
+                    _ => {
+                        let mut measurements = Vec::new();
+                        let mut file = std::fs::File::open(path)?;
+                        let file_size = file.metadata()?.len();
+                        // These are the options async-bincode uses (but skipping the limit).
+                        let bincode_options = bincode::options()
+                            .with_fixint_encoding()
+                            .allow_trailing_bytes();
+                        while file.stream_position()? < file_size {
+                            // Have to keep cloning as bincode_options would otherwise be consumed
+                            let frame = bincode_options.clone().deserialize_from(file.by_ref())?;
+                            measurements.push(frame);
+                        }
+                        Ok(measurements)
+                    }
+                }?;
+                let mock_cam = MockCamera::new(measurements, RepeatMode::default());
+                Box::new(mock_cam)
+            }
+        })
     }
 }
 
 #[cfg(test)]
 mod de_tests {
-    // Missing pytest's parameterized tests here.
-    use std::num::NonZeroU8;
     use std::path::PathBuf;
 
-    use crate::camera::{Bus, I2cSettings};
+    use crate::camera::Bus;
 
-    use super::{CameraKind, CameraSettings, Rotation};
+    use super::{CameraSettings, CommonCameraSettings, ExtraMap, Rotation};
 
     #[test]
     fn bus_from_num() {
@@ -446,21 +422,16 @@ mod de_tests {
         let source = r#"
         kind = "grideye"
         bus = 1
-        address = 30
+        address = 0x69
         "#;
         let parsed = toml::from_str(source);
         assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
         let parsed: CameraSettings = parsed.unwrap();
-        let expected = CameraSettings {
-            kind: CameraKind::GridEye(I2cSettings {
-                bus: Bus::Number(1),
-                address: 30,
-            }),
-            rotation: Rotation::Zero,
-            flip_horizontal: false,
-            flip_vertical: false,
-            frame_rate: Some(NonZeroU8::new(10).unwrap()),
-            path: None,
+        let expected = CameraSettings::GridEye {
+            bus: Bus::Number(1),
+            address: amg88::Address::High,
+            frame_rate: amg88::FrameRateValue::Fps10,
+            common: CommonCameraSettings::default(),
         };
         assert_eq!(parsed, expected);
     }
@@ -469,30 +440,29 @@ mod de_tests {
     fn grideye_full_bus_num() {
         let source = r#"
         kind = "grideye"
-        bus = 1
-        address = 30
+        bus = 3
+        address = 0x68
         rotation = 180
         flip_horizontal = true
         flip_vertical = true
-        frame_rate = 7
+        frame_rate = 1
         "#;
         let parsed = toml::from_str(source);
         assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
         let parsed: CameraSettings = parsed.unwrap();
-        let expected = CameraSettings {
-            kind: CameraKind::GridEye(I2cSettings {
-                bus: Bus::Number(1),
-                address: 30,
-            }),
-            rotation: Rotation::OneEighty,
-            flip_horizontal: true,
-            flip_vertical: true,
-            frame_rate: Some(NonZeroU8::new(7).unwrap()),
-            path: None,
+        let expected = CameraSettings::GridEye {
+            bus: Bus::Number(3),
+            address: amg88::Address::Low,
+            frame_rate: amg88::FrameRateValue::Fps1,
+            common: CommonCameraSettings {
+                rotation: Rotation::OneEighty,
+                flip_horizontal: true.into(),
+                flip_vertical: true.into(),
+                extra: ExtraMap::default(),
+            },
         };
         assert_eq!(parsed, expected);
     }
-
     /// Test that the path field is preserved for cameras other than `MockCamera`.
     #[test]
     fn non_mock_path() {
@@ -506,16 +476,14 @@ mod de_tests {
         let parsed = toml::from_str(source);
         assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
         let parsed: CameraSettings = parsed.unwrap();
-        let expected = CameraSettings {
-            kind: CameraKind::Mlx90640(I2cSettings {
-                bus: Bus::Number(1),
-                address: 0x33,
-            }),
-            rotation: Rotation::default(),
-            flip_horizontal: false,
-            flip_vertical: false,
-            frame_rate: Some(NonZeroU8::new(8).unwrap()),
-            path: Some("/foo/var/baz.bin".into()),
+        let expected = CameraSettings::Mlx90640 {
+            bus: Bus::Number(1),
+            address: 0x33,
+            frame_rate: mlx9064x::FrameRate::Eight,
+            common: CommonCameraSettings {
+                extra: std::iter::once(("path".to_string(), "/foo/bar/baz.bin".into())).collect(),
+                ..CommonCameraSettings::default()
+            },
         };
         assert_eq!(parsed, expected);
     }
@@ -536,13 +504,16 @@ mod de_tests {
         let parsed = toml::from_str(source);
         assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
         let parsed: CameraSettings = parsed.unwrap();
-        let expected = CameraSettings {
-            kind: CameraKind::MockCamera("/tmp/qux.bin".into()),
-            rotation: Rotation::default(),
-            flip_horizontal: false,
-            flip_vertical: false,
-            frame_rate: Some(NonZeroU8::new(3).unwrap()),
-            path: None,
+        let mut extra = ExtraMap::new();
+        extra.insert("bus".into(), 1.into());
+        extra.insert("address".into(), 0x33.into());
+        let expected = CameraSettings::MockCamera {
+            path: PathBuf::from("/tmp/qux.bin"),
+            frame_rate: 3.0,
+            common: CommonCameraSettings {
+                extra,
+                ..CommonCameraSettings::default()
+            },
         };
         assert_eq!(parsed, expected);
     }

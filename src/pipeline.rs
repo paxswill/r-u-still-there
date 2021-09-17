@@ -100,7 +100,12 @@ impl Pipeline {
             mqtt_config: config.mqtt,
             tasks,
         };
-        app.record_measurements(config.camera.path)
+        app.record_measurements(config.camera
+                .extra()
+                .get("path")
+                .and_then(toml::Value::as_str)
+                .map(PathBuf::from)
+            )
             .await
             .context("Error configuring camera frame recording")?;
         app.create_streams(config.streams)
