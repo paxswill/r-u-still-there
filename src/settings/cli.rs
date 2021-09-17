@@ -122,6 +122,7 @@ pub(crate) struct Args {
     #[structopt(long = "no-home-assistant", group = "home_assistant")]
     pub(super) disable_home_assistant: bool,
 
+    #[cfg(feature = "mock_camera")]
     /// The file to use for mock camera data.
     ///
     /// When the mock camera is being used, this given path is used as the source of camera data.
