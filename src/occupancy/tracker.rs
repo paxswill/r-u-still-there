@@ -20,14 +20,14 @@ use crate::image_buffer::ThermalImage;
 #[derive(Clone, Debug)]
 pub(crate) struct Tracker {
     threshold: Threshold,
-    blobs: Arc<RwLock<Vec<Blob>>>,
+    objects: Arc<RwLock<Vec<Object>>>,
     old_count: Arc<AtomicUsize>,
     count_sender: Arc<watch::Sender<usize>>,
     count_receiver: watch::Receiver<usize>,
 }
 
 #[derive(Clone, Debug)]
-struct Blob {
+struct Object {
     points: Vec<Point<u32>>,
 }
 
@@ -36,7 +36,7 @@ impl Tracker {
         let (sender, receiver) = watch::channel(0);
         Self {
             threshold,
-            blobs: Arc::new(RwLock::new(Vec::default())),
+            objects: Arc::new(RwLock::new(Vec::default())),
             old_count: Arc::new(AtomicUsize::new(0)),
             count_sender: Arc::new(sender),
             count_receiver: receiver,
@@ -44,31 +44,31 @@ impl Tracker {
     }
 
     pub(crate) fn count(&self) -> usize {
-        self.blobs.read().unwrap().len()
+        self.objects.read().unwrap().len()
     }
 
     pub(crate) fn update(&mut self, image: &ThermalImage) {
         let thresholded: ImageBuffer<Luma<u8>, Vec<u8>> = self.threshold.threshold_image(image);
-        let mut blob_points: HashMap<u32, Vec<Point<u32>>> = HashMap::new();
+        let mut object_points: HashMap<u32, Vec<Point<u32>>> = HashMap::new();
         let components = connected_components(&thresholded, Connectivity::Eight, Luma([0u8]));
         // We only care about the foreground pixels, so skip the background (label == 0).
         let filtered_pixels = components
             .enumerate_pixels()
             .filter(|(_, _, pixel)| pixel[0] != 0);
         for (x, y, pixel) in filtered_pixels {
-            blob_points
+            object_points
                 .entry(pixel[0])
                 .or_default()
                 .push(Point::new(x, y));
         }
-        let blobs: Vec<Blob> = blob_points
+        let objects: Vec<Object> = object_points
             .values()
             .map(|points| points.iter().cloned().collect())
             .collect();
         {
-            let mut locked_blobs = self.blobs.write().unwrap();
-            let new_count = blobs.len();
-            *locked_blobs = blobs;
+            let mut locked_objects = self.objects.write().unwrap();
+            let new_count = objects.len();
+            *locked_objects = objects;
             if new_count != self.old_count.load(Ordering::Acquire) {
                 self.count_sender
                     .send(new_count)
@@ -114,7 +114,7 @@ impl Sink<Measurement> for Tracker {
     }
 }
 
-impl Blob {
+impl Object {
     pub(crate) fn center(&self) -> Option<Point<u32>> {
         // Short circuit the easy cases
         match self.points.len() {
@@ -137,7 +137,7 @@ impl Blob {
     }
 }
 
-impl std::iter::FromIterator<Point<u32>> for Blob {
+impl std::iter::FromIterator<Point<u32>> for Object {
     fn from_iter<I: IntoIterator<Item = Point<u32>>>(iter: I) -> Self {
         Self {
             points: iter.into_iter().collect(),
@@ -147,23 +147,23 @@ impl std::iter::FromIterator<Point<u32>> for Blob {
 
 #[cfg(test)]
 mod test {
-    use super::{Blob, Point};
+    use super::{Object, Point};
 
     #[test]
     fn center_empty() {
         let points: [Point<u32>; 0] = [];
-        let blob: Blob = std::array::IntoIter::new(points).collect();
-        assert_eq!(blob.center(), None, "An empty blob doesn't have a center");
+        let object: Object = std::array::IntoIter::new(points).collect();
+        assert_eq!(object.center(), None, "An empty object doesn't have a center");
     }
 
     #[test]
     fn center_single() {
         let points: [Point<u32>; 1] = [Point::new(3, 9)];
-        let blob: Blob = std::array::IntoIter::new(points).collect();
+        let object: Object = std::array::IntoIter::new(points).collect();
         assert_eq!(
-            blob.center(),
+            object.center(),
             Some(Point::new(3, 9)),
-            "A blob with a single point should have the same center"
+            "A object with a single point should have the same center"
         );
     }
 
@@ -180,9 +180,9 @@ mod test {
             Point::new(4, 0),
             Point::new(4, 10),
         ];
-        let blob: Blob = std::array::IntoIter::new(points).collect();
+        let object: Object = std::array::IntoIter::new(points).collect();
         assert_eq!(
-            blob.center(),
+            object.center(),
             Some(Point::new(2, 5)),
             "Incorrect center for a rectangle with bounding box ((0, 0), (4, 10)"
         );
