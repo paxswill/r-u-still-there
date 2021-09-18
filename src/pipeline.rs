@@ -133,7 +133,7 @@ impl Pipeline {
                 match broadcast_res {
                     Ok(measurement) => Some(measurement),
                     Err(BroadcastStreamRecvError::Lagged(lag_count)) => {
-                        warn!("Measurement stream lagging {} samples", lag_count);
+                        warn!("Measurement sink lagging {} samples", lag_count);
                         None
                     }
                 }

@@ -151,7 +151,7 @@ r-u-still-there better addresses:
 All that being said, I'm still very thankful to room-assistant for inspiring me
 to create r-u-still-there.
 
-#### What are the warning messages about a measurement stream lagging about?
+#### What are the warning messages about a measurement sink lagging about?
 
 This usually happens if the CPU can't keep up with the frames coming off of the
 camera. Try some of the suggestions above for reducing CPU usage.
