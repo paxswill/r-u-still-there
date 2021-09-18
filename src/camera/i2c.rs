@@ -33,12 +33,6 @@ impl PartialEq for Bus {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
-pub(crate) struct I2cSettings {
-    pub(crate) bus: Bus,
-    pub(crate) address: u8,
-}
-
 impl From<u32> for Bus {
     fn from(bus: u32) -> Self {
         Self::Number(bus)
