@@ -28,8 +28,8 @@ use crate::image_buffer::BytesImage;
 use crate::mqtt::{
     home_assistant as hass, serialize, MqttSettings, Occupancy, OccupancyCount, State, Status,
 };
-use crate::occupancy::Tracker;
-use crate::settings::{Settings, TrackerSettings};
+use crate::occupancy::{Tracker, TrackerSettings};
+use crate::settings::Settings;
 use crate::util::flatten_join_result;
 use crate::{render, spmc, stream};
 
