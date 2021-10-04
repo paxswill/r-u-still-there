@@ -114,6 +114,39 @@ impl<U> TryFromNum<U> {
 type TryFromU8 = TryFromNum<u8>;
 type TryFromF32 = TryFromNum<f32>;
 
+#[derive(Copy, Clone, Debug, serde::Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Mlx90640AccessMode {
+    Chess,
+    #[serde(alias = "interlace")]
+    Interleave,
+}
+
+impl Default for Mlx90640AccessMode {
+    fn default() -> Self {
+        Self::Chess
+    }
+}
+
+impl From<Mlx90640AccessMode> for mlx9064x::AccessPattern {
+    fn from(wrapped: Mlx90640AccessMode) -> Self {
+        match wrapped {
+            Mlx90640AccessMode::Chess => Self::Chess,
+            Mlx90640AccessMode::Interleave => Self::Interleave,
+        }
+    }
+}
+
+impl From<mlx9064x::AccessPattern> for Mlx90640AccessMode {
+    fn from(pattern: mlx9064x::AccessPattern) -> Self {
+        match pattern {
+            mlx9064x::AccessPattern::Chess => Self::Chess,
+            mlx9064x::AccessPattern::Interleave => Self::Interleave,
+        }
+    }
+}
+
+
 #[derive(Clone, Debug, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase", tag = "kind")]
 pub(crate) enum CameraSettings {
@@ -135,6 +168,9 @@ pub(crate) enum CameraSettings {
 
         #[serde(default, with = "TryFromF32")]
         frame_rate: mlx9064x::FrameRate,
+
+        #[serde(default)]
+        mode: Mlx90640AccessMode,
 
         #[serde(flatten)]
         common: CommonCameraSettings,
@@ -207,6 +243,7 @@ impl CameraSettings {
     ///
     /// If the camera does not use I2C, this method returns `None`.
     fn i2c_bus(&self) -> Option<anyhow::Result<I2cdev>> {
+        #[allow(unreachable_patterns)]
         match self {
             Self::GridEye { bus, .. } => Some(bus),
             Self::Mlx90640 { bus, .. } => Some(bus),
@@ -252,11 +289,11 @@ impl CameraSettings {
                 self.i2c_bus().expect("GridEye uses I2C")?,
                 *address,
             )?),
-            Self::Mlx90640 { address, .. } => {
+            Self::Mlx90640 { address, mode, .. } => {
                 let bus = self.i2c_bus().expect("MLX90640 uses I2C")?;
-                Box::new(thermal_camera::Mlx90640::new(
-                    mlx9064x::Mlx90640Driver::new(bus, *address)?,
-                ))
+                let mut driver = mlx9064x::Mlx90640Driver::new(bus, *address)?;
+                driver.set_access_pattern((*mode).into())?;
+                Box::new(thermal_camera::Mlx90640::new(driver))
             }
             Self::Mlx90641 { address, .. } => {
                 let bus = self.i2c_bus().expect("MLX90641 uses I2C")?;
@@ -310,7 +347,7 @@ mod de_tests {
 
     use crate::camera::Bus;
 
-    use super::{CameraSettings, CommonCameraSettings, ExtraMap, Rotation};
+    use super::{CameraSettings, CommonCameraSettings, ExtraMap, Mlx90640AccessMode, Rotation};
 
     #[test]
     fn bus_from_num() {
@@ -493,6 +530,7 @@ mod de_tests {
             bus: Bus::Number(1),
             address: 0x33,
             frame_rate: mlx9064x::FrameRate::Eight,
+            mode: Mlx90640AccessMode::Chess,
             common: CommonCameraSettings {
                 extra: std::iter::once(("path".to_string(), "/foo/bar/baz.bin".into())).collect(),
                 ..CommonCameraSettings::default()

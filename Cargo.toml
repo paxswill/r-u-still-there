@@ -30,7 +30,7 @@ linux-embedded-hal = "0.3"
 lru = { version = "0.6.5", optional = true }
 mac_address = { version = "1.1", features = ["serde"] }
 machine-uid = "0.2"
-mlx9064x = "0.2.0"
+mlx9064x = "0.2.1"
 mozjpeg = { version = "0.8.24", optional = true }
 ndarray = "0.15.1"
 num = { version = "0.4.0", default-features = false }
