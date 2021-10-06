@@ -45,7 +45,7 @@ pub(crate) trait ThermalCamera {
     fn measure(&mut self) -> anyhow::Result<Measurement>;
 
     /// Set the camera frame rate.
-    fn set_frame_rate(&mut self, frame_rate: u8) -> anyhow::Result<()>;
+    fn set_frame_rate(&mut self, frame_rate: f32) -> anyhow::Result<()>;
 }
 
 pub(crate) struct GridEye {
@@ -105,7 +105,9 @@ impl ThermalCamera for GridEye {
         })
     }
 
-    fn set_frame_rate(&mut self, frame_rate: u8) -> anyhow::Result<()> {
+    fn set_frame_rate(&mut self, frame_rate: f32) -> anyhow::Result<()> {
+        // Truncate the frame rate as the Grideye only has integer frame rates
+        let frame_rate = frame_rate.trunc().clamp(0.0, u8::MAX as f32) as u8;
         let grideye_frame_rate = amg88::FrameRateValue::try_from(frame_rate)
             .context("Invalid frame rate, only 1 or 10 are valid for GridEYE cameras")?;
         self.camera
@@ -317,10 +319,9 @@ impl ThermalCamera for $name {
         })
     }
 
-    fn set_frame_rate(&mut self, frame_rate: u8) -> anyhow::Result<()> {
-        // TODO: Add a way to have <1 FPS frame rates
+    fn set_frame_rate(&mut self, frame_rate: f32) -> anyhow::Result<()> {
         let mlx_frame_rate = mlx9064x::FrameRate::try_from(frame_rate)
-            .context("Invalid frame rate, only 1, 2, 4, 8, 16, 32, or 64 are valid for MLX9064* cameras")?;
+            .context("Invalid frame rate, only 0.5, 1, 2, 4, 8, 16, 32, or 64 are valid for MLX9064* cameras")?;
         self.camera
             .set_frame_rate(mlx_frame_rate)
             .context("Error setting MLX9064x frame rate")?;

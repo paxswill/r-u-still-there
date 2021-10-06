@@ -7,7 +7,6 @@ use toml::value::{Table, Value};
 use std::borrow::ToOwned;
 use std::convert::TryInto;
 use std::net;
-use std::num::NonZeroU8;
 use std::path::PathBuf;
 
 use crate::camera::{Bus, CameraSettings};
@@ -45,7 +44,7 @@ pub(crate) struct Args {
     /// The camera frame rate to use.
     #[structopt(short, long)]
     #[structopt(env = "RUSTILLTHERE_FPS")]
-    pub(crate) frame_rate: Option<NonZeroU8>,
+    pub(crate) frame_rate: Option<f32>,
 
     /// The size of each camera pixel in the rendered image.
     #[structopt(short, long)]
@@ -226,13 +225,7 @@ impl Args {
         merge_arg!(config, String, self.i2c_bus, "camera", "bus");
         merge_arg!(config, Integer, self.i2c_address, "camera", "address");
         // Have to convert NonZeroU8 to u8 before it can be converted into an i64
-        merge_arg!(
-            config,
-            Integer,
-            self.frame_rate.map(|f| f.get()),
-            "camera",
-            "frame_rate"
-        );
+        merge_arg!(config, Float, self.frame_rate, "camera", "frame_rate");
         merge_arg!(config, Integer, self.grid_size, "render", "grid_size");
         merge_arg!(config, String, self.temperature_units, "render", "units");
         merge_arg!(config, String, self.colors, "render", "colors");

@@ -294,8 +294,8 @@ impl ThermalCamera for MockCamera {
         })
     }
 
-    fn set_frame_rate(&mut self, frame_rate: u8) -> anyhow::Result<()> {
-        self.frame_rate = frame_rate.into();
+    fn set_frame_rate(&mut self, frame_rate: f32) -> anyhow::Result<()> {
+        self.frame_rate = frame_rate;
         Ok(())
     }
 }

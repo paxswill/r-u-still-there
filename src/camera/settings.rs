@@ -146,7 +146,6 @@ impl From<mlx9064x::AccessPattern> for Mlx90640AccessMode {
     }
 }
 
-
 #[derive(Clone, Debug, serde::Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase", tag = "kind")]
 pub(crate) enum CameraSettings {
@@ -253,33 +252,21 @@ impl CameraSettings {
         .map(|bus| I2cdev::try_from(bus).context("Unable to connect to I2C bus"))
     }
 
-    pub(crate) fn frame_rate(&self) -> u8 {
+    pub(crate) fn frame_rate(&self) -> f32 {
         match self {
             Self::GridEye {
                 frame_rate: amg88::FrameRateValue::Fps1,
                 ..
-            } => 1,
+            } => 1.0,
             Self::GridEye {
                 frame_rate: amg88::FrameRateValue::Fps10,
                 ..
-            } => 10,
-            // Clamp the 0.5 FPS frame rate for Melexis cameras to 1 until non-integer frame rates
-            // are implemented.
-            Self::Mlx90640 {
-                frame_rate: mlx9064x::FrameRate::Half,
-                ..
-            } => 1,
-            Self::Mlx90641 {
-                frame_rate: mlx9064x::FrameRate::Half,
-                ..
-            } => 1,
-            // Safe to truncate the floats to integers as the values are only the powers of 2, (0
-            // through 6, so 2 through 64).
-            Self::Mlx90640 { frame_rate, .. } => f32::from(*frame_rate) as u8,
-            Self::Mlx90641 { frame_rate, .. } => f32::from(*frame_rate) as u8,
-            // Just clamp the mock frame rate between 1 and u8::MAX
+            } => 10.0,
+            Self::Mlx90640 { frame_rate, .. } | Self::Mlx90641 { frame_rate, .. } => {
+                f32::from(*frame_rate)
+            }
             #[cfg(feature = "mock_camera")]
-            Self::MockCamera { frame_rate, .. } => frame_rate.max(1.0).min(u8::MAX as f32) as u8,
+            Self::MockCamera { frame_rate, .. } => *frame_rate,
         }
     }
 
@@ -513,6 +500,7 @@ mod de_tests {
         };
         assert_eq!(parsed, expected);
     }
+
     /// Test that the path field is preserved for cameras other than `MockCamera`.
     #[test]
     fn non_mock_path() {
@@ -535,6 +523,27 @@ mod de_tests {
                 extra: std::iter::once(("path".to_string(), "/foo/bar/baz.bin".into())).collect(),
                 ..CommonCameraSettings::default()
             },
+        };
+        assert_eq!(parsed, expected);
+    }
+    /// Test that the path field is preserved for cameras other than `MockCamera`.
+    #[test]
+    fn float_frame_rate() {
+        let source = r#"
+        kind = "mlx90640"
+        bus = 1
+        address = 0x33
+        frame_rate = 0.5
+        "#;
+        let parsed = toml::from_str(source);
+        assert!(parsed.is_ok(), "Unable to parse TOML: {:?}", parsed);
+        let parsed: CameraSettings = parsed.unwrap();
+        let expected = CameraSettings::Mlx90640 {
+            bus: Bus::Number(1),
+            address: 0x33,
+            frame_rate: mlx9064x::FrameRate::Half,
+            mode: Mlx90640AccessMode::Chess,
+            common: CommonCameraSettings::default(),
         };
         assert_eq!(parsed, expected);
     }
