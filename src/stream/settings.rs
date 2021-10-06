@@ -49,7 +49,7 @@ impl StreamSettings {
         let mut rates: Vec<u64> = Vec::new();
         if self.mjpeg.enabled && self.mjpeg.frame_rate_limit.is_some() {
             let rate = self.mjpeg.frame_rate_limit.unwrap();
-            let millis_delay = 1000f32 * (1f32 / rate);
+            let millis_delay = rate.recip() * 1000.0;
             rates.push(millis_delay as u64);
         }
         rates.into_iter().reduce(|a, b| a.gcd(&b)).and_then(|gcd| {
