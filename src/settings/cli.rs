@@ -130,7 +130,10 @@ pub(crate) struct Args {
     ///
     /// This option is only relevant when the mock camera is being used. If not specified, "loop"
     /// is used.
-    #[structopt(long = "repeat-mode", possible_values(crate::camera::RepeatMode::KINDS))]
+    #[structopt(
+        long = "repeat-mode",
+        possible_values(crate::camera::RepeatMode::KINDS)
+    )]
     pub(crate) mock_repeat_mode: Option<crate::camera::RepeatMode>,
 }
 
