@@ -289,7 +289,7 @@ mod test {
     use crate::camera::{Bus, CameraSettings};
     use crate::mqtt::MqttSettings;
     use crate::occupancy::Threshold;
-    use crate::temperature::Temperature;
+    use crate::temperature::{Temperature, TemperatureUnit};
 
     use super::{Args, Settings};
 
@@ -494,6 +494,26 @@ mod test {
         expected.tracker.threshold = Threshold::Static(Temperature::Celsius(7f32));
         expected.mqtt.home_assistant.topic = "testing_topic".to_string();
         let config: Settings = toml::from_str(source)?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn cli_arg_units() -> anyhow::Result<()> {
+        let args = Args {
+            // Minimum required arguments here
+            camera_kind: Some("grideye".to_string()),
+            i2c_address: Some(0x68),
+            i2c_bus: Some(Bus::Number(9)),
+            mqtt_name: Some("Testing Name".to_string()),
+            mqtt_server: Some("mqtt://mqtt.invalid".parse().unwrap()),
+            // Explicit units given here
+            temperature_units: Some(TemperatureUnit::Fahrenheit),
+            ..Args::default()
+        };
+        let config = args.apply_to_config_str(&"")?;
+        let mut expected = expected_config();
+        expected.render.units = Some(TemperatureUnit::Fahrenheit);
         assert_eq!(config, expected);
         Ok(())
     }

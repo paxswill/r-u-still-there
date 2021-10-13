@@ -18,10 +18,14 @@ use crate::mqtt::{home_assistant as hass, DiscoveryValue};
 pub enum TemperatureUnit {
     #[serde(alias = "C")]
     #[serde(alias = "c")]
+    #[serde(alias = "°C")]
+    #[serde(alias = "°c")]
     Celsius,
 
     #[serde(alias = "F")]
     #[serde(alias = "f")]
+    #[serde(alias = "°F")]
+    #[serde(alias = "°f")]
     Fahrenheit,
 }
 
@@ -45,8 +49,8 @@ impl FromStr for TemperatureUnit {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match &s.to_ascii_lowercase() as &str {
-            "celsius" | "c" => Ok(TemperatureUnit::Celsius),
-            "fahrenheit" | "f" => Ok(TemperatureUnit::Fahrenheit),
+            "celsius" | "c" | "°c" => Ok(TemperatureUnit::Celsius),
+            "fahrenheit" | "f" | "°f" => Ok(TemperatureUnit::Fahrenheit),
             _ => Err("unknown temperature unit"),
         }
     }
@@ -437,5 +441,33 @@ mod test {
         let t = wrapper.temp;
         assert_eq!(t.value(), -40f64);
         assert_eq!(t.unit(), TemperatureUnit::Fahrenheit);
+    }
+
+    #[test]
+    fn roundtrip_units_celsius() {
+        let source = TemperatureUnit::Celsius;
+        let serialized = toml::to_string(&source).expect("Celsius units should be serializable");
+        let deserialized = toml::from_str(&serialized)
+            .expect("An encoded temperature unit should be able to be deserialized");
+        assert_eq!(source, deserialized);
+    }
+
+    #[test]
+    fn roundtrip_units_fahrenheit() {
+        let source = TemperatureUnit::Fahrenheit;
+        let serialized = toml::to_string(&source).expect("Fahrenheit units should be serializable");
+        let deserialized = toml::from_str(&serialized)
+            .expect("An encoded temperature unit should be able to be deserialized");
+        assert_eq!(source, deserialized);
+    }
+
+    #[test]
+    fn roundtrip_to_string() {
+        let source = TemperatureUnit::Fahrenheit;
+        let toml_string = toml::Value::String(source.to_string());
+        let deserialized = toml_string
+            .try_into()
+            .expect("An encoded temperature unit should be able to be deserialized");
+        assert_eq!(source, deserialized);
     }
 }
