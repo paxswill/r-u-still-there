@@ -161,10 +161,6 @@ macro_rules! merge_arg {
         };
         merge_arg!($root, Boolean, arg_value, $( $field ),+);
     };
-    ($root:tt, Gradient, $arg:expr, $($field:literal),+) => {
-        // This is hacky, but "works"
-        let gradient_name = std::any::type_name::<
-    };
     ($root:tt, String, $arg:expr, $($field:literal),+) => {
         if let Some(arg_member) = &$arg {
             let fields = [$( $field ),+ ];
@@ -173,7 +169,6 @@ macro_rules! merge_arg {
             let (parent_fields, leaf_field) = fields.split_at(fields.len() - 1);
             let leaf_field = leaf_field[0];
             let mut parent_table = &mut $root;
-
             for field in parent_fields {
                 parent_table = parent_table.entry(*field)
                     .or_insert_with(|| Value::Table(Table::default()))
@@ -194,7 +189,6 @@ macro_rules! merge_arg {
             let (parent_fields, leaf_field) = fields.split_at(fields.len() - 1);
             let leaf_field = leaf_field[0];
             let mut parent_table = &mut $root;
-
             for field in parent_fields {
                 parent_table = parent_table.entry(*field)
                     .or_insert_with(|| Value::Table(Table::default()))
