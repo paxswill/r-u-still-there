@@ -8,6 +8,7 @@
 use std::convert::TryInto;
 
 use anyhow::anyhow;
+use bitvec::prelude::*;
 use rayon::prelude::*;
 use serde::Deserialize;
 
@@ -278,11 +279,30 @@ pub(super) struct BackgroundModel<PixMod: PixelModel, const NUM_PIXELS: usize> {
     pixel_models: [PixMod; NUM_PIXELS],
     /// The parameters shared by all models.
     parameters: PixMod::Parameters,
+    /// Flags corresponding to pixels that are *not* to be updated.
+    // Using a BitArray would be more precise, but it isn't possible to perform operations on const
+    // parameters.
+    frozen_pixels: BitVec,
 }
 
 impl<PixMod: PixelModel, const NUM_PIXELS: usize> BackgroundModel<PixMod, NUM_PIXELS> {
     pub(super) fn set_parameters(&mut self, params: PixMod::Parameters) {
         self.parameters = params;
+    }
+
+    // TODO: Add optimized method for sorted pixels
+    fn set_pixel_state(&mut self, pixels: &[usize], state: bool) {
+        for pixel_index in pixels {
+            self.frozen_pixels.set(*pixel_index, state);
+        }
+    }
+
+    pub(super) fn freeze_pixels(&mut self, pixels: &[usize]) {
+        self.set_pixel_state(pixels, true)
+    }
+
+    pub(super) fn thaw_pixels(&mut self, pixels: &[usize]) {
+        self.set_pixel_state(pixels, false)
     }
 }
 
@@ -293,10 +313,16 @@ where
 {
     pub(super) fn update(&mut self, samples: &[f32]) {
         let params = &self.parameters;
+        let frozen = self.frozen_pixels.as_bitslice();
         samples
             .par_iter()
             .zip(self.pixel_models.par_iter_mut())
-            .for_each(|(sample, model)| model.update(*sample, params));
+            .enumerate()
+            .for_each(|(index, (sample, model))| {
+                if !frozen[index] {
+                    model.update(*sample, params)
+                }
+            });
     }
 
     pub(super) fn background_probability(
@@ -341,6 +367,7 @@ where
         Self {
             pixel_models,
             parameters: PixMod::Parameters::default(),
+            frozen_pixels: bitvec![0; NUM_PIXELS],
         }
     }
 }
@@ -353,6 +380,11 @@ mod test {
 
     use super::{BackgroundModel, GaussianMixtureModel};
 
+    type NormalSamples = DistIter<Normal<f32>, ChaCha8Rng, f32>;
+
+    const LENGTH: usize = 10;
+    const TRAINING_SIZE: usize = 5000;
+
     fn rng() -> ChaCha8Rng {
         // Using a seeded, RNG so that tests are repeatable.
         // Seed generated with python3 -c 'import random; print(repr(random.randbytes(32)))'
@@ -361,8 +393,6 @@ mod test {
         \xe4c\xbbJX|\xc5\xdb4z\x91\x0b\x10=}\xe5\xc9tm";
         ChaCha8Rng::from_seed(*SEED)
     }
-
-    type NormalSamples = DistIter<Normal<f32>, ChaCha8Rng, f32>;
 
     fn generate_image(samples: &mut NormalSamples, length: usize) -> Vec<f32> {
         samples.take(length).collect()
@@ -411,10 +441,10 @@ mod test {
         }
     }
 
+    // A very simple test; train only with samples distributed around room temperature, then add
+    // two pixels that are closer to body temperature.
     #[test]
     fn simple() {
-        const LENGTH: usize = 10;
-        const TRAINING_SIZE: usize = 5000;
         let (mut bg_samples, mut fg_samples) = random_samples();
         let mut model: BackgroundModel<GaussianMixtureModel, LENGTH> = BackgroundModel::default();
         for _ in 0..TRAINING_SIZE {
@@ -424,10 +454,10 @@ mod test {
         check_model(model, &mut bg_samples, &mut fg_samples);
     }
 
+    // Test that after the "background" abruptly changes, the model (eventually) recalibrates to
+    // the new background.
     #[test]
     fn abrupt_change() {
-        const LENGTH: usize = 10;
-        const TRAINING_SIZE: usize = 5000;
         let (mut bg_samples, mut fg_samples) = random_samples();
         let mut model: BackgroundModel<GaussianMixtureModel, LENGTH> = BackgroundModel::default();
         // Start with the foreground being used for the background
@@ -441,6 +471,32 @@ mod test {
             model.update(&samples)
         }
         // Then test
+        check_model(model, &mut bg_samples, &mut &mut fg_samples);
+    }
+
+    // Test that pixels can be frozen at a value, and are *not* updated with the rest of the pixels.
+    #[test]
+    fn frozen_as_foreground() {
+        let (mut bg_samples, mut fg_samples) = random_samples();
+        let mut model: BackgroundModel<GaussianMixtureModel, LENGTH> = BackgroundModel::default();
+        // Start with a completely room temperature "image"
+        for _ in 0..TRAINING_SIZE {
+            let samples = generate_image(&mut bg_samples, LENGTH);
+            model.update(&samples)
+        }
+        // Freeze two pixels, then update these pixels with body temperature values while
+        // continuing training.
+        const FROZEN_PIXELS: [usize; 2] = [4, 5];
+        model.freeze_pixels(&FROZEN_PIXELS);
+        for _ in 0..TRAINING_SIZE {
+            let mut samples = generate_image(&mut bg_samples, LENGTH);
+            for frozen in &FROZEN_PIXELS {
+                samples[*frozen] = fg_samples.next().unwrap();
+            }
+            model.update(&samples)
+        }
+        // Then check. If the frozen pixels were ignored, the models for those pixels will still be
+        // modeling the room temperature pixels and be treated as the background.
         check_model(model, &mut bg_samples, &mut &mut fg_samples);
     }
 }
