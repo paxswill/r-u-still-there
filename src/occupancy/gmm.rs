@@ -142,7 +142,7 @@ impl Default for GmmParameters {
     }
 }
 #[derive(Clone, Debug, Default)]
-struct GaussianMixtureModel(Vec<GaussianComponent>);
+pub(super) struct GaussianMixtureModel(Vec<GaussianComponent>);
 
 // As a precondition to this implementation, `components` *must* always be sorted by component
 // weight.

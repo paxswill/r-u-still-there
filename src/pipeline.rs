@@ -112,7 +112,8 @@ impl Pipeline {
         .context("Error configuring camera frame recording")?;
         app.create_streams(config.streams)
             .context("Error creating video streams")?;
-        app.create_tracker(config.tracker)
+        let frame_duration = Duration::from_secs_f32(config.camera.frame_rate().recip());
+        app.create_tracker(config.tracker, frame_duration)
             .await
             .context("Error creating occupancy tracker")?;
         app.create_thermometer()
@@ -222,8 +223,13 @@ impl Pipeline {
         Ok(())
     }
 
-    async fn create_tracker(&mut self, settings: TrackerSettings) -> anyhow::Result<()> {
-        let tracker = Tracker::from(&settings);
+    /// Create an occupancy tracker with the given settings and an expected frame duration.
+    async fn create_tracker(
+        &mut self,
+        settings: TrackerSettings,
+        frame_duration: Duration,
+    ) -> anyhow::Result<()> {
+        let tracker = Tracker::new(&settings, frame_duration);
         let count = State::new_discoverable(
             Arc::clone(&self.mqtt_client),
             Arc::clone(&self.hass_device),

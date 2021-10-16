@@ -288,7 +288,6 @@ fn empty_to_none(s: &str) -> Option<&str> {
 mod test {
     use crate::camera::{Bus, CameraSettings};
     use crate::mqtt::MqttSettings;
-    use crate::occupancy::Threshold;
     use crate::temperature::{Temperature, TemperatureUnit};
 
     use super::{Args, Settings};
@@ -481,7 +480,6 @@ mod test {
         [render]
         grid_size = 42
         [tracker]
-        threshold = 7
         [mqtt]
         name = "Testing Name"
         server = "mqtt://mqtt.invalid"
@@ -491,7 +489,6 @@ mod test {
         let mut expected = expected_config();
         expected.streams.mjpeg.enabled = true;
         expected.render.grid_size = 42;
-        expected.tracker.threshold = Threshold::Static(Temperature::Celsius(7f32));
         expected.mqtt.home_assistant.topic = "testing_topic".to_string();
         let config: Settings = toml::from_str(source)?;
         assert_eq!(config, expected);
