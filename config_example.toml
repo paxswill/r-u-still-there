@@ -103,6 +103,14 @@ address = 0x69
 # each grid will be displayed in that temperature scale.
 #units = "celsius"
 
+# Select a method of upscaling the thermal image.
+# The thermal cameras used with r-u-still-there have low resolutions, so they're
+# enlarged for the video stream. This setting selects the resizing method.
+# Nearest neighbor scaling is the simplest method that has the lowest CPU usage.
+# Valid options are "nearest", "triangle" (or "linear"), "catmull_rom" (or
+# "bicubic"), "mitchell", or "lanczos3" (or "lanczos3").
+#scaling_method = "nearest"
+
 [tracker]
 # The method for determining if a pixel is occupied or not. If not given, the
 # threshold will by dynamically chosen.
