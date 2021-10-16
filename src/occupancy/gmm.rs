@@ -5,9 +5,8 @@
 //! Zivkovic, Z., & van der Heijden, F. (2006). Efficient adaptive density estimation per image
 //! pixel for the task of background subtraction. In Pattern Recognition Letters (Vol. 27, Issue 7,
 //! pp. 773–780). Elsevier BV. https://doi.org/10.1016/j.patrec.2005.11.005
-use std::convert::TryInto;
+use std::iter;
 
-use anyhow::anyhow;
 use bitvec::prelude::*;
 use rayon::prelude::*;
 use serde::Deserialize;
@@ -274,9 +273,9 @@ impl PixelModel for GaussianMixtureModel {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct BackgroundModel<PixMod: PixelModel, const NUM_PIXELS: usize> {
+pub(super) struct BackgroundModel<PixMod: PixelModel, Container> {
     /// The model for each individual pixel.
-    pixel_models: [PixMod; NUM_PIXELS],
+    pixel_models: Container,
     /// The parameters shared by all models.
     parameters: PixMod::Parameters,
     /// Flags corresponding to pixels that are *not* to be updated.
@@ -285,7 +284,7 @@ pub(super) struct BackgroundModel<PixMod: PixelModel, const NUM_PIXELS: usize> {
     frozen_pixels: BitVec,
 }
 
-impl<PixMod: PixelModel, const NUM_PIXELS: usize> BackgroundModel<PixMod, NUM_PIXELS> {
+impl<PixMod: PixelModel, Container> BackgroundModel<PixMod, Container> {
     pub(super) fn set_parameters(&mut self, params: PixMod::Parameters) {
         self.parameters = params;
     }
@@ -306,9 +305,9 @@ impl<PixMod: PixelModel, const NUM_PIXELS: usize> BackgroundModel<PixMod, NUM_PI
     }
 }
 
-impl<PixMod, const NUM_PIXELS: usize> BackgroundModel<PixMod, NUM_PIXELS>
+impl<PixMod> BackgroundModel<PixMod, Vec<PixMod>>
 where
-    PixMod: PixelModel + Send + Sync,
+    PixMod: 'static + PixelModel + Send + Sync,
     <PixMod as PixelModel>::Parameters: Send + Sync,
 {
     pub(super) fn update(&mut self, samples: &[f32]) {
@@ -325,49 +324,41 @@ where
             });
     }
 
-    pub(super) fn background_probability(
-        &self,
-        samples: &[f32],
-    ) -> anyhow::Result<[f32; NUM_PIXELS]> {
+    pub(super) fn background_probability<R>(&self, samples: &[f32]) -> R
+    where
+        R: FromParallelIterator<f32>,
+    {
         let params = &self.parameters;
-        let classified: Vec<f32> = samples
+        samples
             .par_iter()
             .zip(self.pixel_models.par_iter())
             .map(|(sample, model)| model.background_probability(*sample, params))
-            .collect();
-        classified.try_into().map_err(|vec: Vec<f32>| {
-            anyhow!(
-                "Classifier results vector was the wrong size: {}",
-                vec.len()
-            )
-        })
+            .collect()
     }
 
-    pub(super) fn update_and_classify(
-        &mut self,
-        samples: &[f32],
-    ) -> anyhow::Result<[f32; NUM_PIXELS]> {
+    pub(super) fn update_and_classify<R>(&mut self, samples: &[f32]) -> R
+    where
+        R: FromParallelIterator<f32>,
+    {
         let classified = self.background_probability(samples);
         self.update(samples);
         classified
     }
 }
 
-impl<PixMod, const NUM_PIXELS: usize> Default for BackgroundModel<PixMod, NUM_PIXELS>
+impl<PixMod, Container> BackgroundModel<PixMod, Container>
 where
     PixMod: PixelModel + Default + std::fmt::Debug,
     <PixMod as PixelModel>::Parameters: Default,
+    Container: iter::FromIterator<PixMod>,
 {
-    fn default() -> Self {
-        let pixel_models = (0..NUM_PIXELS)
-            .map(|_| Default::default())
-            .collect::<Vec<_>>()
-            .try_into()
-            .unwrap();
+    pub(super) fn new(num_pixels: usize) -> Self {
+        let pixel_models = (0..num_pixels).map(|_| Default::default()).collect();
+        let frozen_pixels = iter::repeat(false).take(num_pixels).collect();
         Self {
             pixel_models,
             parameters: PixMod::Parameters::default(),
-            frozen_pixels: bitvec![0; NUM_PIXELS],
+            frozen_pixels,
         }
     }
 }
@@ -381,6 +372,7 @@ mod test {
     use super::{BackgroundModel, GaussianMixtureModel};
 
     type NormalSamples = DistIter<Normal<f32>, ChaCha8Rng, f32>;
+    type GmmBackground = BackgroundModel<GaussianMixtureModel, Vec<GaussianMixtureModel>>;
 
     const LENGTH: usize = 10;
     const TRAINING_SIZE: usize = 5000;
@@ -408,8 +400,8 @@ mod test {
         )
     }
 
-    fn check_model<const LENGTH: usize>(
-        model: BackgroundModel<GaussianMixtureModel, LENGTH>,
+    fn check_model(
+        model: GmmBackground,
         bg_samples: &mut NormalSamples,
         fg_samples: &mut NormalSamples,
     ) {
@@ -419,7 +411,7 @@ mod test {
         for location in &LOCATIONS {
             testing_sample[*location] = fg_samples.next().unwrap()
         }
-        let classified = model.background_probability(&testing_sample).unwrap();
+        let classified: Vec<f32> = model.background_probability(&testing_sample);
         let threshold = 0.001;
         println!("Classified:\n{:#?}", classified);
         for (index, p) in classified.iter().enumerate() {
@@ -446,7 +438,7 @@ mod test {
     #[test]
     fn simple() {
         let (mut bg_samples, mut fg_samples) = random_samples();
-        let mut model: BackgroundModel<GaussianMixtureModel, LENGTH> = BackgroundModel::default();
+        let mut model: GmmBackground = BackgroundModel::new(LENGTH);
         for _ in 0..TRAINING_SIZE {
             let samples = generate_image(&mut bg_samples, LENGTH);
             model.update(&samples)
@@ -459,7 +451,7 @@ mod test {
     #[test]
     fn abrupt_change() {
         let (mut bg_samples, mut fg_samples) = random_samples();
-        let mut model: BackgroundModel<GaussianMixtureModel, LENGTH> = BackgroundModel::default();
+        let mut model: GmmBackground = BackgroundModel::new(LENGTH);
         // Start with the foreground being used for the background
         for _ in 0..TRAINING_SIZE {
             let samples = generate_image(&mut fg_samples, LENGTH);
@@ -478,7 +470,7 @@ mod test {
     #[test]
     fn frozen_as_foreground() {
         let (mut bg_samples, mut fg_samples) = random_samples();
-        let mut model: BackgroundModel<GaussianMixtureModel, LENGTH> = BackgroundModel::default();
+        let mut model: GmmBackground = BackgroundModel::new(LENGTH);
         // Start with a completely room temperature "image"
         for _ in 0..TRAINING_SIZE {
             let samples = generate_image(&mut bg_samples, LENGTH);
