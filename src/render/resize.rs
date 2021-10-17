@@ -188,21 +188,21 @@ impl Resizer for ImageResize {
 #[cfg(feature = "piston_resize")]
 mod piston {
     use std::convert::TryFrom;
+    use std::ops::Deref;
     use std::panic;
     use std::sync::Arc;
-    use std::ops::Deref;
 
     use async_trait::async_trait;
     use image::RgbaImage;
-    use tokio::task::spawn_blocking;
+    use parking_lot::Mutex;
     use resize as piston_resize;
     use rgb::FromSlice;
-    use parking_lot::Mutex;
+    use tokio::task::spawn_blocking;
     use tracing::{debug, warn};
 
     use crate::render::RenderSettings;
 
-    use super::{Resizer, ResizeError, Method};
+    use super::{Method, ResizeError, Resizer};
 
     type RgbaResizer = piston_resize::Resizer<piston_resize::formats::RgbaPremultiply<u8, u8>>;
 
@@ -278,7 +278,8 @@ mod piston {
                         destination_height,
                         piston_resize::Pixel::RGBA8P,
                         filter_type,
-                    ).expect("These parameters to be valid");
+                    )
+                    .expect("These parameters to be valid");
                     ResizerState {
                         resizer,
                         source_width,
@@ -287,10 +288,12 @@ mod piston {
                 });
                 let mut destination = RgbaImage::new(
                     (source_width * grid_size) as u32,
-                    (source_height * grid_size) as u32
+                    (source_height * grid_size) as u32,
                 );
                 // TODO: Rewrite Resizer trait to use Result
-                state.resizer.resize(colors.as_rgba(), destination.as_rgba_mut())
+                state
+                    .resizer
+                    .resize(colors.as_rgba(), destination.as_rgba_mut())
                     .expect("The given buffers to be valid.");
                 destination
             })
