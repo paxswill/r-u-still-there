@@ -450,7 +450,7 @@ async fn connect_mqtt(
     );
     // This won't get actually sent to the broker until the loop task starts getting run (see
     // below). Instead it gets added to the queue of messages to be sent.
-    status.publish().await?;
+    status.publish(Status::Online).await?;
     // Create a task to run the event loop
     let loop_task: InnerTask = tokio::spawn(
         async move {
