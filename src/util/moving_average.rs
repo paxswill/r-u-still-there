@@ -231,7 +231,7 @@ where
     }
 }
 
-pub trait MovingAverage<T, const N: usize> {
+pub trait MovingAverage<T> {
     /// Add a new sample and return the new moving average afterwards.
     fn update(&mut self, new_value: T) -> T {
         self.push(new_value);
@@ -269,7 +269,7 @@ impl<T, const N: usize> Default for BoxcarFilter<T, N> {
     }
 }
 
-impl<T, const N: usize> MovingAverage<T, N> for BoxcarFilter<T, N>
+impl<T, const N: usize> MovingAverage<T> for BoxcarFilter<T, N>
 where
     T: AverageMut<u16> + Clone,
 {
