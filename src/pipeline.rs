@@ -472,37 +472,3 @@ async fn connect_mqtt(
     .boxed();
     Ok((client, loop_task, status))
 }
-
-/// A drain with a generic error.
-///
-/// [futures::sink::drain] has [std::convert::Infallible] as its `Error` type, which precludes it
-/// being used with other types of errors, which can be desired when
-/// [forwarding][futures::stream::StreamExt::forward] a [Stream][futures::stream::Stream] to a
-/// [Sink][futures::sink::Sink].
-struct Drain<E>(PhantomData<E>);
-
-impl<E> Drain<E> {
-    fn new() -> Self {
-        Drain(PhantomData)
-    }
-}
-
-impl<E> Sink<()> for Drain<E> {
-    type Error = E;
-
-    fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn start_send(self: Pin<&mut Self>, _: ()) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-}
