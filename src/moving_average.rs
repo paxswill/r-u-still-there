@@ -6,8 +6,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 use std::vec::Vec;
 
-use bytes::{Bytes, BytesMut};
 use image::{ImageBuffer, Pixel, Primitive};
+use rayon::prelude::*;
 
 /// A trait for types that can be averaged together.
 pub trait Average<Div, Result = Self> {
@@ -108,15 +108,15 @@ macro_rules! average_container {
         {
             fn add(&self, other: &Self) -> $return_typ {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs + *rhs).collect()
+                self.par_iter().zip(other.par_iter()).map(|(lhs, rhs)| *lhs + *rhs).collect()
             }
             fn sub(&self, other: &Self) -> $return_typ {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
+                self.par_iter().zip(other.par_iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
             }
             fn div(&self, rhs: &Div) -> $return_typ {
                 let divisor: $inner_typ = Into::<$inner_typ>::into(*rhs);
-                self.iter().map(|lhs| *lhs / divisor).collect()
+                self.par_iter().map(|lhs| *lhs / divisor).collect()
             }
         }
     };
@@ -126,20 +126,20 @@ macro_rules! average_container {
     (generic $typ:ty, $return_typ:ty) => {
         impl<T, Div> Average<Div, $return_typ> for $typ
         where
-            T: Primitive + ops::AddAssign + ops::SubAssign,
+            T: Primitive + ops::AddAssign + ops::SubAssign + Send + Sync,
             Div: convert::Into<T> + Copy
         {
             fn add(&self, other: &Self) -> $return_typ {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs + *rhs).collect()
+                self.par_iter().zip(other.par_iter()).map(|(lhs, rhs)| *lhs + *rhs).collect()
             }
             fn sub(&self, other: &Self) -> $return_typ {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
+                self.par_iter().zip(other.par_iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
             }
             fn div(&self, rhs: &Div) -> $return_typ {
                 let divisor: T = Into::<T>::into(*rhs);
-                self.iter().map(|lhs| *lhs / divisor).collect()
+                self.par_iter().map(|lhs| *lhs / divisor).collect()
             }
         }
     };
@@ -157,12 +157,18 @@ macro_rules! average_mut_container {
         {
             fn add_assign(&mut self, other: &Self) {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs += *rhs)
+                self
+                    .par_iter_mut()
+                    .zip(other.par_iter())
+                    .for_each(|(lhs, rhs)| *lhs += *rhs)
             }
 
             fn sub_assign(&mut self, other: &Self) {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs -= *rhs)
+                self
+                    .par_iter_mut()
+                    .zip(other.par_iter())
+                    .for_each(|(lhs, rhs)| *lhs -= *rhs)
             }
         }
     };
@@ -172,15 +178,21 @@ macro_rules! average_mut_container {
     (generic $typ:ty, $return_typ:ty) => {
         impl<T, Div> AverageMut<Div, $return_typ> for $typ
         where
-            T: Primitive + ops::AddAssign + ops::SubAssign,
+            T: Primitive + ops::AddAssign + ops::SubAssign + Send + Sync,
             Div: convert::Into<T> + Copy
         {
             fn add_assign(&mut self, other: &Self) {
-                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs += *rhs)
+                self
+                    .par_iter_mut()
+                    .zip(other.par_iter())
+                    .for_each(|(lhs, rhs)| *lhs += *rhs)
             }
 
             fn sub_assign(&mut self, other: &Self) {
-                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs -= *rhs)
+                self
+                    .par_iter_mut()
+                    .zip(other.par_iter())
+                    .for_each(|(lhs, rhs)| *lhs -= *rhs)
             }
         }
     };
@@ -193,9 +205,6 @@ average_container!(generic Vec<T>);
 average_mut_container!(generic Vec<T>);
 average_container!(generic[T], Vec<T>);
 average_mut_container!(generic[T], Vec<T>);
-average_container!(Bytes, u8);
-average_container!(BytesMut, u8);
-average_mut_container!(BytesMut, u8);
 
 impl<Div, Px, Co> Average<Div> for ImageBuffer<Px, Co>
 where
