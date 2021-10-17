@@ -25,7 +25,7 @@ hex = { version = "0.4", features = ["serde"] }
 hmac = "0.11"
 http = "0.2.4"
 i2cdev = "0.4.4"
-imageproc = "0.22.0"
+imageproc = { version = "0.22.0", features = ["rayon"] }
 lazy_static = "1.4.0"
 linux-embedded-hal = "0.3"
 lru = { version = "0.6.5", optional = true }
@@ -33,7 +33,7 @@ mac_address = { version = "1.1", features = ["serde"] }
 machine-uid = "0.2"
 mlx9064x = "0.2.1"
 mozjpeg = { version = "0.8.24", optional = true }
-ndarray = "0.15.1"
+ndarray = { version = "0.15.1", features = ["rayon"] }
 num = { version = "0.4.0", default-features = false }
 num-traits = "0.2.14"
 paste = "1"
