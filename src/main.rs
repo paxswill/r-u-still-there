@@ -11,7 +11,6 @@ use std::path::PathBuf;
 
 mod camera;
 mod image_buffer;
-mod moving_average;
 mod mqtt;
 mod occupancy;
 mod pipeline;

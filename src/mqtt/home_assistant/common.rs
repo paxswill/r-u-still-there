@@ -23,16 +23,6 @@ pub struct AvailabilityTopic {
     pub topic: String,
 }
 
-impl AvailabilityTopic {
-    pub fn new(topic: String) -> Self {
-        Self {
-            payload_available: PayloadAvailable::default(),
-            payload_not_available: PayloadNotAvailable::default(),
-            topic,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum AvailabilityMode {
@@ -117,14 +107,6 @@ impl<P> EntityConfig<P>
 where
     P: Borrow<Device> + Default + PartialEq,
 {
-    pub fn new_with_state_topic<S>(state_topic: S) -> Self
-    where
-        S: Into<String>,
-    {
-        let device = P::default();
-        Self::new_with_state_and_device(state_topic, device)
-    }
-
     pub fn new_with_state_and_device<S>(state_topic: S, device: P) -> Self
     where
         S: Into<String>,

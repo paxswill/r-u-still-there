@@ -27,7 +27,8 @@ address = 0x69
 # Melexis cameras (MLX90640 and MLX90641) can run at 1, 2, 4, 8, 16, 32, or 64
 # FPS, but higher frame rates require that the I2C bus is configured to run at a
 # higher clock speed. The MLX90641 can go up to 64 FPS on a 400kHz clock speed,
-# but the MLX90640 requires a 1.2MHz I2C clock to be able to go above 16 FPS.
+# but the MLX90640 requires a 1.2MHz I2C clock to be able to go above 16 FPS (or
+# 32 FPS using interlaced mode. See the `mode` setting below).
 # Higher frame rates generally have more noise, but there's less lag before
 # detecting a person. Conversely, lower frame rates have less noise, but more
 # lag.
@@ -42,6 +43,14 @@ address = 0x69
 
 # Mirror the image vertically.
 #flip_vertical = false
+
+# (MLX90640 only)
+# The MLX90640 can update its pixels in a chess-board pattern or by interlaced
+# rows. The chess-board pattern is more accurate (and the default), but the
+# interlaced pattern is slightly more efficient to access (and thus allows
+# higher frame rates).
+# The allowed values are either "chess" or "interleave" (or "interlace").
+# mode = "chess"
 
 [streams]
 # The address to bind to for serving MJPEG streams. The default isn't very
@@ -93,6 +102,16 @@ address = 0x69
 # drawn. If the string "celsius" or "fahrenheit" are given, the temperature of
 # each grid will be displayed in that temperature scale.
 #units = "celsius"
+
+# Select a method of upscaling the thermal image.
+# The thermal cameras used with r-u-still-there have low resolutions, so they're
+# enlarged for the video stream. This setting selects the resizing method.
+# Nearest neighbor scaling is the simplest method that has the lowest CPU usage
+# (and is the default). If you want a smoother image, "mitchell" is a decent
+# option but it requires a faster CPU.
+# Valid options are "nearest", "triangle" (or "linear"), "catmull_rom" (or
+# "bicubic"), "mitchell", or "lanczos3" (or "lanczos3").
+#scaling_method = "nearest"
 
 [tracker]
 

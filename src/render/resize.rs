@@ -5,9 +5,10 @@ use std::fmt;
 use std::panic;
 
 use async_trait::async_trait;
-use image::RgbaImage;
+use image::{imageops, RgbaImage};
 use serde::Deserialize;
 use tokio::task::spawn_blocking;
+use tracing::{debug, warn};
 
 use super::settings::RenderSettings;
 
@@ -134,5 +135,211 @@ impl Resizer for PointResize {
                 panic::resume_unwind(join_error.into_panic());
             }
         }
+    }
+}
+
+/// A resizer that uses [`image::imageops`].
+#[derive(Clone, Debug)]
+pub(crate) struct ImageResize {
+    grid_size: u32,
+    filter_type: imageops::FilterType,
+}
+
+impl<'a> TryFrom<&'a RenderSettings> for ImageResize {
+    type Error = ResizeError;
+
+    fn try_from(settings: &'a RenderSettings) -> Result<Self, Self::Error> {
+        let filter_type = match settings.scaling_method {
+            Method::Nearest => imageops::Nearest,
+            Method::Triangle => imageops::Triangle,
+            Method::CatmullRom => imageops::CatmullRom,
+            Method::Lanczos3 => imageops::Lanczos3,
+            _ => {
+                return Err(ResizeError::UnsupportedMethod);
+            }
+        };
+        Ok(Self {
+            grid_size: settings.grid_size as u32,
+            filter_type,
+        })
+    }
+}
+
+#[async_trait]
+impl Resizer for ImageResize {
+    async fn enlarge(&self, colors: RgbaImage) -> RgbaImage {
+        let new_width = colors.width() * self.grid_size;
+        let new_height = colors.height() * self.grid_size;
+        let filter_type = self.filter_type;
+        let resized_result = spawn_blocking(move || {
+            let colors = colors;
+            imageops::resize(&colors, new_width, new_height, filter_type)
+        })
+        .await;
+        match resized_result {
+            Ok(resized) => resized,
+            Err(join_error) => {
+                panic::resume_unwind(join_error.into_panic());
+            }
+        }
+    }
+}
+
+#[cfg(feature = "piston_resize")]
+mod piston {
+    use std::convert::TryFrom;
+    use std::ops::Deref;
+    use std::panic;
+    use std::sync::Arc;
+
+    use async_trait::async_trait;
+    use image::RgbaImage;
+    use parking_lot::Mutex;
+    use resize as piston_resize;
+    use rgb::FromSlice;
+    use tokio::task::spawn_blocking;
+    use tracing::{debug, warn};
+
+    use crate::render::RenderSettings;
+
+    use super::{Method, ResizeError, Resizer};
+
+    type RgbaResizer = piston_resize::Resizer<piston_resize::formats::RgbaPremultiply<u8, u8>>;
+
+    /// Inner piston resizer state, specifically keeping the [`resize::Resizer`] and dimensions.
+    #[derive(Debug)]
+    struct ResizerState {
+        resizer: RgbaResizer,
+        source_width: usize,
+        source_height: usize,
+    }
+
+    /// A resizer that uses the [`resize`] crate from the Piston project.
+    #[derive(Debug)]
+    pub(crate) struct PistonResize {
+        grid_size: usize,
+        // Not using piston_resize::Type as it has a Custom variant making it non-Send, non-Sync, non-Clone
+        method: Method,
+        state: Arc<Mutex<Option<ResizerState>>>,
+    }
+
+    impl<'a> TryFrom<&'a RenderSettings> for PistonResize {
+        type Error = ResizeError;
+
+        fn try_from(settings: &'a RenderSettings) -> Result<Self, Self::Error> {
+            Ok(Self {
+                grid_size: settings.grid_size,
+                method: settings.scaling_method,
+                state: Arc::new(Mutex::new(None)),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl Resizer for PistonResize {
+        async fn enlarge(&self, colors: RgbaImage) -> RgbaImage {
+            let grid_size = self.grid_size;
+            let filter_type = self.method;
+            let state_mutex = Arc::clone(&self.state);
+
+            let resized_result = spawn_blocking(move || {
+                let colors = colors;
+                let source_width = colors.width() as usize;
+                let source_height = colors.height() as usize;
+                let destination_width = source_width * grid_size;
+                let destination_height = source_height * grid_size;
+                let mut maybe_state = state_mutex.lock();
+                if let Some(state) = maybe_state.deref() {
+                    if state.source_width != source_width && state.source_height != source_height {
+                        warn!("Thermal image dimensions changed, recreating Piston resizer");
+                        *maybe_state = None
+                    }
+                }
+                let state = maybe_state.get_or_insert_with(|| {
+                    let filter_type = match filter_type {
+                        Method::Nearest => piston_resize::Type::Point,
+                        Method::Triangle => piston_resize::Type::Triangle,
+                        Method::CatmullRom => piston_resize::Type::Catrom,
+                        Method::Mitchell => piston_resize::Type::Mitchell,
+                        Method::Lanczos3 => piston_resize::Type::Lanczos3,
+                    };
+                    debug!(
+                        ?source_width,
+                        ?source_height,
+                        ?destination_width,
+                        ?destination_height,
+                        "Creating new Piston resizer"
+                    );
+                    let resizer = RgbaResizer::new(
+                        source_width,
+                        // The argument name is misspelled :facepalm:
+                        source_height,
+                        destination_width,
+                        destination_height,
+                        piston_resize::Pixel::RGBA8P,
+                        filter_type,
+                    )
+                    .expect("These parameters to be valid");
+                    ResizerState {
+                        resizer,
+                        source_width,
+                        source_height,
+                    }
+                });
+                let mut destination = RgbaImage::new(
+                    (source_width * grid_size) as u32,
+                    (source_height * grid_size) as u32,
+                );
+                // TODO: Rewrite Resizer trait to use Result
+                state
+                    .resizer
+                    .resize(colors.as_rgba(), destination.as_rgba_mut())
+                    .expect("The given buffers to be valid.");
+                destination
+            })
+            .await;
+            match resized_result {
+                Ok(resized) => resized,
+                Err(join_error) => {
+                    panic::resume_unwind(join_error.into_panic());
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "piston_resize")]
+pub(crate) fn preferred_resizer(
+    settings: &RenderSettings,
+) -> Result<Box<dyn Resizer + Send + Sync>, ResizeError> {
+    if let Ok(resizer) = PointResize::try_from(settings) {
+        debug!(method = ?settings.scaling_method, "Using custom point scaling");
+        Ok(Box::new(resizer))
+    } else if let Ok(resizer) = piston::PistonResize::try_from(settings) {
+        debug!(method = ?settings.scaling_method, "Using Piston resize for resizing");
+        Ok(Box::new(resizer))
+    } else if let Ok(resizer) = ImageResize::try_from(settings) {
+        debug!(method = ?settings.scaling_method, "Using image::imageops for resizing");
+        Ok(Box::new(resizer))
+    } else {
+        warn!(method = ?settings.scaling_method, "Unable to find a resizer for requested scaling method");
+        Err(ResizeError::UnsupportedMethod)
+    }
+}
+
+#[cfg(not(feature = "piston_resize"))]
+pub(crate) fn preferred_resizer(
+    settings: &RenderSettings,
+) -> Result<Box<dyn Resizer + Send + Sync>, ResizeError> {
+    // Prefer the point resizer, then the imageops resizer
+    if let Ok(resizer) = PointResize::try_from(settings) {
+        debug!(method = ?settings.scaling_method, "Using custom point scaling");
+        Ok(Box::new(resizer))
+    } else if let Ok(resizer) = ImageResize::try_from(settings) {
+        debug!(method = ?settings.scaling_method, "Using image::imageops for resizing");
+        Ok(Box::new(resizer))
+    } else {
+        warn!(method = ?settings.scaling_method, "Unable to find a resizer for requested scaling method");
+        Err(ResizeError::UnsupportedMethod)
     }
 }
