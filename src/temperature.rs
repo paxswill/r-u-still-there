@@ -10,7 +10,7 @@ use std::str::FromStr;
 use num_traits::Float;
 use serde::{Deserialize, Serialize};
 
-use crate::moving_average::{Average, AverageMut};
+use crate::util::{Average, AverageMut};
 use crate::mqtt::{home_assistant as hass, DiscoveryValue};
 
 #[derive(Clone, Copy, Debug, Deserialize, Hash, PartialEq, Eq, Serialize)]

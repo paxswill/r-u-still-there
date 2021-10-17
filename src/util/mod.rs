@@ -1,8 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+//! Shared utilities for r-u-still-there.
+mod moving_average;
+mod stream;
+
 use std::panic;
 
 use num_traits::Num;
 use tokio::task::JoinError;
+
+pub use moving_average::{Average, AverageMut, BoxcarFilter, MovingAverage};
+pub use stream::StreamExt;
 
 /// Parse an unsigned integer from a base-10 or base-16 string representation.
 ///

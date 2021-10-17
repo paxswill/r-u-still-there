@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::{anyhow, Context as _};
 use futures::future::{Future, FutureExt, TryFutureExt};
-use futures::sink::Sink;
-use futures::stream::{BoxStream, FuturesUnordered, Stream, StreamExt, TryStream};
+use futures::stream::{BoxStream, FuturesUnordered, Stream, StreamExt};
 use http::Response;
 use pin_project::pin_project;
 use rumqttc::{
@@ -17,7 +16,6 @@ use tracing_futures::Instrument;
 use warp::Filter;
 
 use std::convert::{TryFrom, TryInto};
-use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{mpsc, Arc};
@@ -30,17 +28,10 @@ use crate::mqtt::{
 };
 use crate::occupancy::Tracker;
 use crate::settings::{Settings, TrackerSettings};
-use crate::util::flatten_join_result;
+use crate::util::{flatten_join_result, StreamExt as _};
 use crate::{render, spmc, stream};
 
 const MQTT_BASE_TOPIC: &str = "r-u-still-there";
-
-fn ok_stream<T, St, E>(in_stream: St) -> impl TryStream<Ok = T, Error = E, Item = Result<T, E>>
-where
-    St: Stream<Item = T>,
-{
-    in_stream.map(Result::<T, E>::Ok)
-}
 
 type MqttClient = Arc<AsyncMutex<AsyncClient>>;
 type ArcDevice = Arc<hass::Device>;
@@ -255,12 +246,20 @@ impl Pipeline {
                 .await?;
         }
         let count_sink = count.sink();
-        let update_count_stream = ok_stream(tracker.count_stream().map(OccupancyCount::from))
+        let update_count_stream = tracker
+            .count_stream()
+            .map(OccupancyCount::from)
+            .filter_repeated()
+            .never_error()
             .forward(count_sink)
             .boxed();
         self.tasks.push(update_count_stream);
         let occupied_sink = occupied.sink();
-        let update_occupied_stream = ok_stream(tracker.count_stream().map(Occupancy::from))
+        let update_occupied_stream = tracker
+            .count_stream()
+            .map(Occupancy::from)
+            .filter_repeated()
+            .never_error()
             .forward(occupied_sink)
             .boxed();
         self.tasks.push(update_occupied_stream);
@@ -268,7 +267,8 @@ impl Pipeline {
             .await?
             .instrument(info_span!("tracker_measurements"));
         self.tasks.push(
-            ok_stream(measurement_stream)
+            measurement_stream
+                .never_error()
                 .forward(tracker)
                 .err_into()
                 .boxed(),
@@ -306,7 +306,9 @@ impl Pipeline {
         }
         let temperature_sink = state.sink();
         self.tasks.push(
-            ok_stream(temperature_stream)
+            temperature_stream
+                .filter_repeated()
+                .never_error()
                 .forward(temperature_sink)
                 .boxed(),
         );
@@ -447,7 +449,7 @@ async fn connect_mqtt(
     );
     // This won't get actually sent to the broker until the loop task starts getting run (see
     // below). Instead it gets added to the queue of messages to be sent.
-    status.publish().await?;
+    status.publish(Status::Online).await?;
     // Create a task to run the event loop
     let loop_task: InnerTask = tokio::spawn(
         async move {
@@ -470,38 +472,4 @@ async fn connect_mqtt(
     .map(flatten_join_result)
     .boxed();
     Ok((client, loop_task, status))
-}
-
-/// A drain with a generic error.
-///
-/// [futures::sink::drain] has [std::convert::Infallible] as its `Error` type, which precludes it
-/// being used with other types of errors, which can be desired when
-/// [forwarding][futures::stream::StreamExt::forward] a [Stream][futures::stream::Stream] to a
-/// [Sink][futures::sink::Sink].
-struct Drain<E>(PhantomData<E>);
-
-impl<E> Drain<E> {
-    fn new() -> Self {
-        Drain(PhantomData)
-    }
-}
-
-impl<E> Sink<()> for Drain<E> {
-    type Error = E;
-
-    fn poll_ready(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn start_send(self: Pin<&mut Self>, _: ()) -> Result<(), Self::Error> {
-        Ok(())
-    }
-
-    fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
 }
