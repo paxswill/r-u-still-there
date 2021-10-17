@@ -279,11 +279,10 @@ impl Pipeline {
     async fn create_thermometer(&mut self) -> anyhow::Result<()> {
         info!("Creating thermometer");
         let unit = self.mqtt_config.home_assistant.unit;
-        let measurement_stream = Self::create_measurement_stream(&self.camera_command_channel)
+        let temperature_stream = Self::create_measurement_stream(&self.camera_command_channel)
             .await?
-            .instrument(info_span!("temperature_measurement"));
-        let temperature_stream =
-            measurement_stream.map(move |measurement| measurement.temperature.in_unit(&unit));
+            .instrument(info_span!("temperature_measurement"))
+            .map(move |measurement| measurement.temperature.in_unit(&unit));
         let state = State::<f32, _>::new_discoverable(
             Arc::clone(&self.mqtt_client),
             Arc::clone(&self.hass_device),
