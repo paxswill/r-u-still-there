@@ -9,8 +9,8 @@ use linux_embedded_hal::I2cdev;
 use tracing::{debug, trace};
 
 use crate::image_buffer;
-use crate::util::{BoxcarFilter, MovingAverage};
 use crate::temperature::Temperature;
+use crate::util::{Filter, MovingAverage};
 
 // The direction the Y-axis points in a thermal image.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -156,9 +156,9 @@ pub(crate) struct $name {
 
     previous_frame_start: Option<Instant>,
 
-    average_frame_duration: BoxcarFilter<Duration, MELEXIS_MOVING_AVERAGE_LEN>,
+    average_frame_duration: MovingAverage<Duration, MELEXIS_MOVING_AVERAGE_LEN>,
 
-    average_check_duration: BoxcarFilter<Duration, MELEXIS_MOVING_AVERAGE_LEN>,
+    average_check_duration: MovingAverage<Duration, MELEXIS_MOVING_AVERAGE_LEN>,
 }
 
 impl $name {
@@ -179,8 +179,8 @@ impl $name {
             camera,
             temperature_buffer: vec![0f32; num_pixels],
             previous_frame_start: None,
-            average_frame_duration: BoxcarFilter::new(),
-            average_check_duration: BoxcarFilter::new(),
+            average_frame_duration: MovingAverage::new(),
+            average_check_duration: MovingAverage::new(),
         }
     }
 
@@ -326,7 +326,7 @@ impl ThermalCamera for $name {
             .set_frame_rate(mlx_frame_rate)
             .context("Error setting MLX9064x frame rate")?;
         // Reset the frame duration average.
-        self.average_frame_duration = BoxcarFilter::new();
+        self.average_frame_duration = MovingAverage::new();
         Ok(())
     }
 }

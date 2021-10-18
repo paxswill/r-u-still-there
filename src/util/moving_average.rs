@@ -231,7 +231,7 @@ where
     }
 }
 
-pub trait MovingAverage<T> {
+pub trait Filter<T> {
     /// Add a new sample and return the new moving average afterwards.
     fn update(&mut self, new_value: T) -> T {
         self.push(new_value);
@@ -248,13 +248,13 @@ pub trait MovingAverage<T> {
 
 /// A moving average where all samples are weighted identically.
 #[derive(Clone, Debug)]
-pub struct BoxcarFilter<T, const N: usize> {
+pub struct MovingAverage<T, const N: usize> {
     frames: Arc<RwLock<VecDeque<T>>>,
     // Possibly a premature optimization
     sums: Arc<RwLock<Option<T>>>,
 }
 
-impl<T, const N: usize> BoxcarFilter<T, N> {
+impl<T, const N: usize> MovingAverage<T, N> {
     pub fn new() -> Self {
         Self {
             frames: Arc::new(RwLock::new(VecDeque::with_capacity(N))),
@@ -263,13 +263,13 @@ impl<T, const N: usize> BoxcarFilter<T, N> {
     }
 }
 
-impl<T, const N: usize> Default for BoxcarFilter<T, N> {
+impl<T, const N: usize> Default for MovingAverage<T, N> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T, const N: usize> MovingAverage<T> for BoxcarFilter<T, N>
+impl<T, const N: usize> Filter<T> for MovingAverage<T, N>
 where
     T: AverageMut<u16> + Clone,
 {
@@ -303,7 +303,7 @@ where
     }
 }
 
-impl<T, const N: usize> PartialEq for BoxcarFilter<T, N>
+impl<T, const N: usize> PartialEq for MovingAverage<T, N>
 where
     T: PartialEq,
 {
@@ -314,4 +314,4 @@ where
     }
 }
 
-impl<T, const N: usize> Eq for BoxcarFilter<T, N> where T: Eq {}
+impl<T, const N: usize> Eq for MovingAverage<T, N> where T: Eq {}
