@@ -249,16 +249,16 @@ pub trait Filter<T> {
 /// A moving average where all samples are weighted identically.
 #[derive(Clone, Debug)]
 pub struct MovingAverage<T, const N: usize> {
-    frames: Arc<RwLock<VecDeque<T>>>,
+    frames: VecDeque<T>,
     // Possibly a premature optimization
-    sums: Arc<RwLock<Option<T>>>,
+    sums: Option<T>,
 }
 
 impl<T, const N: usize> MovingAverage<T, N> {
     pub fn new() -> Self {
         Self {
-            frames: Arc::new(RwLock::new(VecDeque::with_capacity(N))),
-            sums: Arc::new(RwLock::new(None)),
+            frames: VecDeque::with_capacity(N),
+            sums: None,
         }
     }
 }
@@ -274,32 +274,26 @@ where
     T: AverageMut<u16> + Clone,
 {
     fn push(&mut self, new_value: T) {
-        // Hold write locks for this entire method
-        let mut frames = self.frames.write().unwrap();
-        let mut sums = self.sums.write().unwrap();
         // Always check to see if we need to pop first to keep the queue from getting too big
-        if frames.len() >= N {
-            if let Some(old_frame) = frames.pop_front() {
-                if let Some(sums) = sums.deref_mut() {
+        if self.frames.len() >= N {
+            if let Some(old_frame) = self.frames.pop_front() {
+                if let Some(sums) = &mut self.sums {
                     sums.sub_assign(&old_frame);
                 }
             }
         }
-        match sums.deref_mut() {
+        match &mut self.sums {
             Some(sums) => sums.add_assign(&new_value),
             None => {
-                sums.replace(new_value.clone());
+                self.sums.replace(new_value.clone());
             }
         }
-        frames.push_back(new_value);
+        self.frames.push_back(new_value);
     }
 
     fn current_value(&self) -> Option<T> {
-        // Always frames, then sums.
-        let frames = self.frames.read().unwrap();
-        let sums = self.sums.read().unwrap();
-        let num_frames = frames.len() as u16;
-        sums.as_ref().map(|sums| sums.clone().div(&num_frames))
+        let num_frames = self.frames.len() as u16;
+        self.sums.as_ref().map(|sums| sums.clone().div(&num_frames))
     }
 }
 
@@ -308,9 +302,7 @@ where
     T: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        let left = self.frames.read().unwrap();
-        let right = other.frames.read().unwrap();
-        left.deref() == right.deref()
+        self.frames == other.frames
     }
 }
 
