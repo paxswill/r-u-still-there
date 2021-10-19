@@ -34,30 +34,11 @@ pub(crate) struct Tracker {
 }
 
 impl Tracker {
-    pub(crate) fn new(settings: &TrackerSettings, frame_duration: Duration) -> Self {
-        let frame_duration = frame_duration.as_secs_f32();
-        let learning_period = settings.background_settings.learning_period.as_secs_f32();
-        // The original paper (see the `gmm` module documentation) uses $\alpha = 1/T$,
-        // $\text{background_frame_count} = \frac{\log{1 - c_f}}{\log{1 - \alpha}}$ (which can be
-        // rewritten as $1 - c_f = 10^{\text{background_frame_count} \* \log{1 - \alpha}}$), and
-        // $c = 0.01 \* T$.
-        let samples_per_learning_period = learning_period * frame_duration;
-        let learning_rate = samples_per_learning_period.recip();
-        let background_delay = settings.background_settings.background_delay.as_secs_f32();
-        let background_delay_frame_count = background_delay / frame_duration;
-        let bg_exponent = background_delay_frame_count * (1.0 - learning_rate).log10();
-        let background_threshold = 10f32.powf(bg_exponent);
-        let complexity_reduction = 0.01 * samples_per_learning_period;
-        let gmm_params = GmmParameters {
-            learning_rate,
-            complexity_reduction,
-            background_threshold,
-            ..Default::default()
-        };
-        debug!(params=?gmm_params, "Computed GMM parameters");
+    pub(crate) fn new(settings: &TrackerSettings) -> Self {
+        debug!(params=?settings.background_model_parameters, "GMM parameters");
         let (sender, receiver) = watch::channel(0);
         Self {
-            model_settings: gmm_params,
+            model_settings: settings.background_model_parameters,
             background: Arc::new(RwLock::new(None)),
             objects: Arc::new(RwLock::new(Vec::default())),
             old_count: Arc::new(AtomicUsize::new(0)),
