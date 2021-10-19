@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::collections::VecDeque;
 use std::convert;
-use std::ops::{self, Deref, DerefMut};
-use std::sync::{Arc, RwLock};
+use std::ops;
 use std::time::Duration;
 use std::vec::Vec;
 
