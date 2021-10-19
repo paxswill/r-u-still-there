@@ -349,7 +349,8 @@ impl Pipeline {
                         std::future::ready(Some(timed_measurement))
                     },
                 );
-            let recording_task = ok_stream(measurement_stream)
+            let recording_task = measurement_stream
+                .never_error()
                 .forward(bincode_sink)
                 .err_into()
                 .boxed();
