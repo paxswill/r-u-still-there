@@ -3,6 +3,7 @@ use futures::{Sink, Stream};
 use image::{ImageBuffer, Luma};
 use imageproc::point::Point;
 use imageproc::region_labelling::{connected_components, Connectivity};
+use rayon::prelude::*;
 use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
 use tracing::debug;
@@ -72,17 +73,18 @@ impl Tracker {
         let classified: ImageBuffer<Luma<u8>, Vec<u8>> =
             ImageBuffer::from_raw(image.width(), image.height(), classified)
                 .expect("A mapped Vec should be able to be used for a new ImageBuffer");
-        let mut object_points: HashMap<u32, Vec<Point<u32>>> = HashMap::new();
+        let mut object_points: HashMap<u32, Vec<PointTemperature>> = HashMap::new();
         let components = connected_components(&classified, Connectivity::Eight, Luma([0u8]));
         // We only care about the foreground pixels, so skip the background (label == 0).
         let filtered_pixels = components
             .enumerate_pixels()
             .filter(|(_, _, pixel)| pixel[0] != 0);
         for (x, y, pixel) in filtered_pixels {
+            let temperature = image[(x, y)][0];
             object_points
                 .entry(pixel[0])
                 .or_default()
-                .push(Point::new(x, y));
+                .push((Point::new(x, y), temperature));
         }
         let objects: Vec<Object> = object_points
             .values()
@@ -123,23 +125,27 @@ impl Sink<Measurement> for Tracker {
     }
 }
 
+type PointTemperature = (Point<u32>, f32);
+
 #[derive(Clone, Debug)]
-struct Object {
-    points: Vec<Point<u32>>,
-}
+struct Object(Vec<PointTemperature>);
 
 impl Object {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+
     pub(crate) fn center(&self) -> Option<Point<u32>> {
+        let mut points = self.0.iter().map(|(point, _)| point);
         // Short circuit the easy cases
-        match self.points.len() {
-            0 => None,
-            1 => Some(self.points[0]),
+        match self.len() {
+            0 | 1 => points.next().copied(),
             _ => {
                 let mut min_x = u32::MAX;
                 let mut min_y = u32::MAX;
                 let mut max_x = u32::MIN;
                 let mut max_y = u32::MIN;
-                for point in self.points.iter() {
+                for point in points {
                     min_y = point.y.min(min_y);
                     min_x = point.x.min(min_x);
                     max_y = point.y.max(max_y);
@@ -149,60 +155,112 @@ impl Object {
             }
         }
     }
+
+    fn sum_temperatures(&self) -> Option<f32> {
+        if self.0.is_empty() {
+            None
+        } else {
+            Some(self.0.par_iter().map(|(_, temperature)| temperature).sum())
+        }
+    }
+
+    pub(crate) fn temperature_mean(&self) -> Option<f32> {
+        self.sum_temperatures().map(|sum| sum / self.len() as f32)
+    }
+
+    pub(crate) fn temperature_variance(&self) -> Option<f32> {
+        self.temperature_mean().map(|mean| {
+            let squared_deviations_sum: f32 = self
+                .0
+                .par_iter()
+                .map(|(_, temperature)| (temperature - mean).powi(2))
+                .sum();
+            squared_deviations_sum / self.len() as f32
+        })
+    }
 }
 
-impl std::iter::FromIterator<Point<u32>> for Object {
-    fn from_iter<I: IntoIterator<Item = Point<u32>>>(iter: I) -> Self {
-        Self {
-            points: iter.into_iter().collect(),
-        }
+impl std::iter::FromIterator<PointTemperature> for Object {
+    fn from_iter<I: IntoIterator<Item = PointTemperature>>(iter: I) -> Self {
+        Self(iter.into_iter().collect())
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{Object, Point};
+    use float_cmp::assert_approx_eq;
+
+    use super::{Object, Point, PointTemperature};
 
     #[test]
-    fn center_empty() {
-        let points: [Point<u32>; 0] = [];
+    fn empty_object_stats() {
+        let points: [PointTemperature; 0] = [];
         let object: Object = std::array::IntoIter::new(points).collect();
         assert_eq!(
             object.center(),
             None,
             "An empty object doesn't have a center"
         );
+        assert_eq!(
+            object.temperature_mean(),
+            None,
+            "An empty object doesn't have a mean temperature"
+        );
+        assert_eq!(
+            object.temperature_variance(),
+            None,
+            "An empty object doesn't have any temperatures, so there's no variance"
+        );
     }
 
     #[test]
-    fn center_single() {
-        let points: [Point<u32>; 1] = [Point::new(3, 9)];
+    fn single_object_stats() {
+        let points: [PointTemperature; 1] = [(Point::new(3, 9), 37.0)];
         let object: Object = std::array::IntoIter::new(points).collect();
         assert_eq!(
             object.center(),
             Some(Point::new(3, 9)),
             "A object with a single point should have the same center"
         );
+        assert_eq!(
+            object.temperature_mean(),
+            Some(37.0),
+            "An object with only one temperature has that temperature as the mean"
+        );
+        assert_eq!(
+            object.temperature_variance(),
+            Some(0.0),
+            "An object with only one point doesn't have a temperature variance"
+        );
     }
 
     #[test]
-    fn center_multiple() {
-        let points: [Point<u32>; 6] = [
+    fn multi_point_object_stats() {
+        let points: [PointTemperature; 6] = [
             // A rectangle, but with extra points that're within the box to ensure it's not just
-            // averaging all points. A rtectangle is used to ensure both dimensions are being
+            // averaging all points. A rectangle is used to ensure both dimensions are being
             // looked at separately.
-            Point::new(0, 0),
-            Point::new(0, 10),
-            Point::new(1, 1),
-            Point::new(3, 2),
-            Point::new(4, 0),
-            Point::new(4, 10),
+            (Point::new(0, 0), 37.26),
+            (Point::new(0, 10), 36.71),
+            (Point::new(1, 1), 36.98),
+            (Point::new(3, 2), 37.34),
+            (Point::new(4, 0), 36.88),
+            (Point::new(4, 10), 36.71),
         ];
         let object: Object = std::array::IntoIter::new(points).collect();
+        // Manually calculated (well, in Excel)
+        const MEAN: f32 = 36.98;
+        const VARIANCE: f32 = 0.0606;
         assert_eq!(
-            object.center(),
-            Some(Point::new(2, 5)),
+            object.center().unwrap(),
+            Point::new(2, 5),
             "Incorrect center for a rectangle with bounding box ((0, 0), (4, 10)"
         );
+        let mean = object.temperature_mean();
+        assert!(mean.is_some());
+        assert_approx_eq!(f32, mean.unwrap(), MEAN, epsilon = 0.01);
+        let variance = object.temperature_variance();
+        assert!(variance.is_some());
+        assert_approx_eq!(f32, variance.unwrap(), VARIANCE, epsilon = 0.0001);
     }
 }
