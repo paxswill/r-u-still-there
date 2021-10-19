@@ -10,10 +10,8 @@ use tracing::debug;
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
-use std::time::Duration;
 
 use crate::camera::Measurement;
 use crate::image_buffer::ThermalImage;
@@ -28,7 +26,6 @@ pub(crate) struct Tracker {
     model_settings: GmmParameters,
     background: Arc<RwLock<Option<GmmBackground>>>,
     objects: Arc<RwLock<Vec<Object>>>,
-    old_count: Arc<AtomicUsize>,
     count_sender: Arc<watch::Sender<usize>>,
     count_receiver: watch::Receiver<usize>,
 }
@@ -41,7 +38,6 @@ impl Tracker {
             model_settings: settings.background_model_parameters,
             background: Arc::new(RwLock::new(None)),
             objects: Arc::new(RwLock::new(Vec::default())),
-            old_count: Arc::new(AtomicUsize::new(0)),
             count_sender: Arc::new(sender),
             count_receiver: receiver,
         }
@@ -96,12 +92,7 @@ impl Tracker {
             let mut locked_objects = self.objects.write().unwrap();
             let new_count = objects.len();
             *locked_objects = objects;
-            if new_count != self.old_count.load(Ordering::Acquire) {
-                self.count_sender
-                    .send(new_count)
-                    .expect("Sending updated count failed");
-                self.old_count.store(new_count, Ordering::Release);
-            }
+            self.count_sender.send(new_count);
         }
     }
 
