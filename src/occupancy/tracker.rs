@@ -135,23 +135,26 @@ impl Object {
         self.0.len()
     }
 
-    pub(crate) fn center(&self) -> Option<Point<u32>> {
-        let mut points = self.0.iter().map(|(point, _)| point);
+    pub(crate) fn center(&self) -> Option<Point<f32>> {
+        let mut points = self
+            .0
+            .iter()
+            .map(|(point, _)| Point::new(point.x as f32, point.y as f32));
         // Short circuit the easy cases
         match self.len() {
-            0 | 1 => points.next().copied(),
+            0 | 1 => points.next(),
             _ => {
-                let mut min_x = u32::MAX;
-                let mut min_y = u32::MAX;
-                let mut max_x = u32::MIN;
-                let mut max_y = u32::MIN;
+                let mut min_x = f32::MAX;
+                let mut min_y = f32::MAX;
+                let mut max_x = f32::MIN;
+                let mut max_y = f32::MIN;
                 for point in points {
                     min_y = point.y.min(min_y);
                     min_x = point.x.min(min_x);
                     max_y = point.y.max(max_y);
                     max_x = point.x.max(max_x);
                 }
-                Some(Point::new((max_x - min_x) / 2, (max_y - min_y) / 2))
+                Some(Point::new((max_x - min_x) / 2.0, (max_y - min_y) / 2.0))
             }
         }
     }
@@ -219,7 +222,7 @@ mod test {
         let object: Object = std::array::IntoIter::new(points).collect();
         assert_eq!(
             object.center(),
-            Some(Point::new(3, 9)),
+            Some(Point::new(3.0, 9.0)),
             "A object with a single point should have the same center"
         );
         assert_eq!(
@@ -253,7 +256,7 @@ mod test {
         const VARIANCE: f32 = 0.0606;
         assert_eq!(
             object.center().unwrap(),
-            Point::new(2, 5),
+            Point::new(2.0, 5.0),
             "Incorrect center for a rectangle with bounding box ((0, 0), (4, 10)"
         );
         let mean = object.temperature_mean();
