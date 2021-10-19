@@ -344,7 +344,7 @@ mod test {
     use crate::temperature::TemperatureUnit;
 
     use super::Temperature;
-    use float_cmp::{approx_eq, F32Margin};
+    use float_cmp::{assert_approx_eq, F32Margin};
 
     #[test]
     fn self_in_self() {
@@ -356,46 +356,46 @@ mod test {
 
     #[test]
     fn fahrenheit_in_celsius() {
-        assert!(approx_eq!(
+        assert_approx_eq!(
             f32,
             Temperature::Fahrenheit(-40.0).in_celsius(),
             -40.0,
             F32Margin::default()
-        ));
-        assert!(approx_eq!(
+        );
+        assert_approx_eq!(
             f32,
             Temperature::Fahrenheit(32.0).in_celsius(),
             0.0,
             F32Margin::default()
-        ));
-        assert!(approx_eq!(
+        );
+        assert_approx_eq!(
             f32,
             Temperature::Fahrenheit(212.0).in_celsius(),
             100.0,
             F32Margin::default()
-        ));
+        );
     }
 
     #[test]
     fn celsius_in_fahrenheit() {
-        assert!(approx_eq!(
+        assert_approx_eq!(
             f32,
             Temperature::Celsius(-40.0f32).in_fahrenheit(),
             -40.0,
             F32Margin::default()
-        ));
-        assert!(approx_eq!(
+        );
+        assert_approx_eq!(
             f32,
             Temperature::Celsius(0.0).in_fahrenheit(),
             32.0,
             F32Margin::default()
-        ));
-        assert!(approx_eq!(
+        );
+        assert_approx_eq!(
             f32,
             Temperature::Celsius(100.0).in_fahrenheit(),
             212.0,
             F32Margin::default()
-        ));
+        );
     }
 
     #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]

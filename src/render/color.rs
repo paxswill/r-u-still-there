@@ -230,7 +230,7 @@ impl Color {
 #[cfg(test)]
 mod color_test {
     use super::Color;
-    use float_cmp::{approx_eq, F32Margin};
+    use float_cmp::{assert_approx_eq, F32Margin};
 
     #[test]
     fn black() {
@@ -259,35 +259,20 @@ mod color_test {
     #[test]
     fn unit() {
         let c = Color::new(51, 170, 255);
-        assert!(approx_eq!(f32, c.red_unit(), 0.2, F32Margin::default()));
-        assert!(approx_eq!(
-            f32,
-            c.green_unit(),
-            2.0 / 3.0,
-            F32Margin::default()
-        ));
-        assert!(approx_eq!(f32, c.blue_unit(), 1.0, F32Margin::default()));
+        assert_approx_eq!(f32, c.red_unit(), 0.2, F32Margin::default());
+        assert_approx_eq!(f32, c.green_unit(), 2.0 / 3.0, F32Margin::default());
+        assert_approx_eq!(f32, c.blue_unit(), 1.0, F32Margin::default());
     }
 
     #[test]
     fn luminance() {
-        assert!(approx_eq!(
-            f32,
-            Color::BLACK.luminance(),
-            0.0,
-            F32Margin::default()
-        ));
-        assert!(approx_eq!(
-            f32,
-            Color::WHITE.luminance(),
-            1.0,
-            F32Margin::default()
-        ));
+        assert_approx_eq!(f32, Color::BLACK.luminance(), 0.0, F32Margin::default());
+        assert_approx_eq!(f32, Color::WHITE.luminance(), 1.0, F32Margin::default());
     }
 
     mod contrast_ratio {
         use super::Color;
-        use float_cmp::{approx_eq, F32Margin};
+        use float_cmp::{assert_approx_eq, F32Margin};
 
         const WHITE: Color = Color::WHITE;
         const BLACK: Color = Color::BLACK;
@@ -310,12 +295,12 @@ mod color_test {
         #[test]
         fn limits() {
             // The definition of constrast ratio we're using ranges from 1 to 21
-            assert!(approx_eq!(
+            assert_approx_eq!(
                 f32,
                 WHITE.contrast_ratio(&BLACK),
                 21.0,
                 F32Margin::default()
-            ));
+            );
             assert_eq!(WHITE.contrast_ratio(&WHITE), 1.0);
             assert_eq!(BLACK.contrast_ratio(&BLACK), 1.0);
         }
@@ -323,27 +308,12 @@ mod color_test {
         #[test]
         fn webaim_definitions() {
             // The following values are referenced from https://webaim.org/articles/contrast/
-            assert!(approx_eq!(
-                f32,
-                RED.contrast_ratio(&WHITE),
-                4.0,
-                epsilon = 0.01
-            ));
-            assert!(approx_eq!(
-                f32,
-                BLUE.contrast_ratio(&WHITE),
-                8.6,
-                epsilon = 0.01
-            ));
+            assert_approx_eq!(f32, RED.contrast_ratio(&WHITE), 4.0, epsilon = 0.01);
+            assert_approx_eq!(f32, BLUE.contrast_ratio(&WHITE), 8.6, epsilon = 0.01);
             // Not using the example for green as their values are rounded (while they
             // mention not to round later on in that document with the example we're using here).
             let light_gray = Color::new(0x77, 0x77, 0x77);
-            assert!(approx_eq!(
-                f32,
-                light_gray.contrast_ratio(&WHITE),
-                4.47,
-                epsilon = 0.01
-            ));
+            assert_approx_eq!(f32, light_gray.contrast_ratio(&WHITE), 4.47, epsilon = 0.01);
         }
 
         /// Check that the order doesn't matter (more accurately, that the light value is chosen
