@@ -57,13 +57,11 @@ impl Tracker {
         });
         // TODO: Add detection of previously moving people. Until then there's no object tracking,
         // just background subtraction.
-        // TODO: Have a configurable threshold here
-        const BG_CONFIDENCE_THRESHOLD: f32 = 0.001;
         let classified: Vec<u8> = background
             .update_and_classify::<Vec<f32>>(&image)
             .into_iter()
             .map(|p| {
-                if p < BG_CONFIDENCE_THRESHOLD {
+                if p < self.settings.background_confidence_threshold {
                     u8::MAX
                 } else {
                     0u8
