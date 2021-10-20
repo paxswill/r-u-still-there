@@ -57,7 +57,7 @@ impl Tracker {
         });
         // TODO: Add detection of previously moving people. Until then there's no object tracking,
         // just background subtraction.
-        let classified: Vec<u8> = background
+        let foreground: Vec<u8> = background
             .update_and_classify::<Vec<f32>>(&image)
             .into_iter()
             .map(|p| {
@@ -68,11 +68,11 @@ impl Tracker {
                 }
             })
             .collect();
-        let classified: ImageBuffer<Luma<u8>, Vec<u8>> =
-            ImageBuffer::from_raw(image.width(), image.height(), classified)
+        let foreground: ImageBuffer<Luma<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(image.width(), image.height(), foreground)
                 .expect("A mapped Vec should be able to be used for a new ImageBuffer");
         let mut object_points: HashMap<u32, Vec<PointTemperature>> = HashMap::new();
-        let components = connected_components(&classified, Connectivity::Eight, Luma([0u8]));
+        let components = connected_components(&foreground, Connectivity::Eight, Luma([0u8]));
         // We only care about the foreground pixels, so skip the background (label == 0).
         let filtered_pixels = components
             .enumerate_pixels()
@@ -84,14 +84,14 @@ impl Tracker {
                 .or_default()
                 .push((Point::new(x, y), temperature));
         }
-        let objects: Vec<Object> = object_points
+        let new_objects: Vec<Object> = object_points
             .values()
             .map(|points| points.iter().cloned().collect())
             .collect();
         {
             let mut locked_objects = self.objects.write().unwrap();
-            let new_count = objects.len();
-            *locked_objects = objects;
+            let new_count = new_objects.len();
+            *locked_objects = new_objects;
             self.count_sender.send(new_count).expect(
                 "There's a receiver also stored on the Tracker, so all sends should succeed.",
             );
