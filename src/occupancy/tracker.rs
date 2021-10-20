@@ -13,6 +13,7 @@ use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
+use std::time::Instant;
 
 use crate::camera::Measurement;
 use crate::image_buffer::ThermalImage;
@@ -84,12 +85,13 @@ impl Tracker {
                 .or_default()
                 .push((Point::new(x, y), temperature));
         }
+        let now = Instant::now();
         let new_objects: Vec<Object> = object_points
-            .values()
+            .into_values()
             .filter_map(|points| {
                 // Filter out any blobs smaller than the minimum size
                 if points.len() < self.settings.minimum_size.unwrap_or_default() {
-                    Some(points.iter().cloned().collect())
+                    Some(Object::new(points, now))
                 } else {
                     None
                 }
@@ -137,9 +139,24 @@ type PointTemperature = (Point<u32>, f32);
 #[derive(Clone, Debug)]
 struct Object {
     point_temperatures: Vec<PointTemperature>,
+    last_movement: Instant,
 }
 
 impl Object {
+    fn new<I>(point_temperatures: I, when: Instant) -> Self
+    where
+        I: IntoIterator<Item = PointTemperature>,
+    {
+        Self {
+            point_temperatures: point_temperatures.into_iter().collect(),
+            last_movement: when,
+        }
+    }
+
+    fn set_last_movement(&mut self, when: Instant) {
+        self.last_movement = when
+    }
+
     fn len(&self) -> usize {
         self.point_temperatures.len()
     }
@@ -197,24 +214,17 @@ impl Object {
     }
 }
 
-impl std::iter::FromIterator<PointTemperature> for Object {
-    fn from_iter<I: IntoIterator<Item = PointTemperature>>(iter: I) -> Self {
-        Self {
-            point_temperatures: iter.into_iter().collect(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod test {
-    use float_cmp::assert_approx_eq;
+    use float_cmp::{assert_approx_eq, F32Margin};
+
+    use std::time::Instant;
 
     use super::{Object, Point, PointTemperature};
 
     #[test]
     fn empty_object_stats() {
-        let points: [PointTemperature; 0] = [];
-        let object: Object = std::array::IntoIter::new(points).collect();
+        let object = Object::new([], Instant::now());
         assert_eq!(
             object.center(),
             None,
@@ -235,7 +245,7 @@ mod test {
     #[test]
     fn single_object_stats() {
         let points: [PointTemperature; 1] = [(Point::new(3, 9), 37.0)];
-        let object: Object = std::array::IntoIter::new(points).collect();
+        let object = Object::new(points, Instant::now());
         assert_eq!(
             object.center(),
             Some(Point::new(3.0, 9.0)),
@@ -266,7 +276,7 @@ mod test {
             (Point::new(4, 0), 36.88),
             (Point::new(4, 10), 36.71),
         ];
-        let object: Object = std::array::IntoIter::new(points).collect();
+        let object = Object::new(points, Instant::now());
         // Manually calculated (well, in Excel)
         const MEAN: f32 = 36.98;
         const VARIANCE: f32 = 0.0606;
