@@ -8,7 +8,7 @@ use super::gmm::GmmParameters;
 
 /// Settings for the people tracker.
 #[serde_as]
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Copy, Clone, Debug, Deserialize, PartialEq)]
 pub(crate) struct TrackerSettings {
     /// Background subtraction settings.
     ///

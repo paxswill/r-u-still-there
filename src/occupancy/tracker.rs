@@ -17,14 +17,14 @@ use std::task::{Context, Poll};
 use crate::camera::Measurement;
 use crate::image_buffer::ThermalImage;
 
-use super::gmm::{BackgroundModel, GaussianMixtureModel, GmmParameters};
+use super::gmm::{BackgroundModel, GaussianMixtureModel};
 use super::settings::TrackerSettings;
 
 type GmmBackground = BackgroundModel<GaussianMixtureModel, Vec<GaussianMixtureModel>>;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Tracker {
-    model_settings: GmmParameters,
+    settings: TrackerSettings,
     background: Arc<RwLock<Option<GmmBackground>>>,
     objects: Arc<RwLock<Vec<Object>>>,
     count_sender: Arc<watch::Sender<usize>>,
@@ -36,7 +36,7 @@ impl Tracker {
         debug!(params=?settings.background_model_parameters, "GMM parameters");
         let (sender, receiver) = watch::channel(0);
         Self {
-            model_settings: settings.background_model_parameters,
+            settings: *settings,
             background: Arc::new(RwLock::new(None)),
             objects: Arc::new(RwLock::new(Vec::default())),
             count_sender: Arc::new(sender),
@@ -52,7 +52,7 @@ impl Tracker {
         let mut background_option = self.background.write().unwrap();
         let background = background_option.get_or_insert_with(|| {
             let mut model = GmmBackground::new(image.len());
-            model.set_parameters(self.model_settings);
+            model.set_parameters(self.settings.background_model_parameters);
             model
         });
         // TODO: Add detection of previously moving people. Until then there's no object tracking,
