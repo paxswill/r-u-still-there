@@ -92,7 +92,9 @@ impl Tracker {
             let mut locked_objects = self.objects.write().unwrap();
             let new_count = objects.len();
             *locked_objects = objects;
-            self.count_sender.send(new_count);
+            self.count_sender.send(new_count).expect(
+                "There's a receiver also stored on the Tracker, so all sends should succeed.",
+            );
         }
     }
 
