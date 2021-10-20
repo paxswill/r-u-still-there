@@ -128,16 +128,18 @@ impl Sink<Measurement> for Tracker {
 type PointTemperature = (Point<u32>, f32);
 
 #[derive(Clone, Debug)]
-struct Object(Vec<PointTemperature>);
+struct Object {
+    point_temperatures: Vec<PointTemperature>,
+}
 
 impl Object {
     fn len(&self) -> usize {
-        self.0.len()
+        self.point_temperatures.len()
     }
 
     pub(crate) fn center(&self) -> Option<Point<f32>> {
         let mut points = self
-            .0
+            .point_temperatures
             .iter()
             .map(|(point, _)| Point::new(point.x as f32, point.y as f32));
         // Short circuit the easy cases
@@ -160,10 +162,15 @@ impl Object {
     }
 
     fn sum_temperatures(&self) -> Option<f32> {
-        if self.0.is_empty() {
+        if self.point_temperatures.is_empty() {
             None
         } else {
-            Some(self.0.par_iter().map(|(_, temperature)| temperature).sum())
+            Some(
+                self.point_temperatures
+                    .par_iter()
+                    .map(|(_, temperature)| temperature)
+                    .sum(),
+            )
         }
     }
 
@@ -174,7 +181,7 @@ impl Object {
     pub(crate) fn temperature_variance(&self) -> Option<f32> {
         self.temperature_mean().map(|mean| {
             let squared_deviations_sum: f32 = self
-                .0
+                .point_temperatures
                 .par_iter()
                 .map(|(_, temperature)| (temperature - mean).powi(2))
                 .sum();
@@ -185,7 +192,9 @@ impl Object {
 
 impl std::iter::FromIterator<PointTemperature> for Object {
     fn from_iter<I: IntoIterator<Item = PointTemperature>>(iter: I) -> Self {
-        Self(iter.into_iter().collect())
+        Self {
+            point_temperatures: iter.into_iter().collect(),
+        }
     }
 }
 
