@@ -12,7 +12,7 @@ use super::gmm::GmmParameters;
 pub(crate) struct TrackerSettings {
     /// Background subtraction settings.
     ///
-    /// The defaults are normally sufficient for most cases.
+    /// The defaults are usually sufficient for most use cases.
     #[serde(default)]
     pub(crate) background_model_parameters: GmmParameters,
 
@@ -60,7 +60,7 @@ mod test {
         let expected = TrackerSettings {
             background_model_parameters: GmmParameters::default(),
             minimum_size: None,
-            stationary_timeout: Duration::from_secs(3600 * 3),
+            stationary_timeout: TrackerSettings::default_stationary_timeout(),
         };
         assert_eq!(config, expected);
         Ok(())
