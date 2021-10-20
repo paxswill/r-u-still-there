@@ -22,7 +22,7 @@ pub(crate) struct TrackerSettings {
 
     /// The minimum size for an object to be considered a person.
     #[serde(default)]
-    pub(crate) minimum_size: Option<u32>,
+    pub(crate) minimum_size: Option<usize>,
 
     /// How long before a stationary object is ignored.
     ///

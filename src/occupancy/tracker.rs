@@ -86,7 +86,14 @@ impl Tracker {
         }
         let new_objects: Vec<Object> = object_points
             .values()
-            .map(|points| points.iter().cloned().collect())
+            .filter_map(|points| {
+                // Filter out any blobs smaller than the minimum size
+                if points.len() < self.settings.minimum_size.unwrap_or_default() {
+                    Some(points.iter().cloned().collect())
+                } else {
+                    None
+                }
+            })
             .collect();
         {
             let mut locked_objects = self.objects.write().unwrap();
