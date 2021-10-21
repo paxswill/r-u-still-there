@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use futures::{Sink, Stream};
 use image::{ImageBuffer, Luma};
-use imageproc::point::Point;
+use imageproc::point::Point as ImagePoint;
 use imageproc::region_labelling::{connected_components, Connectivity};
+use num_traits::Num;
 use rayon::prelude::*;
 use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
 use tracing::debug;
 
 use std::collections::HashMap;
+use std::cmp;
 use std::convert::Infallible;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
@@ -22,6 +24,47 @@ use super::gmm::{BackgroundModel, GaussianMixtureModel};
 use super::settings::TrackerSettings;
 
 type GmmBackground = BackgroundModel<GaussianMixtureModel, Vec<GaussianMixtureModel>>;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct Point<T: Num> {
+    x: T,
+    y: T,
+}
+
+impl<T: Num> Point<T> {
+    fn new(x: T, y: T) -> Self {
+        Self { x, y }
+    }
+}
+
+impl Point<u32> {
+    fn squared_distance(&self, other: &Self) -> u32 {
+        let diff_x = cmp::max(self.x, other.x) - cmp::min(self.x, other.x);
+        let diff_y = cmp::max(self.y, other.y) - cmp::min(self.y, other.y);
+        diff_x.pow(2) + diff_y.pow(2)
+    }
+}
+
+impl Point<f32> {
+    fn squared_distance(&self, other: &Self) -> f32 {
+        (self.x - other.x).powi(2) + (self.y - other.y).powi(2)
+    }
+}
+
+impl<T: Num> From<Point<T>> for ImagePoint<T> {
+    fn from(pt: Point<T>) -> Self {
+        Self { x: pt.x, y: pt.y }
+    }
+}
+
+impl<T: Num> From<ImagePoint<T>> for Point<T> {
+    fn from(image_point: ImagePoint<T>) -> Self {
+        Self {
+            x: image_point.x,
+            y: image_point.y,
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Tracker {
@@ -147,8 +190,13 @@ impl Object {
     where
         I: IntoIterator<Item = PointTemperature>,
     {
+        let point_temperatures: Vec<PointTemperature> = point_temperatures.into_iter().collect();
+        assert!(
+            !point_temperatures.is_empty(),
+            "An object must have at least one point"
+        );
         Self {
-            point_temperatures: point_temperatures.into_iter().collect(),
+            point_temperatures,
             last_movement: when,
         }
     }
@@ -161,14 +209,18 @@ impl Object {
         self.point_temperatures.len()
     }
 
-    pub(crate) fn center(&self) -> Option<Point<f32>> {
+    fn points<'a>(&'a self) -> impl iter::ExactSizeIterator<Item = &'a Point<u32>> {
+        self.point_temperatures.iter().map(|(p, _)| p)
+    }
+
+    pub(crate) fn center(&self) -> Point<f32> {
         let mut points = self
-            .point_temperatures
-            .iter()
-            .map(|(point, _)| Point::new(point.x as f32, point.y as f32));
+            .points()
+            .map(|point| Point::new(point.x as f32, point.y as f32));
         // Short circuit the easy cases
         match self.len() {
-            0 | 1 => points.next(),
+            0 => unreachable!("There must always be at least one point in an object"),
+            1 => points.next().unwrap(),
             _ => {
                 let mut min_x = f32::MAX;
                 let mut min_y = f32::MAX;
@@ -180,37 +232,31 @@ impl Object {
                     max_y = point.y.max(max_y);
                     max_x = point.x.max(max_x);
                 }
-                Some(Point::new((max_x - min_x) / 2.0, (max_y - min_y) / 2.0))
+                Point::new((max_x - min_x) / 2.0, (max_y - min_y) / 2.0)
             }
         }
     }
 
-    fn sum_temperatures(&self) -> Option<f32> {
-        if self.point_temperatures.is_empty() {
-            None
-        } else {
-            Some(
-                self.point_temperatures
-                    .par_iter()
-                    .map(|(_, temperature)| temperature)
-                    .sum(),
-            )
-        }
+    fn sum_temperatures(&self) -> f32 {
+        self.point_temperatures
+            .par_iter()
+            .map(|(_, temperature)| temperature)
+            .sum()
     }
 
-    pub(crate) fn temperature_mean(&self) -> Option<f32> {
-        self.sum_temperatures().map(|sum| sum / self.len() as f32)
+    pub(crate) fn temperature_mean(&self) -> f32 {
+        self.sum_temperatures() / self.len() as f32
     }
 
-    pub(crate) fn temperature_variance(&self) -> Option<f32> {
-        self.temperature_mean().map(|mean| {
-            let squared_deviations_sum: f32 = self
-                .point_temperatures
-                .par_iter()
-                .map(|(_, temperature)| (temperature - mean).powi(2))
-                .sum();
-            squared_deviations_sum / self.len() as f32
-        })
+    pub(crate) fn temperature_variance(&self) -> f32 {
+        let mean = self.temperature_mean();
+        let squared_deviations_sum: f32 = self
+            .point_temperatures
+            .par_iter()
+            .map(|(_, temperature)| (temperature - mean).powi(2))
+            .sum();
+        squared_deviations_sum / self.len() as f32
+    }
     }
 }
 
@@ -223,42 +269,22 @@ mod test {
     use super::{Object, Point, PointTemperature};
 
     #[test]
-    fn empty_object_stats() {
-        let object = Object::new([], Instant::now());
-        assert_eq!(
-            object.center(),
-            None,
-            "An empty object doesn't have a center"
-        );
-        assert_eq!(
-            object.temperature_mean(),
-            None,
-            "An empty object doesn't have a mean temperature"
-        );
-        assert_eq!(
-            object.temperature_variance(),
-            None,
-            "An empty object doesn't have any temperatures, so there's no variance"
-        );
-    }
-
-    #[test]
     fn single_object_stats() {
         let points: [PointTemperature; 1] = [(Point::new(3, 9), 37.0)];
         let object = Object::new(points, Instant::now());
         assert_eq!(
             object.center(),
-            Some(Point::new(3.0, 9.0)),
+            Point::new(3.0, 9.0),
             "A object with a single point should have the same center"
         );
         assert_eq!(
             object.temperature_mean(),
-            Some(37.0),
+            37.0,
             "An object with only one temperature has that temperature as the mean"
         );
         assert_eq!(
             object.temperature_variance(),
-            Some(0.0),
+            0.0,
             "An object with only one point doesn't have a temperature variance"
         );
     }
@@ -281,15 +307,13 @@ mod test {
         const MEAN: f32 = 36.98;
         const VARIANCE: f32 = 0.0606;
         assert_eq!(
-            object.center().unwrap(),
+            object.center(),
             Point::new(2.0, 5.0),
             "Incorrect center for a rectangle with bounding box ((0, 0), (4, 10)"
         );
         let mean = object.temperature_mean();
-        assert!(mean.is_some());
-        assert_approx_eq!(f32, mean.unwrap(), MEAN, epsilon = 0.01);
+        assert_approx_eq!(f32, mean, MEAN, epsilon = 0.01);
         let variance = object.temperature_variance();
-        assert!(variance.is_some());
-        assert_approx_eq!(f32, variance.unwrap(), VARIANCE, epsilon = 0.0001);
+        assert_approx_eq!(f32, variance, VARIANCE, epsilon = 0.0001);
     }
 }
