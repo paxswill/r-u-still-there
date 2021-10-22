@@ -119,12 +119,12 @@ impl Tracker {
         let foreground: ImageBuffer<Luma<u8>, Vec<u8>> =
             ImageBuffer::from_raw(image.width(), image.height(), foreground)
                 .expect("A mapped Vec should be able to be used for a new ImageBuffer");
-        let mut object_points: HashMap<u32, Vec<PointTemperature>> = HashMap::new();
         let components = connected_components(&foreground, Connectivity::Eight, Luma([0u8]));
         // We only care about the foreground pixels, so skip the background (label == 0).
         let filtered_pixels = components
             .enumerate_pixels()
             .filter(|(_, _, pixel)| pixel[0] != 0);
+        let mut object_points: HashMap<u32, Vec<PointTemperature>> = HashMap::new();
         for (x, y, pixel) in filtered_pixels {
             let temperature = image[(x, y)][0];
             object_points
@@ -137,7 +137,7 @@ impl Tracker {
             .into_values()
             .filter_map(|points| {
                 // Filter out any blobs smaller than the minimum size
-                if points.len() < self.settings.minimum_size.unwrap_or_default() {
+                if points.len() >= self.settings.minimum_size.unwrap_or_default() {
                     Some(Object::new(points, now))
                 } else {
                     None
@@ -413,7 +413,7 @@ impl Object {
 
 #[cfg(test)]
 mod test {
-    use float_cmp::{assert_approx_eq, F32Margin};
+    use float_cmp::assert_approx_eq;
 
     use std::time::Instant;
 
