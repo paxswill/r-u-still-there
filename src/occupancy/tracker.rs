@@ -20,6 +20,7 @@ use crate::camera::Measurement;
 use crate::image_buffer::ThermalImage;
 
 use super::gmm::{BackgroundModel, GaussianMixtureModel};
+use super::moments::hu_moments;
 use super::point::{Point, PointTemperature};
 use super::settings::TrackerSettings;
 
@@ -197,6 +198,7 @@ impl Tracker {
         let mut best: Option<(f32, Vec<usize>)> = None;
         let mut previous_combo: Option<Vec<usize>> = None;
         let total_combo_length = old_objects.len() + new_objects.len();
+        let max_movement = self.settings.maximum_movement;
         'combo_loop: for combo_indices in (0..total_combo_length).permutations(total_combo_length) {
             // Skip repeated combos (from None being skipped)
             if previous_combo.as_ref() == Some(&combo_indices) {
@@ -210,20 +212,12 @@ impl Tracker {
                 match (old_objects.get(old_index), new_objects.get(*new_index)) {
                     (Some(_), Some(_)) => {
                         let distance = distances[&old_index][new_index];
-                        if distance > self.settings.maximum_movement {
+                        if distance > max_movement {
                             continue 'combo_loop;
                         }
-                        // Guard against a divide by zero
-                        let distance = if distance != 0.0 {
-                            // Using reciprocal distance so that not moving is weighted heavier
-                            // than moving.
-                            distance.recip()
-                        } else {
-                            0.0
-                        };
                         distance_sum += distance;
                     }
-                    _ => distance_sum += 1.0,
+                    _ => distance_sum += max_movement,
                 }
             }
             let average_distance = distance_sum / total_combo_length as f32;
@@ -267,6 +261,7 @@ impl Sink<Measurement> for Tracker {
 #[derive(Clone, Debug)]
 struct Object {
     point_temperatures: Vec<PointTemperature>,
+    hu_moments: [f32; 7],
     last_movement: Instant,
     is_person: bool,
 }
@@ -277,12 +272,14 @@ impl Object {
         I: IntoIterator<Item = PointTemperature>,
     {
         let point_temperatures: Vec<PointTemperature> = point_temperatures.into_iter().collect();
+        let hu_moments = hu_moments(&point_temperatures);
         assert!(
             !point_temperatures.is_empty(),
             "An object must have at least one point"
         );
         Self {
             point_temperatures,
+            hu_moments,
             last_movement: when,
             is_person: false,
         }
@@ -342,23 +339,13 @@ impl Object {
     }
 
     pub(crate) fn squared_distance(&self, other: &Self) -> f32 {
-        // Combine Bhattacharyya (for the thermal distribution) and euclidean (for the center
-        // coordinates) distances.
-        let mean = (self.temperature_mean(), other.temperature_mean());
-        let variance = (self.temperature_variance(), other.temperature_variance());
-        // I'm sorry.
-        let bhattacharyya_distance = 0.25
-            * (0.25 * (variance.0 / variance.1 + variance.1 / variance.0 + 2.0)).ln()
-            + 0.25 * ((mean.0 - mean.1).powi(2) / (variance.0 + variance.1));
-        let center_distance = self.center().squared_distance(other.center());
-        trace!(
-            ?bhattacharyya_distance,
-            ?center_distance,
-            a = ?self,
-            b = ?other,
-            "Distance between objects"
-        );
-        bhattacharyya_distance + center_distance
+        // Just compute the squared euclidean distance from this object's Hu moments to the othe
+        // object's Hu moments.
+        self.hu_moments
+            .iter()
+            .zip(other.hu_moments.iter())
+            .map(|(this, that)| (this - that).powi(2))
+            .sum()
     }
 
     fn overlap_coefficient(&self, other: &Self) -> f32 {
