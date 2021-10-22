@@ -140,6 +140,7 @@ impl Tracker {
                 if points.len() >= self.settings.minimum_size.unwrap_or_default() {
                     Some(Object::new(points, now))
                 } else {
+                    debug!(point_count = %points.len(), "Skipping object because of size");
                     None
                 }
             })

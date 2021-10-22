@@ -10,6 +10,7 @@ use std::iter;
 use bitvec::prelude::*;
 use rayon::prelude::*;
 use serde::Deserialize;
+use tracing::trace;
 
 use super::learning_rate::LearningRate;
 
@@ -280,6 +281,7 @@ impl<Container> BackgroundModel<Container> {
     }
 
     pub(super) fn thaw_all(&mut self) {
+        trace!("Thawing all pixels");
         self.set_all_state(false);
     }
 
@@ -292,16 +294,19 @@ impl<Container> BackgroundModel<Container> {
     }
 
     pub(super) fn freeze_pixels(&mut self, pixels: &[usize]) {
+        trace!(?pixels, "Freezing pixels");
         self.set_pixel_state(pixels, true)
     }
 
     pub(super) fn thaw_pixels(&mut self, pixels: &[usize]) {
+        trace!(?pixels, "Thawing pixels");
         self.set_pixel_state(pixels, false)
     }
 }
 
 impl BackgroundModel<Vec<GaussianMixtureModel>> {
     pub(super) fn update(&mut self, samples: &[f32]) {
+        trace!("Updating GMM model");
         let params = &self.parameters;
         let frozen = self.frozen_pixels.as_bitslice();
         samples
@@ -320,6 +325,7 @@ impl BackgroundModel<Vec<GaussianMixtureModel>> {
     where
         R: FromParallelIterator<f32>,
     {
+        trace!("Evaluating GMM model");
         let params = &self.parameters;
         samples
             .par_iter()
