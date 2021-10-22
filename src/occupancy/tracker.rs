@@ -3,15 +3,16 @@ use futures::{Sink, Stream};
 use image::{ImageBuffer, Luma};
 use imageproc::point::Point as ImagePoint;
 use imageproc::region_labelling::{connected_components, Connectivity};
+use itertools::Itertools;
 use num_traits::Num;
 use rayon::prelude::*;
 use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
-use tracing::debug;
+use tracing::{debug, instrument, trace};
 
-use std::collections::HashMap;
-use std::cmp;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
+use std::iter;
 use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
@@ -24,6 +25,7 @@ use super::gmm::{BackgroundModel, GaussianMixtureModel};
 use super::settings::TrackerSettings;
 
 type GmmBackground = BackgroundModel<Vec<GaussianMixtureModel>>;
+type DistanceMap = HashMap<usize, HashMap<usize, f32>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Point<T: Num> {
@@ -38,15 +40,13 @@ impl<T: Num> Point<T> {
 }
 
 impl Point<u32> {
-    fn squared_distance(&self, other: &Self) -> u32 {
-        let diff_x = cmp::max(self.x, other.x) - cmp::min(self.x, other.x);
-        let diff_y = cmp::max(self.y, other.y) - cmp::min(self.y, other.y);
-        diff_x.pow(2) + diff_y.pow(2)
+    fn pixel_number(&self, image_width: u32) -> u32 {
+        self.x + self.y * image_width
     }
 }
 
 impl Point<f32> {
-    fn squared_distance(&self, other: &Self) -> f32 {
+    fn squared_distance(&self, other: Self) -> f32 {
         (self.x - other.x).powi(2) + (self.y - other.y).powi(2)
     }
 }
@@ -89,9 +89,15 @@ impl Tracker {
     }
 
     pub(crate) fn count(&self) -> usize {
-        self.objects.read().unwrap().len()
+        self.objects
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|o| o.is_person)
+            .count()
     }
 
+    #[instrument(level = "trace", skip(self, image))]
     pub(crate) fn update(&mut self, image: &ThermalImage) {
         let mut background_option = self.background.write().unwrap();
         let background = background_option.get_or_insert_with(|| {
@@ -99,10 +105,8 @@ impl Tracker {
             model.set_parameters(self.settings.background_model_parameters);
             model
         });
-        // TODO: Add detection of previously moving people. Until then there's no object tracking,
-        // just background subtraction.
         let foreground: Vec<u8> = background
-            .update_and_classify::<Vec<f32>>(&image)
+            .background_probability::<Vec<f32>>(&image)
             .into_iter()
             .map(|p| {
                 if p < self.settings.background_confidence_threshold {
@@ -129,7 +133,7 @@ impl Tracker {
                 .push((Point::new(x, y), temperature));
         }
         let now = Instant::now();
-        let new_objects: Vec<Object> = object_points
+        let mut new_objects: Vec<Object> = object_points
             .into_values()
             .filter_map(|points| {
                 // Filter out any blobs smaller than the minimum size
@@ -140,14 +144,136 @@ impl Tracker {
                 }
             })
             .collect();
-        {
-            let mut locked_objects = self.objects.write().unwrap();
-            let new_count = new_objects.len();
-            *locked_objects = new_objects;
-            self.count_sender.send(new_count).expect(
-                "There's a receiver also stored on the Tracker, so all sends should succeed.",
-            );
+        let mut old_objects = self.objects.write().unwrap();
+        let matched_objects = self.correlate_objects(&old_objects, &new_objects);
+        for (old_index, new_index) in matched_objects.into_iter().enumerate() {
+            let object_pair = (old_objects.get(old_index), new_objects.get_mut(new_index));
+            match object_pair {
+                (Some(old_object), Some(new_object)) => {
+                    let old_center = old_object.center();
+                    let new_center = new_object.center();
+                    debug!(
+                        old_object_center = ?old_center,
+                        new_object_center = ?new_center,
+                        "Correlated objects"
+                    );
+                    let center_difference = old_center.squared_distance(new_center);
+                    const CENTER_CLOSE: f32 = 1.0;
+                    let overlap_coefficient = old_object.overlap_coefficient(new_object);
+                    const OVERLAP_THRESHOLD: f32 = 0.9;
+                    // If the object hasn't moved, keep the old update time and person marking
+                    if center_difference < CENTER_CLOSE && overlap_coefficient >= OVERLAP_THRESHOLD
+                    {
+                        new_object.last_movement = old_object.last_movement;
+                        new_object.is_person = old_object.is_person;
+                        debug!(object_center = ?new_center, "Ignoring movement for object")
+                    } else {
+                        // Conversely, if an object has moved, make sure it's marked as a person
+                        new_object.is_person = true;
+                        debug!(object_center = ?new_center, "Marking object as person");
+                    }
+                }
+                (Some(old_object), None) => {
+                    debug!(object_center = ?old_object.center(), "Object no longer present");
+                }
+                (None, Some(new_object)) => {
+                    debug!(object_center = ?new_object.center(), "New object visible, waiting for movement.");
+                }
+                (None, None) => (),
+            }
         }
+        // Mark any new people, and unmark any objects that have been stationary too long.
+        background.thaw_all();
+        let image_width = image.width();
+        for object in new_objects.iter_mut() {
+            if object.last_movement.elapsed() > self.settings.stationary_timeout {
+                object.is_person = false;
+                let pixel_numbers = object
+                    .points()
+                    .map(|point| point.pixel_number(image_width) as usize)
+                    .collect::<Vec<_>>();
+                background.freeze_pixels(&pixel_numbers);
+            }
+        }
+        // Update the background model, save the new objects for the next frame and broadcast the
+        // new count of persons in view.
+        *old_objects = new_objects;
+        background.update(&image);
+        // Need to release locks before count() will work
+        drop(background);
+        drop(background_option);
+        drop(old_objects);
+        let new_count = self.count();
+        trace!(count = %new_count, "Current occupancy count");
+        self.count_sender
+            .send(new_count)
+            .expect("There's a receiver also stored on the Tracker, so all sends should succeed.");
+    }
+
+    fn calculate_distances(old_objects: &[Object], new_objects: &[Object]) -> DistanceMap {
+        old_objects
+            .iter()
+            .enumerate()
+            .map(|(old_index, old)| {
+                let distances_to_new = new_objects
+                    .iter()
+                    .enumerate()
+                    .map(|(new_index, new)| {
+                        let distance = old.squared_distance(new);
+                        (new_index, distance)
+                    })
+                    .collect();
+                (old_index, distances_to_new)
+            })
+            .collect()
+    }
+
+    #[instrument(level = "trace", skip(self, old_objects, new_objects))]
+    fn correlate_objects(&self, old_objects: &[Object], new_objects: &[Object]) -> Vec<usize> {
+        let distances = Self::calculate_distances(old_objects, new_objects);
+        // Just brute force it. It's ugly, but there shouldn't be that many objects present at a
+        // time (and the low resolution of the cameras also puts an upper limit on the complexity).
+        let mut best: Option<(f32, Vec<usize>)> = None;
+        let mut previous_combo: Option<Vec<usize>> = None;
+        let total_combo_length = old_objects.len() + new_objects.len();
+        'combo_loop: for combo_indices in (0..total_combo_length).permutations(total_combo_length) {
+            // Skip repeated combos (from None being skipped)
+            if previous_combo.as_ref() == Some(&combo_indices) {
+                continue;
+            } else {
+                // Keep the previous combo indices around for the next loop iteration
+                previous_combo = Some(combo_indices.clone());
+            }
+            let mut distance_sum = 0.0;
+            for (old_index, new_index) in combo_indices.iter().enumerate() {
+                match (old_objects.get(old_index), new_objects.get(*new_index)) {
+                    (Some(_), Some(_)) => {
+                        let distance = distances[&old_index][new_index];
+                        if distance > self.settings.maximum_movement {
+                            continue 'combo_loop;
+                        }
+                        // Guard against a divide by zero
+                        let distance = if distance != 0.0 {
+                            // Using reciprocal distance so that not moving is weighted heavier
+                            // than moving.
+                            distance.recip()
+                        } else {
+                            0.0
+                        };
+                        distance_sum += distance;
+                    }
+                    _ => distance_sum += 1.0,
+                }
+            }
+            let average_distance = distance_sum / total_combo_length as f32;
+            let current_best = best.as_ref().map(|(d, _)| *d).unwrap_or(f32::INFINITY);
+            if average_distance < current_best {
+                trace!(new_score = ?average_distance, "Found new lowest score");
+                best = Some((average_distance, combo_indices));
+            }
+        }
+        best.map(|(_, mapping)| mapping.into_iter().collect())
+            .unwrap_or_default()
     }
 
     pub(crate) fn count_stream(&self) -> impl Stream<Item = usize> {
@@ -183,6 +309,7 @@ type PointTemperature = (Point<u32>, f32);
 struct Object {
     point_temperatures: Vec<PointTemperature>,
     last_movement: Instant,
+    is_person: bool,
 }
 
 impl Object {
@@ -198,11 +325,8 @@ impl Object {
         Self {
             point_temperatures,
             last_movement: when,
+            is_person: false,
         }
-    }
-
-    fn set_last_movement(&mut self, when: Instant) {
-        self.last_movement = when
     }
 
     fn len(&self) -> usize {
@@ -257,6 +381,33 @@ impl Object {
             .sum();
         squared_deviations_sum / self.len() as f32
     }
+
+    pub(crate) fn squared_distance(&self, other: &Self) -> f32 {
+        // Combine Bhattacharyya (for the thermal distribution) and euclidean (for the center
+        // coordinates) distances.
+        let mean = (self.temperature_mean(), other.temperature_mean());
+        let variance = (self.temperature_variance(), other.temperature_variance());
+        // I'm sorry.
+        let bhattacharyya_distance = 0.25
+            * (0.25 * (variance.0 / variance.1 + variance.1 / variance.0 + 2.0)).ln()
+            + 0.25 * ((mean.0 - mean.1).powi(2) / (variance.0 + variance.1));
+        let center_distance = self.center().squared_distance(other.center());
+        trace!(
+            ?bhattacharyya_distance,
+            ?center_distance,
+            a = ?self,
+            b = ?other,
+            "Distance between objects"
+        );
+        bhattacharyya_distance + center_distance
+    }
+
+    fn overlap_coefficient(&self, other: &Self) -> f32 {
+        let this = self.points().copied().collect::<HashSet<Point<_>>>();
+        let that = other.points().copied().collect::<HashSet<Point<_>>>();
+        let intersection = this.intersection(&that).count();
+        let denom = this.len().min(that.len());
+        intersection as f32 / denom as f32
     }
 }
 

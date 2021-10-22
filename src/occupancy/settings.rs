@@ -20,6 +20,9 @@ pub(crate) struct TrackerSettings {
     #[serde(default = "TrackerSettings::default_confidence_threshold")]
     pub(crate) background_confidence_threshold: f32,
 
+    #[serde(default = "TrackerSettings::default_maximum_movement")]
+    pub(crate) maximum_movement: f32,
+
     /// The minimum size for an object to be considered a person.
     #[serde(default)]
     pub(crate) minimum_size: Option<usize>,
@@ -43,6 +46,10 @@ impl TrackerSettings {
         // Three hour stationary timeout
         Duration::from_secs(60 * 60 * 3)
     }
+
+    const fn default_maximum_movement() -> f32 {
+        16.0
+    }
 }
 
 impl Default for TrackerSettings {
@@ -50,6 +57,7 @@ impl Default for TrackerSettings {
         Self {
             background_model_parameters: GmmParameters::default(),
             background_confidence_threshold: Self::default_confidence_threshold(),
+            maximum_movement: Self::default_maximum_movement(),
             minimum_size: None,
             stationary_timeout: Self::default_stationary_timeout(),
         }
@@ -69,6 +77,7 @@ mod test {
         let expected = TrackerSettings {
             background_model_parameters: GmmParameters::default(),
             background_confidence_threshold: TrackerSettings::default_confidence_threshold(),
+            maximum_movement: TrackerSettings::default_maximum_movement(),
             minimum_size: None,
             stationary_timeout: TrackerSettings::default_stationary_timeout(),
         };

@@ -274,7 +274,17 @@ impl<Container> BackgroundModel<Container> {
         self.parameters = params;
     }
 
+    #[inline]
+    fn set_all_state(&mut self, state: bool) {
+        self.frozen_pixels.set_all(state)
+    }
+
+    pub(super) fn thaw_all(&mut self) {
+        self.set_all_state(false);
+    }
+
     // TODO: Add optimized method for sorted pixels
+    #[inline]
     fn set_pixel_state(&mut self, pixels: &[usize], state: bool) {
         for pixel_index in pixels {
             self.frozen_pixels.set(*pixel_index, state);
