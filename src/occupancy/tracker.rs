@@ -148,13 +148,16 @@ impl Tracker {
         background.thaw_all();
         let image_width = image.width();
         for object in new_objects.iter_mut() {
-            if object.last_movement.elapsed() > self.settings.stationary_timeout {
-                object.is_person = false;
-                let pixel_numbers = object
-                    .points()
-                    .map(|point| point.pixel_number(image_width) as usize)
-                    .collect::<Vec<_>>();
-                background.freeze_pixels(&pixel_numbers);
+            if object.is_person {
+                if object.last_movement.elapsed() > self.settings.stationary_timeout {
+                    object.is_person = false;
+                } else {
+                    let pixel_numbers = object
+                        .points()
+                        .map(|point| point.pixel_number(image_width) as usize)
+                        .collect::<Vec<_>>();
+                    background.freeze_pixels(&pixel_numbers);
+                }
             }
         }
         // Update the background model, save the new objects for the next frame and broadcast the
