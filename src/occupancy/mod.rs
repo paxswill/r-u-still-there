@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 mod gmm;
+mod learning_rate;
 mod settings;
 mod tracker;
 

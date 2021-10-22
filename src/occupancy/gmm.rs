@@ -11,6 +11,8 @@ use bitvec::prelude::*;
 use rayon::prelude::*;
 use serde::Deserialize;
 
+use super::learning_rate::LearningRate;
+
 /// A single gaussian distribution.
 ///
 /// Each pixel's model can be made up of multiple distributions, and the number of distributions in
@@ -47,13 +49,6 @@ impl GaussianComponent {
     }
 }
 
-pub(super) trait PixelModel {
-    type Parameters;
-
-    fn update(&mut self, sample: f32, params: &Self::Parameters);
-    fn background_probability(&self, sample: f32, params: &Self::Parameters) -> f32;
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Deserialize)]
 pub(crate) struct GmmParameters {
     /// The rate at which new values are incorporated into the model.
@@ -62,7 +57,7 @@ pub(crate) struct GmmParameters {
     /// value during the training of a fresh model (by starting from 1, and decreasing until the
     /// final learning rate is reached), but it doesn't seriously impact performance.
     #[serde(default = "GmmParameters::default_learning_rate")]
-    pub(crate) learning_rate: f32,
+    pub(crate) learning_rate: LearningRate,
 
     /// A hard limit on the number of gaussians used to model each pixel.
     ///
@@ -98,8 +93,8 @@ impl GmmParameters {
     // These defaults are all functions so that they can be used with the serde default annotation.
 
     /// Corresponds to looking at the last 500 samples.
-    const fn default_learning_rate() -> f32 {
-        0.002
+    const fn default_learning_rate() -> LearningRate {
+        LearningRate::new(0.002)
     }
 
     /// The original paper used 4, which seems like a good enough reason to continue using it.
@@ -121,11 +116,6 @@ impl GmmParameters {
 
     const fn default_initial_variance() -> f32 {
         10.0
-    }
-
-    /// Set [`learning_rate`] to correspond to a period of `period` samples.
-    pub(crate) fn set_learning_period(&mut self, period: f32) {
-        self.learning_rate = period.recip();
     }
 }
 
@@ -163,18 +153,15 @@ impl GaussianMixtureModel {
             self.0.insert(index, component);
         }
     }
-}
-
-impl PixelModel for GaussianMixtureModel {
-    type Parameters = GmmParameters;
 
     /// Update the background model with a new sample.
     ///
     /// `learning_rate` ($\alpha$ in the papers) is a value between 0 and 1 and describes the
     /// weight given to the new sample compared to the existing model. If not given, the inverse of
     /// the number of samples is used.
-    fn update(&mut self, sample: f32, params: &Self::Parameters) {
-        let complexity_reduction = params.learning_rate * params.complexity_reduction;
+    fn update(&mut self, sample: f32, params: &GmmParameters) {
+        let learning_rate = params.learning_rate.current_value();
+        let complexity_reduction = learning_rate * params.complexity_reduction;
         let mut claimed = false;
         // Iterating over the *indices*, as we might be reordering the items (and changing the
         // slice while we're iterating over it is screwy). Also not using a for loop over a range
@@ -191,10 +178,9 @@ impl PixelModel for GaussianMixtureModel {
             // components only have their weight updated.
             if !claimed && distance <= params.model_distance_threshold {
                 claimed = true;
-                component.weight +=
-                    params.learning_rate * (1.0 - component.weight) - complexity_reduction;
+                component.weight += learning_rate * (1.0 - component.weight) - complexity_reduction;
                 let difference = sample - component.mean;
-                let weighted_learning_rate = params.learning_rate / component.weight;
+                let weighted_learning_rate = learning_rate / component.weight;
                 component.mean += weighted_learning_rate * difference;
                 // The equation in the paper has (in pseudo-tex, and skipping the hats):
                 // $\delta^{T}_{m} \delta_{m} - \sigma^{2}_{m}$
@@ -216,8 +202,7 @@ impl PixelModel for GaussianMixtureModel {
                     prev_index = prev_index.saturating_sub(1);
                 }
             } else {
-                component.weight +=
-                    params.learning_rate * (-component.weight) - complexity_reduction;
+                component.weight += learning_rate * (-component.weight) - complexity_reduction;
                 // No need to sort after this, as all non-claiming components are reduced
                 // proportionally.
             }
@@ -235,7 +220,7 @@ impl PixelModel for GaussianMixtureModel {
                 self.0.pop();
             }
             let new_component =
-                GaussianComponent::new(sample, params.learning_rate, params.initial_variance);
+                GaussianComponent::new(sample, learning_rate, params.initial_variance);
             self.insert(new_component);
         }
         debug_assert_eq!(
@@ -258,7 +243,7 @@ impl PixelModel for GaussianMixtureModel {
             });
     }
 
-    fn background_probability(&self, sample: f32, params: &Self::Parameters) -> f32 {
+    fn background_probability(&self, sample: f32, params: &GmmParameters) -> f32 {
         let mut weight_sum = 0.0;
         let mut bg_probability = 0.0;
         for component in &self.0 {
@@ -273,19 +258,19 @@ impl PixelModel for GaussianMixtureModel {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct BackgroundModel<PixMod: PixelModel, Container> {
+pub(super) struct BackgroundModel<Container> {
     /// The model for each individual pixel.
     pixel_models: Container,
     /// The parameters shared by all models.
-    parameters: PixMod::Parameters,
+    parameters: GmmParameters,
     /// Flags corresponding to pixels that are *not* to be updated.
     // Using a BitArray would be more precise, but it isn't possible to perform operations on const
     // parameters.
     frozen_pixels: BitVec,
 }
 
-impl<PixMod: PixelModel, Container> BackgroundModel<PixMod, Container> {
-    pub(super) fn set_parameters(&mut self, params: PixMod::Parameters) {
+impl<Container> BackgroundModel<Container> {
+    pub(super) fn set_parameters(&mut self, params: GmmParameters) {
         self.parameters = params;
     }
 
@@ -305,11 +290,7 @@ impl<PixMod: PixelModel, Container> BackgroundModel<PixMod, Container> {
     }
 }
 
-impl<PixMod> BackgroundModel<PixMod, Vec<PixMod>>
-where
-    PixMod: 'static + PixelModel + Send + Sync,
-    <PixMod as PixelModel>::Parameters: Send + Sync,
-{
+impl BackgroundModel<Vec<GaussianMixtureModel>> {
     pub(super) fn update(&mut self, samples: &[f32]) {
         let params = &self.parameters;
         let frozen = self.frozen_pixels.as_bitslice();
@@ -322,6 +303,7 @@ where
                     model.update(*sample, params)
                 }
             });
+        self.parameters.learning_rate.increment()
     }
 
     pub(super) fn background_probability<R>(&self, samples: &[f32]) -> R
@@ -335,29 +317,18 @@ where
             .map(|(sample, model)| model.background_probability(*sample, params))
             .collect()
     }
-
-    pub(super) fn update_and_classify<R>(&mut self, samples: &[f32]) -> R
-    where
-        R: FromParallelIterator<f32>,
-    {
-        let classified = self.background_probability(samples);
-        self.update(samples);
-        classified
-    }
 }
 
-impl<PixMod, Container> BackgroundModel<PixMod, Container>
+impl<Container> BackgroundModel<Container>
 where
-    PixMod: PixelModel + Default + std::fmt::Debug,
-    <PixMod as PixelModel>::Parameters: Default,
-    Container: iter::FromIterator<PixMod>,
+    Container: iter::FromIterator<GaussianMixtureModel>,
 {
     pub(super) fn new(num_pixels: usize) -> Self {
         let pixel_models = (0..num_pixels).map(|_| Default::default()).collect();
         let frozen_pixels = iter::repeat(false).take(num_pixels).collect();
         Self {
             pixel_models,
-            parameters: PixMod::Parameters::default(),
+            parameters: GmmParameters::default(),
             frozen_pixels,
         }
     }
@@ -372,7 +343,7 @@ mod test {
     use super::{BackgroundModel, GaussianMixtureModel};
 
     type NormalSamples = DistIter<Normal<f32>, ChaCha8Rng, f32>;
-    type GmmBackground = BackgroundModel<GaussianMixtureModel, Vec<GaussianMixtureModel>>;
+    type GmmBackground = BackgroundModel<Vec<GaussianMixtureModel>>;
 
     const LENGTH: usize = 10;
     const TRAINING_SIZE: usize = 5000;

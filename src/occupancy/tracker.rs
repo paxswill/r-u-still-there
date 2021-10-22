@@ -23,7 +23,7 @@ use crate::image_buffer::ThermalImage;
 use super::gmm::{BackgroundModel, GaussianMixtureModel};
 use super::settings::TrackerSettings;
 
-type GmmBackground = BackgroundModel<GaussianMixtureModel, Vec<GaussianMixtureModel>>;
+type GmmBackground = BackgroundModel<Vec<GaussianMixtureModel>>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct Point<T: Num> {
