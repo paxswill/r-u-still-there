@@ -1,10 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use futures::{Sink, Stream};
 use image::{ImageBuffer, Luma};
-use imageproc::point::Point as ImagePoint;
 use imageproc::region_labelling::{connected_components, Connectivity};
 use itertools::Itertools;
-use num_traits::Num;
 use rayon::prelude::*;
 use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
@@ -22,49 +20,11 @@ use crate::camera::Measurement;
 use crate::image_buffer::ThermalImage;
 
 use super::gmm::{BackgroundModel, GaussianMixtureModel};
+use super::point::{Point, PointTemperature};
 use super::settings::TrackerSettings;
 
 type GmmBackground = BackgroundModel<Vec<GaussianMixtureModel>>;
 type DistanceMap = HashMap<usize, HashMap<usize, f32>>;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-struct Point<T: Num> {
-    x: T,
-    y: T,
-}
-
-impl<T: Num> Point<T> {
-    fn new(x: T, y: T) -> Self {
-        Self { x, y }
-    }
-}
-
-impl Point<u32> {
-    fn pixel_number(&self, image_width: u32) -> u32 {
-        self.x + self.y * image_width
-    }
-}
-
-impl Point<f32> {
-    fn squared_distance(&self, other: Self) -> f32 {
-        (self.x - other.x).powi(2) + (self.y - other.y).powi(2)
-    }
-}
-
-impl<T: Num> From<Point<T>> for ImagePoint<T> {
-    fn from(pt: Point<T>) -> Self {
-        Self { x: pt.x, y: pt.y }
-    }
-}
-
-impl<T: Num> From<ImagePoint<T>> for Point<T> {
-    fn from(image_point: ImagePoint<T>) -> Self {
-        Self {
-            x: image_point.x,
-            y: image_point.y,
-        }
-    }
-}
 
 #[derive(Clone, Debug)]
 pub(crate) struct Tracker {
@@ -303,8 +263,6 @@ impl Sink<Measurement> for Tracker {
         Poll::Ready(Ok(()))
     }
 }
-
-type PointTemperature = (Point<u32>, f32);
 
 #[derive(Clone, Debug)]
 struct Object {
