@@ -115,8 +115,8 @@ impl Tracker {
                     let old_center = old_object.center();
                     let new_center = new_object.center();
                     debug!(
-                        old_object_center = ?old_center,
-                        new_object_center = ?new_center,
+                        old_object = %old_object.summary(),
+                        new_object = %new_object.summary(),
                         "Correlated objects"
                     );
                     let center_difference = old_center.squared_distance(new_center);
@@ -128,18 +128,18 @@ impl Tracker {
                     {
                         new_object.last_movement = old_object.last_movement;
                         new_object.is_person = old_object.is_person;
-                        debug!(object_center = ?new_center, "Ignoring movement for object")
+                        debug!(object = %new_object.summary(), "Ignoring movement for object")
                     } else {
                         // Conversely, if an object has moved, make sure it's marked as a person
                         new_object.is_person = true;
-                        debug!(object_center = ?new_center, "Marking object as person");
+                        debug!(object = %new_object.summary(), "Marking object as person");
                     }
                 }
                 (Some(old_object), None) => {
-                    debug!(object_center = ?old_object.center(), "Object no longer present");
+                    debug!(object = %old_object.summary(), "Object no longer present");
                 }
                 (None, Some(new_object)) => {
-                    debug!(object_center = ?new_object.center(), "New object visible, waiting for movement.");
+                    debug!(object = %new_object.summary(), "New object visible, waiting for movement.");
                 }
                 (None, None) => (),
             }
@@ -193,6 +193,9 @@ impl Tracker {
     #[instrument(level = "trace", skip(self, old_objects, new_objects))]
     fn correlate_objects(&self, old_objects: &[Object], new_objects: &[Object]) -> Vec<usize> {
         let distances = Self::calculate_distances(old_objects, new_objects);
+        if !distances.is_empty() {
+            trace!(?distances, "Object distances calculated");
+        }
         // Just brute force it. It's ugly, but there shouldn't be that many objects present at a
         // time (and the low resolution of the cameras also puts an upper limit on the complexity).
         let mut best: Option<(f32, Vec<usize>)> = None;
@@ -283,6 +286,17 @@ impl Object {
             last_movement: when,
             is_person: false,
         }
+    }
+
+    fn summary(&self) -> String {
+        let center = self.center();
+        format!(
+            "Point(center: ({:5.2}, {:5.2}), human: {:3}, last_movement: {:5.1}s ago)",
+            center.x,
+            center.y,
+            if self.is_person { "yes" } else { "no" },
+            self.last_movement.elapsed().as_secs_f32(),
+        )
     }
 
     fn len(&self) -> usize {
