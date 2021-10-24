@@ -20,7 +20,8 @@ armv7() {
 	echo "Building and packaging ARMv7 (hard float)"
 	TARGET_CLFAGS="-march=armv7-a+simd" cross build \
 		--release \
-		--target armv7-unknown-linux-gnueabihf
+		--target armv7-unknown-linux-gnueabihf \
+		--feature mozjpeg_simd
 	cargo deb \
 		--no-build \
 		--no-strip \
@@ -33,7 +34,8 @@ armv8() {
 	echo "Building and packaging 64-bit ARM"
 	cross build \
 		--release \
-		--target aarch64-unknown-linux-gnu
+		--target aarch64-unknown-linux-gnu \
+		--feature mozjpeg_simd
 	cargo deb \
 		--no-build \
 		--no-strip \
