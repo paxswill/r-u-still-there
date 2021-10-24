@@ -46,7 +46,7 @@ serde = { version = "1.0.130", features = ["derive", "rc"] }
 serde_json = "1.0.68"
 serde_repr = "0.1.7"
 sha2 = "0.9.8"
-tracing = "0.1"
+tracing = "0.1.29"
 tokio-rustls = "0.23.0"
 toml = "0.5.8"
 uuid = { version = "0.8.2", features = ["serde"] }
@@ -96,9 +96,9 @@ features = ["tokio", "std-future", "futures-03"]
 version = "0.2.5"
 
 [dependencies.tracing-subscriber]
-features = ["env-filter", "fmt", "ansi", "tracing-log", "chrono", "registry"]
+features = ["env-filter", "fmt", "ansi", "tracing-log", "local-time", "registry"]
 default-features = false
-version = "0.2"
+version = "0.3.0"
 
 [dependencies.warp]
 default-features = false
