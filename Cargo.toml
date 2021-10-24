@@ -27,7 +27,7 @@ hmac = "0.11.0"
 http = "0.2.5"
 i2cdev = "0.5.0"
 itertools = "0.10.1"
-imageproc = { version = "0.22.0", feautes = ["rayon"] }
+imageproc = { version = "0.22.0", features = ["rayon"] }
 lazy_static = "1.4.0"
 linux-embedded-hal = "0.3.1"
 lru = "0.7.0"
