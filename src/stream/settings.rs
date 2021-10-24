@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use num::integer::Integer;
+use num_integer::Integer;
 use serde::Deserialize;
 
 use std::net;
