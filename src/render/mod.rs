@@ -10,10 +10,7 @@ mod resize;
 mod settings;
 pub(crate) use settings::RenderSettings;
 
-#[cfg(feature = "render_fontdue")]
 mod cheese;
-#[cfg(feature = "render_svg")]
-mod svg;
 
 /// Control how the temperature of each pixel is displayed.
 #[derive(Clone, Copy, Debug, PartialEq)]

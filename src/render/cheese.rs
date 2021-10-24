@@ -89,7 +89,6 @@ pub(crate) struct FontdueRenderer {
     inner: Arc<Mutex<InnerRenderer>>,
 }
 
-#[cfg(feature = "render_fontdue")]
 impl FontdueRenderer {
     pub(crate) fn new() -> Self {
         Self {

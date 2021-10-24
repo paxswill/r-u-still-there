@@ -20,7 +20,7 @@ bytes = "1.0.1"
 colorous = "1.0.5"
 delegate = "0.5"
 embedded-hal = "0.2.5"
-fontdue = { version = "0.5.2", optional = true }
+fontdue = "0.6.2"
 hex = { version = "0.4", features = ["serde"] }
 hmac = "0.11"
 http = "0.2.4"
@@ -28,7 +28,7 @@ i2cdev = "0.4.4"
 imageproc = "0.22.0"
 lazy_static = "1.4.0"
 linux-embedded-hal = "0.3"
-lru = { version = "0.6.5", optional = true }
+lru = "0.7.0"
 mac_address = { version = "1.1", features = ["serde"] }
 machine-uid = "0.2"
 mlx9064x = "0.2.1"
@@ -41,21 +41,17 @@ parking_lot = { version = "0.11", optional = true }
 pin-project = "1"
 pin-utils = "0.1.0"
 resize = { version = "0.7.2", optional = true }
-resvg = { version = "0.14.0", optional = true }
 rgb = { version = "0.8.25", optional = true }
 rumqttc = "0.8"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = "1.0"
 serde_repr = "0.1"
 sha2 = "0.9"
-svg = { version = "0.9.1", optional = true }
-tiny-skia = { version = "0.5.0", optional = true }
 tracing = "0.1"
 tokio-rustls = "0.22"
 toml = "0.5"
 uuid = { version = "0.8", features = ["serde"] }
 url = { version = "2", features = ["serde"] }
-usvg = { version = "0.14.0", optional = true }
 # Note: keep this in sync with the version of webpki used by tokio-rustls. If
 # you don't, the build errors will be very confusing.
 webpki-roots = "0.21"
@@ -109,10 +105,8 @@ version = "0.3.1"
 [features]
 # Use mozjpeg by default. mozjpeg is the difference 10 FPS taking <50% CPU on a
 # Beaglebone and lagging because the CPU is pegged.
-default = ["mjpeg", "mozjpeg", "render_fontdue", "piston_resize"]
+default = ["mjpeg", "mozjpeg", "piston_resize"]
 mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
-render_svg = ["svg", "resvg", "tiny-skia", "usvg"]
-render_fontdue = ["fontdue", "lru"]
 # Enables recording the data read from cameras and later playing back that data.
 # Useful mainly for development purposes, so you don't need an actual camera
 # present as well as for benchmarking changes.
