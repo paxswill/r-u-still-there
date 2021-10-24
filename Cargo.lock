@@ -824,7 +824,7 @@ dependencies = [
  "color_quant",
  "jpeg-decoder",
  "num-iter",
- "num-rational 0.3.2",
+ "num-rational",
  "num-traits",
 ]
 
@@ -1650,7 +1650,7 @@ dependencies = [
  "mlx9064x",
  "mozjpeg",
  "ndarray",
- "num 0.4.0",
+ "num-integer",
  "num-traits",
  "parking_lot 0.11.2",
  "paste",
