@@ -32,7 +32,7 @@ lru = "0.7.0"
 mac_address = { version = "1.1.2", features = ["serde"] }
 machine-uid = "0.2.0"
 mlx9064x = "0.2.1"
-mozjpeg = { version = "0.9.1", optional = true }
+mozjpeg = { version = "0.9.1", optional = true, default-features = false }
 ndarray = "0.15.3"
 num-integer = "0.1.44"
 num-traits = "0.2.14"
@@ -114,6 +114,7 @@ mjpeg = ["hyper/stream", "tokio/sync", "tokio-stream/sync"]
 # present as well as for benchmarking changes.
 mock_camera = ["async-bincode", "bincode", "tokio/fs"]
 piston_resize = ["resize", "rgb", "parking_lot"]
+mozjpeg_simd = ["mozjpeg/with_simd"]
 
 [dev-dependencies]
 float-cmp = "0.9.0"
