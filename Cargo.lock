@@ -1655,7 +1655,6 @@ dependencies = [
  "parking_lot 0.11.2",
  "paste",
  "pin-project",
- "pin-utils",
  "resize",
  "rgb",
  "rumqttc",
