@@ -10,9 +10,9 @@ use tracing::{instrument, trace};
 
 use crate::camera::Measurement;
 use crate::image_buffer::ThermalImage;
-use crate::util::{BoxcarFilter, MovingAverage};
 use crate::temperature::TemperatureUnit;
 use crate::util::flatten_join_result;
+use crate::util::{BoxcarFilter, MovingAverage};
 
 use super::settings::{self, RenderSettings};
 

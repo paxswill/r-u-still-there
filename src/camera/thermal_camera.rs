@@ -9,8 +9,8 @@ use linux_embedded_hal::I2cdev;
 use tracing::{debug, trace};
 
 use crate::image_buffer;
-use crate::util::{BoxcarFilter, MovingAverage};
 use crate::temperature::Temperature;
+use crate::util::{BoxcarFilter, MovingAverage};
 
 // The direction the Y-axis points in a thermal image.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
