@@ -211,7 +211,7 @@ impl TryFrom<&MqttSettings> for rumqttc::MqttOptions {
                 // but not completely disable verification.
                 tls_config
                     .root_store
-                    .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+                    .add_server_trust_anchors(&webpki_roots_rumqttc::TLS_SERVER_ROOTS);
                 debug!(host = host_str, port = port, "connecting to MQTT over TLS");
                 options.set_transport(Transport::tls_with_config(tls_config.into()));
             }

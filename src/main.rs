@@ -98,7 +98,6 @@ impl Default for ExitCode {
 async fn inner_main() -> ExitCode {
     // Create an initial logging config, then update it if needed after the full configuration has
     // been merged.
-    // NOTE: This will need updating for tracing-subscriber v0.3.0
     let fmt_sub = tracing_fmt::Layer::default().with_thread_names(true);
     let env_filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("info"))
