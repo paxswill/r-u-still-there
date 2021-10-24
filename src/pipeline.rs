@@ -173,7 +173,9 @@ impl Pipeline {
                 .rendered_source
                 .uncounted_stream()
                 .then(|image| async move {
-                    let res = spawn_blocking(move || stream::encode_jpeg(&image)).await;
+                    let res = spawn_blocking(move || stream::encode_jpeg(&image))
+                        .map(flatten_join_result)
+                        .await;
                     // Map the JoinError to an anyhow::Error
                     res.map_err(|err| anyhow!("Error with JPEG encoding thread: {:?}", err))
                 });
