@@ -67,34 +67,38 @@ impl Camera {
                 temperature,
                 frame_delay,
             } = self.camera.measure()?;
-
-            // If the image returned from the camera is with the Y-Axis pointing up, or if the
-            // user has specified the image should be flipped, we need to flip the image it along
-            // the Y-axis.
-            if y_direction == YAxisDirection::Up || self.flip_vertical {
-                imageops::flip_vertical_in_place(&mut image);
-            }
-            // The rest of the basic image transformations
-            if self.flip_horizontal {
-                imageops::flip_horizontal_in_place(&mut image);
-            }
-            image = match self.rotation {
-                Rotation::Zero => image,
-                Rotation::Ninety => imageops::rotate90(&image),
-                Rotation::OneEighty => {
-                    imageops::rotate180_in_place(&mut image);
-                    image
+            // If the image has a NaN value in it, skip it
+            if image.iter().any(|temperature| temperature.is_nan()) {
+                warn!("Measured image has NaN, skipping");
+            } else {
+                // If the image returned from the camera is with the Y-Axis pointing up, or if the
+                // user has specified the image should be flipped, we need to flip the image it along
+                // the Y-axis.
+                if y_direction == YAxisDirection::Up || self.flip_vertical {
+                    imageops::flip_vertical_in_place(&mut image);
                 }
-                Rotation::TwoSeventy => imageops::rotate270(&image),
-            };
-            let channel_measurement = Measurement {
-                image: Arc::new(image),
-                temperature,
-            };
-            // Don't care if it fails or not, as failures are temporary.
-            #[allow(unused_must_use)]
-            {
-                self.measurement_channel.send(channel_measurement);
+                // The rest of the basic image transformations
+                if self.flip_horizontal {
+                    imageops::flip_horizontal_in_place(&mut image);
+                }
+                image = match self.rotation {
+                    Rotation::Zero => image,
+                    Rotation::Ninety => imageops::rotate90(&image),
+                    Rotation::OneEighty => {
+                        imageops::rotate180_in_place(&mut image);
+                        image
+                    }
+                    Rotation::TwoSeventy => imageops::rotate270(&image),
+                };
+                let channel_measurement = Measurement {
+                    image: Arc::new(image),
+                    temperature,
+                };
+                // Don't care if it fails or not, as failures are temporary.
+                #[allow(unused_must_use)]
+                {
+                    self.measurement_channel.send(channel_measurement);
+                }
             }
             trace!("Waiting {}us for the next frame", frame_delay.as_micros());
             thread_sleep(frame_delay);
