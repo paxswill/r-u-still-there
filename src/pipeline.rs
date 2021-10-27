@@ -216,10 +216,7 @@ impl Pipeline {
     }
 
     /// Create an occupancy tracker with the given settings and an expected frame duration.
-    async fn create_tracker(
-        &mut self,
-        settings: TrackerSettings,
-    ) -> anyhow::Result<()> {
+    async fn create_tracker(&mut self, settings: TrackerSettings) -> anyhow::Result<()> {
         let tracker = Tracker::new(&settings);
         let count = State::new_discoverable(
             Arc::clone(&self.mqtt_client),

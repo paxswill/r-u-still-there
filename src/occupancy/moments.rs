@@ -112,15 +112,21 @@ impl CentralMoments {
             // 20
             raw_moments[(2, 0)] - centroid.0 * raw_moments[(1, 0)],
             // 03
-            raw_moments[(0, 3)] - 3.0 * centroid.1 * raw_moments[(0, 2)] + 2.0 * centroid_2.1 * raw_moments[(0, 1)],
+            raw_moments[(0, 3)] - 3.0 * centroid.1 * raw_moments[(0, 2)]
+                + 2.0 * centroid_2.1 * raw_moments[(0, 1)],
             // 12
-            raw_moments[(1, 2)] - 2.0 * centroid.1 * raw_moments[(1, 1)] - centroid.0 * raw_moments[(0, 2)]
+            raw_moments[(1, 2)]
+                - 2.0 * centroid.1 * raw_moments[(1, 1)]
+                - centroid.0 * raw_moments[(0, 2)]
                 + 2.0 * centroid_2.1 * raw_moments[(1, 0)],
             // 21
-            raw_moments[(2, 1)] - 2.0 * centroid.0 * raw_moments[(1, 1)] - centroid.1 * raw_moments[(2, 0)]
+            raw_moments[(2, 1)]
+                - 2.0 * centroid.0 * raw_moments[(1, 1)]
+                - centroid.1 * raw_moments[(2, 0)]
                 + 2.0 * centroid_2.0 * raw_moments[(0, 1)],
             // 30
-            raw_moments[(3, 0)] - 3.0 * centroid.0 * raw_moments[(2, 0)] + 2.0 * centroid_2.0 * raw_moments[(1, 0)],
+            raw_moments[(3, 0)] - 3.0 * centroid.0 * raw_moments[(2, 0)]
+                + 2.0 * centroid_2.0 * raw_moments[(1, 0)],
         ];
         Self(central_moments)
     }
@@ -132,9 +138,7 @@ impl Index<(i32, i32)> for CentralMoments {
     fn index(&self, index: (i32, i32)) -> &Self::Output {
         match index {
             // 00 is mapped normally
-            (0, 0) => {
-                &self.0[0]
-            }
+            (0, 0) => &self.0[0],
             // 01 and 10 are defined as 0
             (1, 0) | (0, 1) => &0.0,
             index => {
@@ -160,7 +164,7 @@ impl ScaleInvariantMoments {
             .skip(3)
             .zip(
                 // Skip 1 to skip 00
-                central_moments.0.iter().skip(1)
+                central_moments.0.iter().skip(1),
             )
             .zip(scale_invariants.iter_mut())
             .for_each(|(((i, j), central_moment), scaled_moment)| {
@@ -182,7 +186,6 @@ impl Index<(i32, i32)> for ScaleInvariantMoments {
         &self.0[index]
     }
 }
-
 
 pub(super) fn hu_moments(point_temperatures: &[PointTemperature]) -> [f32; 7] {
     let raw_moments = RawMoments::new(point_temperatures);
