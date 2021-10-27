@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::{anyhow, Context as _};
 use structopt::StructOpt;
-use tracing::{debug, debug_span, error, instrument, trace, Instrument};
+use tracing::{debug, debug_span, error, instrument, trace, warn, Instrument};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Registry};
 
@@ -102,7 +102,41 @@ async fn inner_main() -> ExitCode {
     let env_filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("info"))
         .expect("'info' was not recognized as a valid log filter");
-    Registry::default().with(fmt_sub).with(env_filter).init();
+    let log_format = env::var("RUSTILLTHERE_LOG_FORMAT")
+        .unwrap_or("full".to_string())
+        .to_ascii_lowercase();
+    match log_format.as_str() {
+        "json" => {
+            Registry::default()
+                .with(fmt_sub.json())
+                .with(env_filter)
+                .init();
+        }
+        "pretty" => {
+            Registry::default()
+                .with(fmt_sub.pretty())
+                .with(env_filter)
+                .init();
+        }
+        "compact" => {
+            Registry::default()
+                .with(fmt_sub.compact())
+                .with(env_filter)
+                .init();
+        }
+        "full" => {
+            Registry::default().with(fmt_sub).with(env_filter).init();
+        }
+        _ => {
+            // If an unknown log format is given, use the default ("full") while also printing a
+            // warning once the logger is set up.
+            Registry::default().with(fmt_sub).with(env_filter).init();
+            warn!(
+                "Unknown log format '{}' (must be one of 'json', 'pretty', 'compact', or 'full' (default)",
+                log_format
+            );
+        }
+    }
     let span = debug_span!("setup");
     let config = {
         let _enter = span.enter();
