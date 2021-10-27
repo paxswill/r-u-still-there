@@ -98,7 +98,9 @@ impl Default for ExitCode {
 async fn inner_main() -> ExitCode {
     // Create an initial logging config, then update it if needed after the full configuration has
     // been merged.
-    let fmt_sub = tracing_fmt::Layer::default().with_thread_names(true);
+    let fmt_sub = tracing_fmt::Layer::default()
+        .with_thread_names(true)
+        .with_ansi(atty::is(atty::Stream::Stdout));
     let env_filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("info"))
         .expect("'info' was not recognized as a valid log filter");
