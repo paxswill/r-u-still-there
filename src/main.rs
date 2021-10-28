@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::anyhow;
 use structopt::StructOpt;
-use tracing::{debug, debug_span, error, instrument, trace, warn, Instrument};
+use tracing::{debug, error, info_span, instrument, trace, warn, Instrument};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Registry};
 
@@ -139,9 +139,9 @@ async fn inner_main() -> ExitCode {
             );
         }
     }
-    let span = debug_span!("setup");
+    let setup_span = info_span!("setup");
     let config = {
-        let _enter = span.enter();
+        let _enter = setup_span.enter();
         match create_config() {
             Err(err) => {
                 trace!("Full error chain: {:#?}", err);
@@ -162,14 +162,16 @@ async fn inner_main() -> ExitCode {
             }
         }
     };
-    let app = match Pipeline::new(config).instrument(span).await {
+    let config_span = info_span!("config");
+    let app = match Pipeline::new(config).instrument(config_span).await {
         Err(err) => {
             error!("Setup error: {:?}", err);
             return ExitCode::Setup;
         }
         Ok(app) => app,
     };
-    if let Err(err) = app.await {
+    let pipeline_span = info_span!("pipeline");
+    if let Err(err) = app.instrument(pipeline_span).await {
         error!("{:?}", err);
         ExitCode::Other
     } else {
