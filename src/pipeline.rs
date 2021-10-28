@@ -4,9 +4,7 @@ use futures::future::{Future, FutureExt, TryFutureExt};
 use futures::stream::{BoxStream, FuturesUnordered, Stream, StreamExt};
 use http::Response;
 use pin_project::pin_project;
-use rumqttc::{
-    AsyncClient, ConnectReturnCode, Event, LastWill, MqttOptions as RuMqttOptions, Packet, QoS,
-};
+use rumqttc::QoS;
 use tokio::sync::{oneshot, Mutex as AsyncMutex};
 use tokio::task::spawn_blocking;
 use tokio::time::Duration;
@@ -24,16 +22,13 @@ use std::task::{Context, Poll};
 use crate::camera::{Camera, CameraCommand, Measurement};
 use crate::image_buffer::BytesImage;
 use crate::mqtt::{
-    home_assistant as hass, serialize, MqttSettings, Occupancy, OccupancyCount, State, Status,
+    home_assistant as hass, MqttClient, MqttSender, MqttSettings, Occupancy, OccupancyCount, State,
 };
 use crate::occupancy::{Tracker, TrackerSettings};
 use crate::settings::Settings;
 use crate::util::{flatten_join_result, StreamExt as _};
 use crate::{render, spmc, stream};
 
-const MQTT_BASE_TOPIC: &str = "r-u-still-there";
-
-type MqttClient = Arc<AsyncMutex<AsyncClient>>;
 type ArcDevice = Arc<hass::Device>;
 type InnerTask = Pin<Box<dyn Future<Output = anyhow::Result<()>>>>;
 type TaskList = FuturesUnordered<InnerTask>;
@@ -43,11 +38,10 @@ type MeasurementStream<'a> = BoxStream<'a, Measurement>;
 pub(crate) struct Pipeline {
     camera_command_channel: mpsc::Sender<CameraCommand>,
     rendered_source: spmc::Sender<BytesImage>,
-    mqtt_client: MqttClient,
-    status: State<Status, ArcDevice>,
-    hass_device: ArcDevice,
-    // Keep the MQTT config around as we might need to use it when reconnecting.
+    mqtt_sender: MqttSender,
     mqtt_config: MqttSettings,
+    status_topic: String,
+    hass_device: ArcDevice,
     #[pin]
     tasks: TaskList,
 }
@@ -72,23 +66,26 @@ impl Pipeline {
             .context("Error requesting measurement stream from camera")?;
         let (rendered_source, render_task) =
             create_renderer(measurement_stream, config.render, frame_rate_limit)?;
+        let mqtt_client = MqttClient::new(&config.mqtt)?;
+        let mqtt_sender = mqtt_client.new_sender();
+        let status_topic = mqtt_client.status_topic().to_string();
+        let mqtt_client = tokio::spawn(mqtt_client.run_loop())
+            .map(flatten_join_result)
+            .boxed();
         // Once IntoIterator is implemented for arrays, this line can be simplified
-        let tasks: TaskList = std::array::IntoIter::new([render_task, camera_task]).collect();
+        let tasks: TaskList =
+            std::array::IntoIter::new([render_task, camera_task, mqtt_client]).collect();
         debug!("Opening connection to MQTT broker");
-        let (mqtt_client, loop_task, status) = connect_mqtt(&config.mqtt)
-            .await
-            .context("Error connecting to MQTT broker")?;
-        tasks.push(loop_task);
         // Create a device for HAss integration. It's still used even if the HAss messages aren;t
         // being sent.
         let hass_device = Self::create_device(&config.mqtt.name, config.mqtt.unique_id());
         let mut app = Self {
             camera_command_channel,
             rendered_source,
-            mqtt_client,
-            status,
-            hass_device,
+            mqtt_sender,
             mqtt_config: config.mqtt,
+            status_topic,
+            hass_device,
             tasks,
         };
         app.record_measurements(
@@ -218,16 +215,16 @@ impl Pipeline {
     /// Create an occupancy tracker with the given settings and an expected frame duration.
     async fn create_tracker(&mut self, settings: TrackerSettings) -> anyhow::Result<()> {
         let tracker = Tracker::new(&settings);
-        let count = State::new_discoverable(
-            Arc::clone(&self.mqtt_client),
+        let mut count = State::new_discoverable(
+            self.mqtt_sender.clone(),
             Arc::clone(&self.hass_device),
             &self.mqtt_config.base_topic,
             "count",
             true,
             QoS::AtLeastOnce,
         );
-        let occupied = State::new_discoverable(
-            Arc::clone(&self.mqtt_client),
+        let mut occupied = State::new_discoverable(
+            self.mqtt_sender.clone(),
             Arc::clone(&self.hass_device),
             &self.mqtt_config.base_topic,
             "occupied",
@@ -236,15 +233,15 @@ impl Pipeline {
         );
         if self.mqtt_config.home_assistant.enabled {
             count
-                .publish_home_assistant_discovery(
+                .publish_home_assistant_discovery::<usize>(
                     &self.mqtt_config.home_assistant.topic,
-                    self.status.topic(),
+                    &self.status_topic,
                 )
                 .await?;
             occupied
-                .publish_home_assistant_discovery(
+                .publish_home_assistant_discovery::<bool>(
                     &self.mqtt_config.home_assistant.topic,
-                    self.status.topic(),
+                    &self.status_topic,
                 )
                 .await?;
         }
@@ -286,8 +283,8 @@ impl Pipeline {
             .await?
             .instrument(info_span!("temperature_measurement"))
             .map(move |measurement| measurement.temperature.in_unit(&unit));
-        let state = State::<f32, _>::new_discoverable(
-            Arc::clone(&self.mqtt_client),
+        let state = State::new_discoverable(
+            self.mqtt_sender.clone(),
             Arc::clone(&self.hass_device),
             &self.mqtt_config.base_topic,
             "temperature",
@@ -295,16 +292,20 @@ impl Pipeline {
             QoS::AtLeastOnce,
         );
         if self.mqtt_config.home_assistant.enabled {
-            let mut config = state.discovery_config(self.status.topic())?;
+            let mut config = state
+                .discovery_config::<f32>(&self.status_topic)
+                .ok_or_else(|| {
+                    anyhow!("A discoverable state should have a discovery configuration")
+                })?;
             config.set_device_class(hass::AnalogSensorClass::Temperature);
             config.set_unit_of_measurement(Some(self.mqtt_config.home_assistant.unit.to_string()));
-            let config_topic = state.discovery_topic(&self.mqtt_config.home_assistant.topic)?;
+            let config_topic = state
+                .discovery_topic::<f32>(&self.mqtt_config.home_assistant.topic)
+                .ok_or_else(|| anyhow!("A discoverable state should have a discovery topic"))?;
             // Keep this message the same as the debug message in mqtt::state::State::publish_home_assistant_discovery
             debug!(?config, "Publishing Home Assistant discovery config");
-            self.mqtt_client
-                .lock()
-                .await
-                .publish(config_topic, QoS::AtLeastOnce, true, serialize(&config)?)
+            self.mqtt_sender
+                .enqueue_publish(config_topic, QoS::AtLeastOnce, &config, true)
                 .await?;
         }
         let temperature_sink = state.sink();
@@ -411,69 +412,4 @@ fn create_renderer(
         .forward(rendered_multiplexer.clone())
         .boxed();
     Ok((rendered_multiplexer, task))
-}
-
-const EVENT_LOOP_CAPACITY: usize = 20;
-
-async fn connect_mqtt(
-    settings: &MqttSettings,
-) -> anyhow::Result<(MqttClient, InnerTask, State<Status, ArcDevice>)> {
-    let base_topic = "r-u-still-there";
-    let status_topic = [MQTT_BASE_TOPIC, &settings.name, "status"].join("/");
-    let mut client_options = RuMqttOptions::try_from(settings)?;
-    client_options.set_last_will(LastWill::new(
-        &status_topic,
-        Status::Offline.to_string().as_bytes(),
-        QoS::AtLeastOnce,
-        true,
-    ));
-    let (client, mut eventloop) = AsyncClient::new(client_options, EVENT_LOOP_CAPACITY);
-    let client = Arc::new(AsyncMutex::new(client));
-    // Wait until we get a ConnAck packet from the broker before continuing with setup.
-    loop {
-        let event = eventloop.poll().await?;
-        if let Event::Incoming(Packet::ConnAck(conn_ack)) = event {
-            if conn_ack.code == ConnectReturnCode::Success {
-                debug!("Connected to MQTT broker");
-                break;
-            } else {
-                error!(response_code = ?conn_ack.code, "Connection to MQTT broker refused.");
-                return Err(anyhow!("Connection to MQTT broker refused"));
-            }
-        }
-    }
-    // Create a status State for use during setup.
-    let status = State::new(
-        Arc::clone(&client),
-        base_topic,
-        &settings.name,
-        "status",
-        true,
-        QoS::AtLeastOnce,
-    );
-    // This won't get actually sent to the broker until the loop task starts getting run (see
-    // below). Instead it gets added to the queue of messages to be sent.
-    status.publish(Status::Online).await?;
-    // Create a task to run the event loop
-    let loop_task: InnerTask = tokio::spawn(
-        async move {
-            loop {
-                match eventloop.poll().await.context("polling MQTT event loop") {
-                    Ok(event) => trace!(?event, "MQTT event processed"),
-                    Err(err) => {
-                        error!(error = ?err, "Error with MQTT connection");
-                        return Err(err);
-                    }
-                }
-            }
-            // This weird looking bit is a back-door type annotation for the return type of the
-            // async closure. It's unreachable, but necessary (for now).
-            #[allow(unreachable_code)]
-            Ok::<(), anyhow::Error>(())
-        }
-        .instrument(debug_span!("mqtt_event_loop")),
-    )
-    .map(flatten_join_result)
-    .boxed();
-    Ok((client, loop_task, status))
 }
