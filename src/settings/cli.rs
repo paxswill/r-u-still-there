@@ -310,6 +310,7 @@ mod test {
                 server: "mqtt://mqtt.invalid".parse().unwrap(),
                 keep_alive: Default::default(),
                 home_assistant: Default::default(),
+                base_topic: MqttSettings::default_base_topic(),
             },
         }
     }

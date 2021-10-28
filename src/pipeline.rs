@@ -221,7 +221,7 @@ impl Pipeline {
         let count = State::new_discoverable(
             Arc::clone(&self.mqtt_client),
             Arc::clone(&self.hass_device),
-            &MQTT_BASE_TOPIC,
+            &self.mqtt_config.base_topic,
             "count",
             true,
             QoS::AtLeastOnce,
@@ -229,7 +229,7 @@ impl Pipeline {
         let occupied = State::new_discoverable(
             Arc::clone(&self.mqtt_client),
             Arc::clone(&self.hass_device),
-            &MQTT_BASE_TOPIC,
+            &self.mqtt_config.base_topic,
             "occupied",
             true,
             QoS::AtLeastOnce,
@@ -289,7 +289,7 @@ impl Pipeline {
         let state = State::<f32, _>::new_discoverable(
             Arc::clone(&self.mqtt_client),
             Arc::clone(&self.hass_device),
-            &MQTT_BASE_TOPIC,
+            &self.mqtt_config.base_topic,
             "temperature",
             true,
             QoS::AtLeastOnce,

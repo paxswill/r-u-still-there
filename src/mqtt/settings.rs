@@ -55,6 +55,9 @@ pub(crate) struct MqttSettings {
     /// All the various Home Assistant settings.
     #[serde(default)]
     pub(crate) home_assistant: HomeAssistantSettings,
+
+    #[serde(default = "MqttSettings::default_base_topic")]
+    pub(crate) base_topic: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -125,6 +128,7 @@ impl MqttSettings {
             server: server.clone(),
             keep_alive: None,
             home_assistant: HomeAssistantSettings::default(),
+            base_topic: Self::default_base_topic(),
         }
     }
     /// Access the server URL.
@@ -174,6 +178,10 @@ impl MqttSettings {
                 uid
             }
         }
+    }
+
+    pub(crate) fn default_base_topic() -> String {
+        "r-u-still-there".to_string()
     }
 }
 
@@ -312,6 +320,7 @@ mod test {
             server: "mqtt://127.0.0.1".parse().unwrap(),
             keep_alive: None,
             home_assistant: HomeAssistantSettings::default(),
+            base_topic: MqttSettings::default_base_topic(),
         };
         assert_eq!(parsed, expected);
     }
