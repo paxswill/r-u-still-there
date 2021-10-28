@@ -192,7 +192,6 @@ impl GaussianMixtureModel {
                 // Drop `component` while keeping a copy of the weight around as we're about to
                 // reorder the vector of components by weight next.
                 let weight = component.weight;
-                drop(component);
                 // This component's weight has increased, so move it up in the list so that the
                 // list is still sorted.
                 let mut prev_index = index.saturating_sub(1);

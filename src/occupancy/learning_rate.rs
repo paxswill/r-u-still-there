@@ -26,7 +26,7 @@ impl LearningRate {
                 sample_count,
                 target_value,
             } => {
-                *sample_count = *sample_count + 1;
+                *sample_count += 1;
                 *target_value
             }
             LearningRate::Trained(_) => {

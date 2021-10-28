@@ -67,7 +67,7 @@ impl Tracker {
             model
         });
         let foreground: Vec<u8> = background
-            .background_probability::<Vec<f32>>(&image)
+            .background_probability::<Vec<f32>>(image)
             .into_iter()
             .map(|p| {
                 if p < self.settings.background_confidence_threshold {
@@ -163,9 +163,8 @@ impl Tracker {
         // Update the background model, save the new objects for the next frame and broadcast the
         // new count of persons in view.
         *old_objects = new_objects;
-        background.update(&image);
+        background.update(image);
         // Need to release locks before count() will work
-        drop(background);
         drop(background_option);
         drop(old_objects);
         let new_count = self.count();
@@ -306,7 +305,7 @@ impl Object {
         self.point_temperatures.len()
     }
 
-    fn points<'a>(&'a self) -> impl iter::ExactSizeIterator<Item = &'a Point<u32>> {
+    fn points(&self) -> impl iter::ExactSizeIterator<Item = &Point<u32>> {
         self.point_temperatures.iter().map(|(p, _)| p)
     }
 
