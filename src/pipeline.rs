@@ -10,7 +10,7 @@ use tokio::sync::{oneshot, Mutex as AsyncMutex};
 use tokio::task::spawn_blocking;
 use tokio::time::Duration;
 use tokio_stream::wrappers::{errors::BroadcastStreamRecvError, BroadcastStream};
-use tracing::{debug, debug_span, error, info, info_span, trace, trace_span, warn};
+use tracing::{debug, info, info_span, trace, trace_span, warn};
 use tracing_futures::Instrument;
 use warp::Filter;
 
@@ -122,7 +122,7 @@ impl Pipeline {
                 match broadcast_res {
                     Ok(measurement) => Some(measurement),
                     Err(BroadcastStreamRecvError::Lagged(lag_count)) => {
-                        warn!("Measurement sink lagging {} samples", lag_count);
+                        debug!("Measurement sink lagging {} samples", lag_count);
                         None
                     }
                 }
