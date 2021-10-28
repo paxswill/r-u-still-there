@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use anyhow::{anyhow, Context as _};
 use futures::future::{Future, FutureExt, TryFutureExt};
+use futures::ready;
 use futures::stream::{BoxStream, FuturesUnordered, Stream, StreamExt};
 use http::Response;
 use pin_project::pin_project;
@@ -369,21 +370,14 @@ impl Pipeline {
 impl Future for Pipeline {
     type Output = anyhow::Result<()>;
 
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
-        loop {
-            match self.as_mut().project().tasks.poll_next(cx) {
-                Poll::Pending => return Poll::Pending,
-                Poll::Ready(option) => match option {
-                    None => return Poll::Ready(Ok(())),
-                    Some(res) => {
-                        if let Err(err) = res {
-                            error!(error = ?err, "error in task");
-                            return Poll::Ready(Err(err));
-                        }
-                    }
-                },
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        Poll::Ready(loop {
+            if let Some(res) = ready!(this.tasks.as_mut().poll_next(cx)) {
+                debug!(result = ?res, "Pipeline terminating");
+                break res;
             }
-        }
+        })
     }
 }
 
