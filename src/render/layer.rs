@@ -37,9 +37,9 @@ impl ImageLayers {
             TemperatureDisplay::Disabled => future::ok(None).boxed(),
             // Look at the size of that...
             TemperatureDisplay::Absolute(unit) => {
-                let font_renderer = self.font_renderer.as_ref().ok_or(anyhow!(
-                    "Font renderer not created for displayed temperature units"
-                ))?;
+                let font_renderer = self.font_renderer.as_ref().ok_or_else(|| {
+                    anyhow!("Font renderer not created for displayed temperature units")
+                })?;
                 font_renderer
                     .render(self.grid_size, unit, measurement.clone())
                     .map(|text| Some(text).transpose())
@@ -66,9 +66,8 @@ impl ImageLayers {
         let width = background.width();
         let height = background.height();
         let buf = Bytes::from(background.into_raw());
-        BytesImage::from_raw(width, height, buf).ok_or(anyhow!(
-            "Creating BytesImage from flattened RGBA image failed"
-        ))
+        BytesImage::from_raw(width, height, buf)
+            .ok_or_else(|| anyhow!("Creating BytesImage from flattened RGBA image failed"))
     }
 }
 

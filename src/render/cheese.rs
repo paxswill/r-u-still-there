@@ -10,7 +10,6 @@ use fontdue::layout::{
 };
 use fontdue::{Font, FontSettings};
 use futures::FutureExt;
-use image::error::ImageResult;
 use image::imageops::overlay;
 use image::{GenericImage, GrayImage, ImageBuffer};
 use lru::LruCache;
@@ -117,7 +116,7 @@ impl font::FontRenderer for FontdueRenderer {
             temperatures
                 .enumerate_pixels()
                 // Map the temperature in Celsius to whatever the requested unit is.
-                .map(|(col, row, temperature_pixel)| {
+                .try_for_each(|(col, row, temperature_pixel)| {
                     let temperature = Temperature::Celsius(temperature_pixel.0[0]).as_unit(&units);
                     let mut cached_cell = inner.cache.get(&(temperature, grid_size));
                     if cached_cell.is_none() {
@@ -128,8 +127,7 @@ impl font::FontRenderer for FontdueRenderer {
                     }
                     let cell = cached_cell.unwrap();
                     full_mask.copy_from(cell, col * grid_size, row * grid_size)
-                })
-                .collect::<ImageResult<()>>()?;
+                })?;
             anyhow::Result::<GrayImage>::Ok(full_mask)
         })
         .map(flatten_join_result)

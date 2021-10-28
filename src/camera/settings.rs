@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt;
 use std::marker::PhantomData;
+#[cfg(feature = "mock_camera")]
 use std::path::PathBuf;
 
 use anyhow::Context as _;
@@ -107,7 +108,7 @@ impl<U> TryFromNum<U> {
         U: Deserialize<'de>,
     {
         let value: U = U::deserialize(deserializer)?;
-        T::try_from(value).map_err(|err| D::Error::custom(err))
+        T::try_from(value).map_err(D::Error::custom)
     }
 }
 
@@ -315,7 +316,7 @@ impl CameraSettings {
                             .allow_trailing_bytes();
                         while file.stream_position()? < file_size {
                             // Have to keep cloning as bincode_options would otherwise be consumed
-                            let frame = bincode_options.clone().deserialize_from(file.by_ref())?;
+                            let frame = bincode_options.deserialize_from(file.by_ref())?;
                             measurements.push(frame);
                         }
                         Ok(measurements)

@@ -277,7 +277,7 @@ impl Args {
 }
 
 fn empty_to_none(s: &str) -> Option<&str> {
-    if s == "" {
+    if s.is_empty() {
         None
     } else {
         Some(s)

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use anyhow::{anyhow, Context as _};
+use anyhow::anyhow;
 use structopt::StructOpt;
 use tracing::{debug, debug_span, error, instrument, trace, warn, Instrument};
 use tracing_subscriber::prelude::*;
@@ -105,7 +105,7 @@ async fn inner_main() -> ExitCode {
         .or_else(|_| EnvFilter::try_new("info"))
         .expect("'info' was not recognized as a valid log filter");
     let log_format = env::var("RUSTILLTHERE_LOG_FORMAT")
-        .unwrap_or("full".to_string())
+        .unwrap_or_else(|_| "full".to_string())
         .to_ascii_lowercase();
     match log_format.as_str() {
         "json" => {

@@ -119,8 +119,8 @@ impl Default for ImageColorMap {
 impl<'a> From<&'a RenderSettings> for ImageColorMap {
     fn from(settings: &'a RenderSettings) -> Self {
         Self::new(
-            settings.lower_limit.into(),
-            settings.upper_limit.into(),
+            settings.lower_limit,
+            settings.upper_limit,
             settings.colors.into(),
         )
     }
