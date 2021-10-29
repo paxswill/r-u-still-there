@@ -134,6 +134,16 @@ impl MqttClient {
                         {
                             self.connected.send(true);
                         }
+                        // Set the online status immediately after we connect.
+                        let mut sender = self.new_sender();
+                        sender
+                            .enqueue_publish(
+                                self.status_topic.clone(),
+                                QoS::AtLeastOnce,
+                                &Status::Online,
+                                true,
+                            )
+                            .await?;
                     } else {
                         error!(response_code = ?conn_ack.code, "Connection to MQTT broker refused.");
                         return Err(anyhow!("Connection to MQTT broker refused"));
