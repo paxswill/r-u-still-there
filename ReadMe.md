@@ -206,7 +206,7 @@ even have enough memory. Thankfully cross compilation is pretty easy with Rust.
 
 Whichever way you end up building the package, if you're compiling the a 32-bit
 ARM arhitecture you'll need to pass some extra flags through to the C compiler
-(replacing `cargo` with `cross` is using `cross`):
+(replacing `cargo` with `cross` as needed):
 ```shell
 # ARMv6, for Raspberry Pi 0 and 1
 TARGET_CFLAGS="-march=armv6+fp" cargo build --release --target arm-unknown-linux-musleabihf
@@ -216,12 +216,11 @@ TARGET_CFLAGS="-march=armv7-a+simd" cargo build --release --target armv7-unknown
 cargo build --release --target aarch64-unknown-linux-musl
 ```
 
-
 #### glibc
 
 The easiest way to cross-build for glibc targets I've found is with
-[`cross`][cross]. It just works, and is also how the packages are build (along
-with [`cargo-deb`][cargo-deb])
+[`cross`][cross]. It just works, and is also how the provided packages are built
+(along with [`cargo-deb`][cargo-deb]).
 
 [cross]: https://github.com/rust-embedded/cross
 #### musl static builds
@@ -232,7 +231,6 @@ nice little "performance boost" for free when using glibc for the packages.
 I've found [musl-cross-make][musl-cross-make] the easiest way to get a native
 cross-toolchain set up. Once they're installed and available in `$PATH`, you'll
 need to create `.cargo/config.toml` with contents similar to this:
-
 
 ```toml
 [target.arm-unknown-linux-musleabihf]
@@ -245,9 +243,6 @@ linker = "armv7-linux-musleabihf-gcc"
 linker = "aarch64-linux-musl-gcc"
 ```
 [musl-cross-make]: https://github.com/richfelker/musl-cross-make
-
-You also need to provide come extra options to the C compiler for the 32-bit ARM
-architectures:
 
 #### Packaging
 

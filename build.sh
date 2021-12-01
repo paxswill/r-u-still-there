@@ -8,7 +8,7 @@ armv6 () {
 	TARGET_CLFAGS="-march=armv6+fp" cross build \
 		--release \
 		--target arm-unknown-linux-gnueabihf
-	cargo deb \
+	CARGO_TARGET_DIR="./target" cargo deb \
 		--no-build \
 		--no-strip \
 		--variant v6 \
@@ -21,8 +21,8 @@ armv7() {
 	TARGET_CLFAGS="-march=armv7-a+simd" cross build \
 		--release \
 		--target armv7-unknown-linux-gnueabihf \
-		--feature mozjpeg_simd
-	cargo deb \
+		--features mozjpeg_simd
+	CARGO_TARGET_DIR="./target" cargo deb \
 		--no-build \
 		--no-strip \
 		--variant v7 \
@@ -35,7 +35,8 @@ armv8() {
 	cross build \
 		--release \
 		--target aarch64-unknown-linux-gnu \
-		--feature mozjpeg_simd
+		--features mozjpeg_simd
+	CARGO_TARGET_DIR="./target" cargo deb \
 	cargo deb \
 		--no-build \
 		--no-strip \
