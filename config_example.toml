@@ -52,6 +52,10 @@ address = 0x69
 # The allowed values are either "chess" or "interleave" (or "interlace").
 # mode = "chess"
 
+# If set, the thermometer temperature will be rounded to the given value. For
+# example, `round_temperature = 0.5` would round to the nearest half degree.
+#round_temperature
+
 [streams]
 # The address to bind to for serving MJPEG streams. The default isn't very
 # useful, as it is only available on the device itself. If you want the MJPEG

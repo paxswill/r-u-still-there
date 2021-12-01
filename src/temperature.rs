@@ -120,7 +120,7 @@ where
         }
     }
 
-    fn value(&self) -> T {
+    pub fn value(&self) -> T {
         let value = match self {
             Self::Celsius(c) => *c,
             Self::Fahrenheit(f) => *f,

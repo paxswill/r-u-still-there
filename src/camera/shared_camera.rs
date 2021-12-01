@@ -7,6 +7,8 @@ use std::convert::TryFrom;
 use std::sync::{mpsc, Arc};
 use std::thread::sleep as thread_sleep;
 
+use crate::temperature::Temperature;
+
 use super::measurement::Measurement;
 use super::settings::{CameraSettings, Rotation};
 use super::thermal_camera::{ThermalCamera, YAxisDirection};
@@ -30,6 +32,7 @@ pub(crate) struct Camera {
     rotation: Rotation,
     flip_vertical: bool,
     flip_horizontal: bool,
+    round_temperature: Option<f32>,
     measurement_channel: broadcast::Sender<Measurement>,
     command_receiver: mpsc::Receiver<CameraCommand>,
     command_sender: mpsc::Sender<CameraCommand>,
@@ -67,7 +70,13 @@ impl Camera {
                 temperature,
                 frame_delay,
             } = self.camera.measure()?;
-
+            let temperature = self.round_temperature.map_or(temperature, |precision| {
+                let new_value = (temperature.value() / precision).round() * precision;
+                match temperature {
+                    Temperature::Celsius(_) => Temperature::Celsius(new_value),
+                    Temperature::Fahrenheit(_) => Temperature::Fahrenheit(new_value),
+                }
+            });
             // If the image returned from the camera is with the Y-Axis pointing up, or if the
             // user has specified the image should be flipped, we need to flip the image it along
             // the Y-axis.
@@ -119,6 +128,7 @@ impl TryFrom<&CameraSettings> for Camera {
             rotation: settings.rotation(),
             flip_vertical: settings.flip_vertical(),
             flip_horizontal: settings.flip_horizontal(),
+            round_temperature: settings.round_temperature(),
             measurement_channel,
             command_receiver,
             command_sender,

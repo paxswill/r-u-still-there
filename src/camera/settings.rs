@@ -66,6 +66,9 @@ pub(crate) struct CommonCameraSettings {
     #[serde(default)]
     flip_vertical: Flip,
 
+    #[serde(default)]
+    round_temperature: Option<f32>,
+
     // By annotating this field with 'flatten', any unknown keys will be collected into this map.
     #[serde(default, flatten)]
     extra: ExtraMap,
@@ -231,6 +234,10 @@ impl CameraSettings {
     /// Whether the image should be flipped vertically.
     pub(crate) fn flip_vertical(&self) -> bool {
         self.common().flip_vertical.into()
+    }
+
+    pub(crate) fn round_temperature(&self) -> Option<f32> {
+        self.common().round_temperature
     }
 
     /// Access any unprocessed keys from the configuration.
@@ -495,6 +502,7 @@ mod de_tests {
                 rotation: Rotation::OneEighty,
                 flip_horizontal: true.into(),
                 flip_vertical: true.into(),
+                round_temperature: None,
                 extra: ExtraMap::default(),
             },
         };
