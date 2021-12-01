@@ -11,6 +11,7 @@ r-u-still-there (0.3.0) UNRELEASED; urgency=medium
     file.
   * MQTT connection handling improved, specifically when reconnecting.
   * The MQTT base topic is now configurable.
+  * Melexis cameras can now be run at 0.5 FPS.
 
  -- Will Ross <paxswill@paxswill.com>  Thu, 26 Aug 2021 15:33:30 -0400
 
