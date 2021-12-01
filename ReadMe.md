@@ -40,9 +40,22 @@ instructions and faster speeds on newer processors makes a noticable difference.
 
 ### Cameras
 
-Currently (as of v0.1.0) just the Panasonic GridEYE is supported, but I'm
-planning on adding support for Melexis MLX90640 and MLX90641 as well as
-Omron D6T sensors in the future.
+Currently (as of v0.2.0) three models of thermal camera are supported:
+
+| Camera | Resolution | Frame Rate | Field of View |
+|:---:|:---:|:---:|:---:|
+| Panasonic GridEYE | 8×8 | 1 or 10 FPS | 60°×60° |
+| Melexis MLX90640 | 32×24 | 0.5, 1, 2, 4, 8, 16, or 32 FPS | 55°×35° *or* 110°×75° |
+| Melexis MLX90641 | 16×12 | 0.5, 1, 2, 4, 8, 16, 32 or 64 FPS | 55°×35° *or* 110°×75° |
+
+A more powerful CPU is recommended for the Melexis cameras, especially if you
+intent on running them at one of the higher refresh rates. Also note that
+running the high refresh rates for those cameras requires a 400kHz I²C bus speed
+(and possibly other configuration changes). See the documentation from the
+[camera driver][mlx9064x-frame-rate] for more details.
+pattern.
+
+[mlx9064x-frame-rate]: https://docs.rs/mlx9064x/latest/mlx9064x/register/enum.FrameRate.html
 
 ## Installation
 
