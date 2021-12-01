@@ -2,8 +2,8 @@
 use futures::{Sink, Stream};
 use image::{ImageBuffer, Luma};
 use imageproc::region_labelling::{connected_components, Connectivity};
-use itertools::Itertools;
 use rayon::prelude::*;
+use rstar::{Envelope, PointDistance, RTree, RTreeObject};
 use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
 use tracing::{debug, instrument, trace};
@@ -25,13 +25,12 @@ use super::point::{Point, PointTemperature};
 use super::settings::TrackerSettings;
 
 type GmmBackground = BackgroundModel<Vec<GaussianMixtureModel>>;
-type DistanceMap = HashMap<usize, HashMap<usize, f32>>;
 
 #[derive(Clone, Debug)]
 pub(crate) struct Tracker {
     settings: TrackerSettings,
     background: Arc<RwLock<Option<GmmBackground>>>,
-    objects: Arc<RwLock<Vec<Object>>>,
+    objects: Arc<RwLock<RTree<Object>>>,
     count_sender: Arc<watch::Sender<usize>>,
     count_receiver: watch::Receiver<usize>,
 }
@@ -43,7 +42,7 @@ impl Tracker {
         Self {
             settings: *settings,
             background: Arc::new(RwLock::new(None)),
-            objects: Arc::new(RwLock::new(Vec::default())),
+            objects: Arc::new(RwLock::new(RTree::default())),
             count_sender: Arc::new(sender),
             count_receiver: receiver,
         }
@@ -94,7 +93,7 @@ impl Tracker {
                 .push((Point::new(x, y), temperature));
         }
         let now = Instant::now();
-        let mut new_objects: Vec<Object> = object_points
+        let new_objects: Vec<Object> = object_points
             .into_values()
             .filter_map(|points| {
                 // Filter out any blobs smaller than the minimum size
@@ -106,44 +105,9 @@ impl Tracker {
                 }
             })
             .collect();
+        let mut new_objects: RTree<Object> = RTree::bulk_load(new_objects);
         let mut old_objects = self.objects.write().unwrap();
-        let matched_objects = self.correlate_objects(&old_objects, &new_objects);
-        for (old_index, new_index) in matched_objects.into_iter().enumerate() {
-            let object_pair = (old_objects.get(old_index), new_objects.get_mut(new_index));
-            match object_pair {
-                (Some(old_object), Some(new_object)) => {
-                    let old_center = old_object.center();
-                    let new_center = new_object.center();
-                    debug!(
-                        old_object = %old_object.summary(),
-                        new_object = %new_object.summary(),
-                        "Correlated objects"
-                    );
-                    let center_difference = old_center.squared_distance(new_center);
-                    const CENTER_CLOSE: f32 = 1.0;
-                    let overlap_coefficient = old_object.overlap_coefficient(new_object);
-                    const OVERLAP_THRESHOLD: f32 = 0.9;
-                    // If the object hasn't moved, keep the old update time and person marking
-                    if center_difference < CENTER_CLOSE && overlap_coefficient >= OVERLAP_THRESHOLD
-                    {
-                        new_object.last_movement = old_object.last_movement;
-                        new_object.is_person = old_object.is_person;
-                        debug!(object = %new_object.summary(), "Ignoring movement for object")
-                    } else {
-                        // Conversely, if an object has moved, make sure it's marked as a person
-                        new_object.is_person = true;
-                        debug!(object = %new_object.summary(), "Marking object as person");
-                    }
-                }
-                (Some(old_object), None) => {
-                    debug!(object = %old_object.summary(), "Object no longer present");
-                }
-                (None, Some(new_object)) => {
-                    debug!(object = %new_object.summary(), "New object visible, waiting for movement.");
-                }
-                (None, None) => (),
-            }
-        }
+        self.update_tracked_objects(&mut old_objects, &mut new_objects);
         // Mark any new people, and unmark any objects that have been stationary too long.
         background.thaw_all();
         let image_width = image.width();
@@ -174,66 +138,52 @@ impl Tracker {
             .expect("There's a receiver also stored on the Tracker, so all sends should succeed.");
     }
 
-    fn calculate_distances(old_objects: &[Object], new_objects: &[Object]) -> DistanceMap {
-        old_objects
-            .iter()
-            .enumerate()
-            .map(|(old_index, old)| {
-                let distances_to_new = new_objects
-                    .iter()
-                    .enumerate()
-                    .map(|(new_index, new)| {
-                        let distance = old.squared_distance(new);
-                        (new_index, distance)
-                    })
-                    .collect();
-                (old_index, distances_to_new)
-            })
-            .collect()
-    }
-
-    #[instrument(level = "trace", skip(self, old_objects, new_objects))]
-    fn correlate_objects(&self, old_objects: &[Object], new_objects: &[Object]) -> Vec<usize> {
-        let distances = Self::calculate_distances(old_objects, new_objects);
-        if !distances.is_empty() {
-            trace!(?distances, "Object distances calculated");
-        }
-        // Just brute force it. It's ugly, but there shouldn't be that many objects present at a
-        // time (and the low resolution of the cameras also puts an upper limit on the complexity).
-        let mut best: Option<(f32, Vec<usize>)> = None;
-        let mut previous_combo: Option<Vec<usize>> = None;
-        let total_combo_length = old_objects.len() + new_objects.len();
-        let max_movement = self.settings.maximum_movement;
-        'combo_loop: for combo_indices in (0..total_combo_length).permutations(total_combo_length) {
-            // Skip repeated combos (from None being skipped)
-            if previous_combo.as_ref() == Some(&combo_indices) {
-                continue;
-            } else {
-                // Keep the previous combo indices around for the next loop iteration
-                previous_combo = Some(combo_indices.clone());
-            }
-            let mut distance_sum = 0.0;
-            for (old_index, new_index) in combo_indices.iter().enumerate() {
-                match (old_objects.get(old_index), new_objects.get(*new_index)) {
-                    (Some(_), Some(_)) => {
-                        let distance = distances[&old_index][new_index];
-                        if distance > max_movement {
-                            continue 'combo_loop;
-                        }
-                        distance_sum += distance;
+    #[instrument(
+        name = "object_tracking",
+        level = "debug",
+        skip(self, old_objects, new_objects)
+    )]
+    fn update_tracked_objects(
+        &self,
+        old_objects: &mut RTree<Object>,
+        new_objects: &mut RTree<Object>,
+    ) {
+        let max_distance = self.settings.maximum_movement;
+        for new_object in new_objects.iter_mut() {
+            let neighbor = old_objects.pop_nearest_neighbor(&new_object.hu_moments);
+            if let Some(old_object) = neighbor {
+                let neighbor_distance =
+                    new_object.distance_2_if_less_or_equal(&old_object.hu_moments, max_distance);
+                if let Some(distance_2) = neighbor_distance {
+                    debug!(
+                        old_object = %old_object.summary(),
+                        new_object = %new_object.summary(),
+                        %distance_2,
+                        "Correlated objects"
+                    );
+                    let old_center = old_object.center();
+                    let new_center = new_object.center();
+                    let center_difference = old_center.squared_distance(new_center);
+                    const CENTER_CLOSE: f32 = 1.0;
+                    let overlap_coefficient = old_object.overlap_coefficient(new_object);
+                    const OVERLAP_THRESHOLD: f32 = 0.9;
+                    // If the object hasn't moved, keep the old update time and person marking
+                    if center_difference < CENTER_CLOSE && overlap_coefficient >= OVERLAP_THRESHOLD
+                    {
+                        new_object.last_movement = old_object.last_movement;
+                        new_object.is_person = old_object.is_person;
+                        debug!(object = %new_object.summary(), "Ignoring movement for object")
+                    } else {
+                        // Conversely, if an object has moved, make sure it's marked as a person
+                        new_object.is_person = true;
+                        debug!(object = %new_object.summary(), "Marking object as person");
                     }
-                    _ => distance_sum += max_movement,
+                } else {
+                    // Put the old object back in if it's too far away.
+                    old_objects.insert(old_object);
                 }
             }
-            let average_distance = distance_sum / total_combo_length as f32;
-            let current_best = best.as_ref().map(|(d, _)| *d).unwrap_or(f32::INFINITY);
-            if average_distance < current_best {
-                trace!(new_score = ?average_distance, "Found new lowest score");
-                best = Some((average_distance, combo_indices));
-            }
         }
-        best.map(|(_, mapping)| mapping.into_iter().collect())
-            .unwrap_or_default()
     }
 
     pub(crate) fn count_stream(&self) -> impl Stream<Item = usize> {
@@ -370,6 +320,36 @@ impl Object {
         let intersection = this.intersection(&that).count();
         let denom = this.len().min(that.len());
         intersection as f32 / denom as f32
+    }
+}
+
+impl RTreeObject for Object {
+    type Envelope = rstar::AABB<[f32; 7]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        rstar::AABB::from_point(self.hu_moments)
+    }
+}
+
+impl PointDistance for Object {
+    fn distance_2(
+        &self,
+        point: &<Self::Envelope as Envelope>::Point,
+    ) -> <<Self::Envelope as Envelope>::Point as rstar::Point>::Scalar {
+        self.hu_moments.distance_2(point)
+    }
+
+    fn contains_point(&self, point: &<Self::Envelope as Envelope>::Point) -> bool {
+        self.hu_moments.contains_point(point)
+    }
+
+    fn distance_2_if_less_or_equal(
+        &self,
+        point: &<Self::Envelope as Envelope>::Point,
+        max_distance_2: <<Self::Envelope as Envelope>::Point as rstar::Point>::Scalar,
+    ) -> Option<<<Self::Envelope as Envelope>::Point as rstar::Point>::Scalar> {
+        self.hu_moments
+            .distance_2_if_less_or_equal(point, max_distance_2)
     }
 }
 
