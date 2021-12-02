@@ -234,13 +234,13 @@ impl Pipeline {
         );
         if self.mqtt_config.home_assistant.enabled {
             count
-                .publish_home_assistant_discovery::<usize>(
+                .publish_home_assistant_discovery::<OccupancyCount>(
                     &self.mqtt_config.home_assistant.topic,
                     &self.status_topic,
                 )
                 .await?;
             occupied
-                .publish_home_assistant_discovery::<bool>(
+                .publish_home_assistant_discovery::<Occupancy>(
                     &self.mqtt_config.home_assistant.topic,
                     &self.status_topic,
                 )
