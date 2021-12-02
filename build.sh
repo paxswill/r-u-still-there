@@ -5,7 +5,7 @@ set -x
 
 armv6 () {
 	echo "Building and packaging ARMv6 (hard float)"
-	TARGET_CLFAGS="-march=armv6+fp" cross build \
+	TARGET_CFLAGS="-march=armv6+fp" cross build \
 		--release \
 		--target arm-unknown-linux-gnueabihf
 	cargo deb \
@@ -18,7 +18,11 @@ armv6 () {
 
 armv7() {
 	echo "Building and packaging ARMv7 (hard float)"
-	TARGET_CLFAGS="-march=armv7-a+simd" cross build \
+	# cross 0.21 has *ancient* versions fo GCC for the
+	# armv7-unknown-linux-gnueabihf docker image (4.6.2) so we need to use an
+	# older way to use neon instructions. If/when the images are upgraded, just
+	# `-march=armv7-a+simd` can be used.
+	TARGET_CFLAGS="-march=armv7-a -mfpu=neon" cross build \
 		--release \
 		--target armv7-unknown-linux-gnueabihf \
 		--feature mozjpeg_simd
