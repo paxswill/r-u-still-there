@@ -3,14 +3,13 @@ use serde::Deserialize;
 
 mod cli;
 pub(crate) mod gradient;
-mod tracker;
 
 use crate::camera::CameraSettings;
 use crate::mqtt::MqttSettings;
+use crate::occupancy::TrackerSettings;
 use crate::render::RenderSettings;
 use crate::stream::StreamSettings;
 pub(crate) use cli::Args;
-pub(crate) use tracker::TrackerSettings;
 
 #[derive(Debug, Deserialize, PartialEq)]
 pub(crate) struct Settings {

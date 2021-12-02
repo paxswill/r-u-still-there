@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use anyhow::{anyhow, Context as _};
+use anyhow::anyhow;
 use structopt::StructOpt;
-use tracing::{debug, debug_span, error, instrument, trace, Instrument};
+use tracing::{debug, error, info_span, instrument, trace, warn, Instrument};
+use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{fmt as tracing_fmt, EnvFilter, Registry};
 
@@ -95,17 +96,71 @@ impl Default for ExitCode {
     }
 }
 
-async fn inner_main() -> ExitCode {
+fn set_up_logging() {
+    // Not handling combined span flags. The only handled names are the (lowercased) names of named
+    // FmtSpan constants, so I expect the most used values to be "active", "full", and "none".
+    let log_spans = env::var("RUSTILLTHERE_LOG_SPANS").map(|s| s.to_ascii_lowercase());
+    let span_events = match log_spans.as_deref() {
+        Ok("new") => FmtSpan::NEW,
+        Ok("enter") => FmtSpan::ENTER,
+        Ok("exit") => FmtSpan::EXIT,
+        Ok("close") => FmtSpan::CLOSE,
+        Ok("active") => FmtSpan::ACTIVE,
+        Ok("full") => FmtSpan::FULL,
+        // "none" as well as anything else
+        _ => FmtSpan::NONE,
+    };
     // Create an initial logging config, then update it if needed after the full configuration has
     // been merged.
-    let fmt_sub = tracing_fmt::Layer::default().with_thread_names(true);
+    let fmt_sub = tracing_fmt::Layer::default()
+        .with_thread_names(true)
+        .with_ansi(atty::is(atty::Stream::Stdout))
+        .with_span_events(span_events);
     let env_filter = EnvFilter::try_from_default_env()
         .or_else(|_| EnvFilter::try_new("info"))
         .expect("'info' was not recognized as a valid log filter");
-    Registry::default().with(fmt_sub).with(env_filter).init();
-    let span = debug_span!("setup");
+    let log_format = env::var("RUSTILLTHERE_LOG_FORMAT")
+        .unwrap_or_else(|_| "full".to_string())
+        .to_ascii_lowercase();
+    match log_format.as_str() {
+        "json" => {
+            Registry::default()
+                .with(fmt_sub.json())
+                .with(env_filter)
+                .init();
+        }
+        "pretty" => {
+            Registry::default()
+                .with(fmt_sub.pretty())
+                .with(env_filter)
+                .init();
+        }
+        "compact" => {
+            Registry::default()
+                .with(fmt_sub.compact())
+                .with(env_filter)
+                .init();
+        }
+        "full" => {
+            Registry::default().with(fmt_sub).with(env_filter).init();
+        }
+        _ => {
+            // If an unknown log format is given, use the default ("full") while also printing a
+            // warning once the logger is set up.
+            Registry::default().with(fmt_sub).with(env_filter).init();
+            warn!(
+                "Unknown log format '{}' (must be one of 'json', 'pretty', 'compact', or 'full' (default)",
+                log_format
+            );
+        }
+    };
+}
+
+async fn inner_main() -> ExitCode {
+    set_up_logging();
+    let setup_span = info_span!("setup");
     let config = {
-        let _enter = span.enter();
+        let _enter = setup_span.enter();
         match create_config() {
             Err(err) => {
                 trace!("Full error chain: {:#?}", err);
@@ -126,14 +181,16 @@ async fn inner_main() -> ExitCode {
             }
         }
     };
-    let app = match Pipeline::new(config).instrument(span).await {
+    let config_span = info_span!("config");
+    let app = match Pipeline::new(config).instrument(config_span).await {
         Err(err) => {
             error!("Setup error: {:?}", err);
             return ExitCode::Setup;
         }
         Ok(app) => app,
     };
-    if let Err(err) = app.await {
+    let pipeline_span = info_span!("pipeline");
+    if let Err(err) = app.instrument(pipeline_span).await {
         error!("{:?}", err);
         ExitCode::Other
     } else {

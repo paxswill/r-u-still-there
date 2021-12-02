@@ -161,10 +161,6 @@ macro_rules! merge_arg {
         };
         merge_arg!($root, Boolean, arg_value, $( $field ),+);
     };
-    ($root:tt, Gradient, $arg:expr, $($field:literal),+) => {
-        // This is hacky, but "works"
-        let gradient_name = std::any::type_name::<
-    };
     ($root:tt, String, $arg:expr, $($field:literal),+) => {
         if let Some(arg_member) = &$arg {
             let fields = [$( $field ),+ ];
@@ -173,7 +169,6 @@ macro_rules! merge_arg {
             let (parent_fields, leaf_field) = fields.split_at(fields.len() - 1);
             let leaf_field = leaf_field[0];
             let mut parent_table = &mut $root;
-
             for field in parent_fields {
                 parent_table = parent_table.entry(*field)
                     .or_insert_with(|| Value::Table(Table::default()))
@@ -194,7 +189,6 @@ macro_rules! merge_arg {
             let (parent_fields, leaf_field) = fields.split_at(fields.len() - 1);
             let leaf_field = leaf_field[0];
             let mut parent_table = &mut $root;
-
             for field in parent_fields {
                 parent_table = parent_table.entry(*field)
                     .or_insert_with(|| Value::Table(Table::default()))
@@ -283,7 +277,7 @@ impl Args {
 }
 
 fn empty_to_none(s: &str) -> Option<&str> {
-    if s == "" {
+    if s.is_empty() {
         None
     } else {
         Some(s)
@@ -294,8 +288,7 @@ fn empty_to_none(s: &str) -> Option<&str> {
 mod test {
     use crate::camera::{Bus, CameraSettings};
     use crate::mqtt::MqttSettings;
-    use crate::occupancy::Threshold;
-    use crate::temperature::Temperature;
+    use crate::temperature::{Temperature, TemperatureUnit};
 
     use super::{Args, Settings};
 
@@ -317,6 +310,7 @@ mod test {
                 server: "mqtt://mqtt.invalid".parse().unwrap(),
                 keep_alive: Default::default(),
                 home_assistant: Default::default(),
+                base_topic: MqttSettings::default_base_topic(),
             },
         }
     }
@@ -487,7 +481,6 @@ mod test {
         [render]
         grid_size = 42
         [tracker]
-        threshold = 7
         [mqtt]
         name = "Testing Name"
         server = "mqtt://mqtt.invalid"
@@ -497,9 +490,28 @@ mod test {
         let mut expected = expected_config();
         expected.streams.mjpeg.enabled = true;
         expected.render.grid_size = 42;
-        expected.tracker.threshold = Threshold::Static(Temperature::Celsius(7f32));
         expected.mqtt.home_assistant.topic = "testing_topic".to_string();
         let config: Settings = toml::from_str(source)?;
+        assert_eq!(config, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn cli_arg_units() -> anyhow::Result<()> {
+        let args = Args {
+            // Minimum required arguments here
+            camera_kind: Some("grideye".to_string()),
+            i2c_address: Some(0x68),
+            i2c_bus: Some(Bus::Number(9)),
+            mqtt_name: Some("Testing Name".to_string()),
+            mqtt_server: Some("mqtt://mqtt.invalid".parse().unwrap()),
+            // Explicit units given here
+            temperature_units: Some(TemperatureUnit::Fahrenheit),
+            ..Args::default()
+        };
+        let config = args.apply_to_config_str(&"")?;
+        let mut expected = expected_config();
+        expected.render.units = Some(TemperatureUnit::Fahrenheit);
         assert_eq!(config, expected);
         Ok(())
     }

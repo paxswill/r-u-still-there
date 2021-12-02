@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-mod threshold;
+mod gmm;
+mod learning_rate;
+mod moments;
+mod point;
+mod settings;
 mod tracker;
 
-pub(crate) use threshold::Threshold;
+pub(crate) use settings::TrackerSettings;
 pub(crate) use tracker::Tracker;

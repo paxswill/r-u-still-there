@@ -176,8 +176,7 @@ impl<'de> Deserialize<'de> for MeasurementData {
             }
         }
 
-        const FIELDS: &'static [&'static str] =
-            &["values", "width", "height", "temperature", "delay"];
+        const FIELDS: &[&str] = &["values", "width", "height", "temperature", "delay"];
         deserializer.deserialize_struct("MeasurementData", FIELDS, DataVisitor)
     }
 }
@@ -267,7 +266,7 @@ impl ThermalCamera for MockCamera {
         let index = self
             .index
             .next()
-            .ok_or(anyhow!("No more measurements in record"))?;
+            .ok_or_else(|| anyhow!("No more measurements in record"))?;
         let data = self.measurements[index].clone();
         // When we loop, the first delay is 0. Instead, just repeat the previous delay. For the
         // very first frame, the delay *will* be zero, as the initial value for `last_delay` is
@@ -287,7 +286,7 @@ impl ThermalCamera for MockCamera {
             arc.as_ref().clone()
         });
         Ok(ThermalMeasurement {
-            image: image,
+            image,
             y_direction: YAxisDirection::Down,
             temperature: data.measurement.temperature,
             frame_delay: scaled_delay,

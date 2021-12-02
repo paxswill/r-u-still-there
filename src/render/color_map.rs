@@ -12,7 +12,7 @@ use crate::camera::Measurement;
 use crate::image_buffer::ThermalImage;
 use crate::temperature::TemperatureUnit;
 use crate::util::flatten_join_result;
-use crate::util::{BoxcarFilter, MovingAverage};
+use crate::util::{Filter, MovingAverage};
 
 use super::settings::{self, RenderSettings};
 
@@ -22,7 +22,7 @@ const DYNAMIC_AVERAGE_NUM: usize = 10;
 #[derive(Clone, Debug, PartialEq)]
 enum Limit {
     /// Set the maximum (or minimum) to the largest (or smallest) value in the current image.
-    Dynamic(BoxcarFilter<f32, DYNAMIC_AVERAGE_NUM>),
+    Dynamic(MovingAverage<f32, DYNAMIC_AVERAGE_NUM>),
 
     /// Set the maximum (or minimum) to the given value.
     Static(f32),
@@ -58,14 +58,14 @@ impl Limit {
 
 impl Default for Limit {
     fn default() -> Self {
-        Self::Dynamic(BoxcarFilter::new())
+        Self::Dynamic(MovingAverage::new())
     }
 }
 
 impl From<settings::Limit> for Limit {
     fn from(settings_limit: settings::Limit) -> Self {
         match settings_limit {
-            settings::Limit::Dynamic => Self::Dynamic(BoxcarFilter::new()),
+            settings::Limit::Dynamic => Self::Dynamic(MovingAverage::new()),
             settings::Limit::Static(temperature) => {
                 Self::Static(temperature.in_unit(&TemperatureUnit::Celsius))
             }
@@ -119,8 +119,8 @@ impl Default for ImageColorMap {
 impl<'a> From<&'a RenderSettings> for ImageColorMap {
     fn from(settings: &'a RenderSettings) -> Self {
         Self::new(
-            settings.lower_limit.into(),
-            settings.upper_limit.into(),
+            settings.lower_limit,
+            settings.upper_limit,
             settings.colors.into(),
         )
     }

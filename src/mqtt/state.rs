@@ -1,19 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::borrow::Borrow;
 use std::fmt;
-use std::marker::PhantomData;
 use std::ops::Deref;
-use std::sync::Arc;
 
-use anyhow::anyhow;
 use futures::sink::{unfold, Sink};
-use rumqttc::{AsyncClient, QoS};
+use rumqttc::QoS;
 use serde::Serialize;
-use tokio::sync::Mutex;
 use tracing::debug;
 
+use super::client::MqttSender;
 use super::home_assistant as hass;
-use super::serialize::serialize;
 
 // Making DiscoveryValue implement those traits so I don't have to keep adding them to where clauses.
 pub(crate) trait DiscoveryValue<D = hass::Device>:
@@ -37,78 +33,68 @@ where
     ) -> Self::Config;
 }
 
-#[derive(Debug)]
-pub(crate) struct InnerState<T, D>
-where
-    T: DiscoveryValue<D>,
-    D: Borrow<hass::Device> + Default,
-{
-    client: Arc<Mutex<AsyncClient>>,
+#[derive(Clone, Debug)]
+pub(crate) struct InnerState {
+    sender: MqttSender,
     topic: String,
     retain: bool,
     qos: QoS,
-    value_phantom: PhantomData<T>,
-    device_phantom: PhantomData<D>,
 }
 
-impl<T, D> InnerState<T, D>
-where
-    T: DiscoveryValue<D>,
-    D: Borrow<hass::Device> + Default,
-{
-    fn new(client: Arc<Mutex<AsyncClient>>, topic: String, retain: bool, qos: QoS) -> Self {
+impl InnerState {
+    fn new(sender: MqttSender, topic: String, retain: bool, qos: QoS) -> Self {
         Self {
-            client,
+            sender,
             topic,
             retain,
             qos,
-            value_phantom: PhantomData,
-            device_phantom: PhantomData,
         }
     }
 
     /// Publish the current state.
-    async fn publish(&self, value: T) -> anyhow::Result<()>
+    async fn publish<T, D>(&mut self, value: T) -> anyhow::Result<()>
     where
-        T: fmt::Debug,
+        T: fmt::Debug + DiscoveryValue<D>,
+        D: Borrow<hass::Device> + Default,
     {
-        let payload_data = serialize(&value)?;
         debug!(?value, ?self.topic, "Publishing value to topic");
-        self.client
-            .lock()
+        self.sender
+            .publish_when_connected(self.topic.clone(), self.qos, &value, self.retain)
             .await
-            .publish(&self.topic, self.qos, self.retain, payload_data)
-            .await
-            .map_err(anyhow::Error::from)
     }
 }
 
 #[derive(Clone, Debug)]
-pub(crate) enum State<T, D>
+pub(crate) enum State<D>
 where
-    T: DiscoveryValue<D>,
     D: Borrow<hass::Device> + Default,
 {
     Basic {
-        inner: Arc<InnerState<T, D>>,
+        inner: InnerState,
     },
     Discoverable {
-        inner: Arc<InnerState<T, D>>,
+        inner: InnerState,
         name: String,
         prefix: String,
         device: D,
     },
 }
 
-impl<T, D> State<T, D>
+impl<D> State<D>
 where
-    T: DiscoveryValue<D>,
     D: Borrow<hass::Device> + Default,
 {
-    fn inner(&self) -> &Arc<InnerState<T, D>> {
+    fn inner(&self) -> &InnerState {
         match self {
-            State::Basic { inner, .. } => &inner,
-            State::Discoverable { inner, .. } => &inner,
+            State::Basic { inner, .. } => inner,
+            State::Discoverable { inner, .. } => inner,
+        }
+    }
+
+    fn inner_mut(&mut self) -> &mut InnerState {
+        match self {
+            State::Basic { inner, .. } => inner,
+            State::Discoverable { inner, .. } => inner,
         }
     }
 
@@ -117,19 +103,23 @@ where
         &self.inner().topic
     }
 
-    /// Publish the current state.
-    pub(crate) async fn publish(&self, value: T) -> anyhow::Result<()>
-    where
-        T: fmt::Debug,
-    {
-        self.inner().publish(value).await
+    /// Returns `true` if the state is [`Basic`].
+    ///
+    /// [`Basic`]: State::Basic
+    pub(crate) fn is_basic(&self) -> bool {
+        matches!(self, Self::Basic { .. })
+    }
+
+    /// Returns `true` if the state is [`Discoverable`].
+    ///
+    /// [`Discoverable`]: State::Discoverable
+    pub(crate) fn is_discoverable(&self) -> bool {
+        matches!(self, Self::Discoverable { .. })
     }
 }
 
-impl<T, D> State<T, D>
+impl<D> State<D>
 where
-    T: DiscoveryValue<D> + fmt::Debug,
-    <T as DiscoveryValue<D>>::Config: fmt::Debug,
     D: Borrow<hass::Device> + Clone + Default,
     D: Send + Sync,
 {
@@ -138,7 +128,7 @@ where
     }
 
     pub(crate) fn new(
-        client: Arc<Mutex<AsyncClient>>,
+        sender: MqttSender,
         prefix: &str,
         device_name: &str,
         entity_name: &str,
@@ -146,17 +136,17 @@ where
         qos: QoS,
     ) -> Self {
         Self::Basic {
-            inner: Arc::new(InnerState::new(
-                client,
+            inner: InnerState::new(
+                sender,
                 Self::topic_for(prefix, device_name, entity_name),
                 retain,
                 qos,
-            )),
+            ),
         }
     }
 
     pub(crate) fn new_discoverable(
-        client: Arc<Mutex<AsyncClient>>,
+        sender: MqttSender,
         device: D,
         prefix: &str,
         entity_name: &str,
@@ -174,12 +164,12 @@ where
                 .to_string()
         });
         Self::Discoverable {
-            inner: Arc::new(InnerState::new(
-                client,
+            inner: InnerState::new(
+                sender,
                 Self::topic_for(&prefix, &device_name, &name),
                 retain,
                 qos,
-            )),
+            ),
             name,
             prefix,
             device,
@@ -188,19 +178,25 @@ where
 
     // Trying to implement Sink on State itself is such a pain in the ass, I'm punting and having a
     // separate function do all the magic.
-    pub(crate) fn sink(&self) -> impl Sink<T, Error = anyhow::Error> {
-        unfold(Arc::clone(&self.inner()), |inner, value| async move {
+    pub(crate) fn sink<T>(&self) -> impl Sink<T, Error = anyhow::Error>
+    where
+        T: DiscoveryValue<D> + fmt::Debug,
+        <T as DiscoveryValue<D>>::Config: fmt::Debug,
+    {
+        let unfold_state = self.inner().clone();
+        unfold(unfold_state, move |mut inner, value| async move {
             inner.publish(value).await?;
             Ok(inner)
         })
     }
 
-    pub(crate) fn discovery_config<A>(&self, availability_topic: A) -> anyhow::Result<T::Config>
+    pub(crate) fn discovery_config<T>(&self, availability_topic: &str) -> Option<T::Config>
     where
-        A: Into<String>,
+        T: DiscoveryValue<D> + fmt::Debug,
+        <T as DiscoveryValue<D>>::Config: fmt::Debug,
     {
         match self {
-            State::Basic { .. } => Err(anyhow!("Basic states don't have discovery configurations")),
+            State::Basic { .. } => None,
             State::Discoverable { name, device, .. } => {
                 let entity_name = device.borrow().name.as_deref().map_or_else(
                     || name.clone(),
@@ -208,26 +204,27 @@ where
                 );
                 let unique_id = self.unique_id().unwrap();
                 let config = T::home_assistant_config(
-                    D::clone(&device),
+                    D::clone(device),
                     self.topic().into(),
-                    availability_topic.into(),
+                    availability_topic.to_string(),
                     entity_name,
                     unique_id,
                 );
-                Ok(config)
+                Some(config)
             }
         }
     }
 
-    pub(crate) fn discovery_topic<S>(&self, home_assistant_prefix: S) -> anyhow::Result<String>
+    pub(crate) fn discovery_topic<T>(&self, home_assistant_prefix: &str) -> Option<String>
     where
-        S: Into<String>,
+        T: DiscoveryValue<D> + fmt::Debug,
+        <T as DiscoveryValue<D>>::Config: fmt::Debug,
     {
         match self {
-            State::Basic { .. } => Err(anyhow!("Basic states don't have discovery topics")),
+            State::Basic { .. } => None,
             State::Discoverable { .. } => {
                 let unique_id = self.unique_id().unwrap();
-                let home_assistant_prefix = home_assistant_prefix.into();
+                let home_assistant_prefix = home_assistant_prefix.to_string();
                 let config_topic = [
                     &home_assistant_prefix,
                     &T::component_type().to_string(),
@@ -235,36 +232,32 @@ where
                     "config",
                 ]
                 .join("/");
-                Ok(config_topic)
+                Some(config_topic)
             }
         }
     }
 
-    pub(crate) async fn publish_home_assistant_discovery<S, A>(
-        &self,
-        home_assistant_prefix: S,
-        availability_topic: A,
+    pub(crate) async fn publish_home_assistant_discovery<T>(
+        &mut self,
+        home_assistant_prefix: &str,
+        availability_topic: &str,
     ) -> anyhow::Result<()>
     where
-        S: Into<String>,
-        A: Into<String>,
+        T: DiscoveryValue<D> + fmt::Debug,
+        <T as DiscoveryValue<D>>::Config: fmt::Debug,
     {
-        match self {
-            State::Basic { .. } => Ok(()),
-            State::Discoverable { inner, .. } => {
-                let config_topic = self.discovery_topic(home_assistant_prefix)?;
-                let config = self.discovery_config(availability_topic)?;
-                debug!(?config, "Publishing Home Assistant discovery config");
-                let payload = serialize(&config)?;
-                inner
-                    .client
-                    .lock()
-                    .await
-                    // Discovery messages should be retained
-                    .publish(config_topic, QoS::AtLeastOnce, true, payload)
-                    .await
-                    .map_err(anyhow::Error::from)
-            }
+        let discovery_topic = self.discovery_topic::<T>(home_assistant_prefix);
+        let discovery_config = self.discovery_config::<T>(availability_topic);
+        if let Some((config_topic, config)) = discovery_topic.zip(discovery_config) {
+            debug!(?config, "Publishing Home Assistant discovery config");
+            self.inner_mut()
+                .sender
+                // Discovery messages should be retained
+                .enqueue_publish(config_topic, QoS::AtLeastOnce, &config, true)
+                .await
+                .map_err(anyhow::Error::from)
+        } else {
+            Ok(())
         }
     }
 
@@ -280,7 +273,7 @@ where
                 .borrow()
                 .identifiers()
                 .next()
-                .map(|id| [id, &Self::machine_name(&name), &prefix].join("_")),
+                .map(|id| [id, &Self::machine_name(name), prefix].join("_")),
         }
     }
 

@@ -18,10 +18,14 @@ use crate::util::{Average, AverageMut};
 pub enum TemperatureUnit {
     #[serde(alias = "C")]
     #[serde(alias = "c")]
+    #[serde(alias = "°C")]
+    #[serde(alias = "°c")]
     Celsius,
 
     #[serde(alias = "F")]
     #[serde(alias = "f")]
+    #[serde(alias = "°F")]
+    #[serde(alias = "°f")]
     Fahrenheit,
 }
 
@@ -45,8 +49,8 @@ impl FromStr for TemperatureUnit {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match &s.to_ascii_lowercase() as &str {
-            "celsius" | "c" => Ok(TemperatureUnit::Celsius),
-            "fahrenheit" | "f" => Ok(TemperatureUnit::Fahrenheit),
+            "celsius" | "c" | "°c" => Ok(TemperatureUnit::Celsius),
+            "fahrenheit" | "f" | "°f" => Ok(TemperatureUnit::Fahrenheit),
             _ => Err("unknown temperature unit"),
         }
     }
@@ -340,7 +344,7 @@ mod test {
     use crate::temperature::TemperatureUnit;
 
     use super::Temperature;
-    use float_cmp::{approx_eq, F32Margin};
+    use float_cmp::{assert_approx_eq, F32Margin};
 
     #[test]
     fn self_in_self() {
@@ -352,46 +356,46 @@ mod test {
 
     #[test]
     fn fahrenheit_in_celsius() {
-        assert!(approx_eq!(
+        assert_approx_eq!(
             f32,
             Temperature::Fahrenheit(-40.0).in_celsius(),
             -40.0,
             F32Margin::default()
-        ));
-        assert!(approx_eq!(
+        );
+        assert_approx_eq!(
             f32,
             Temperature::Fahrenheit(32.0).in_celsius(),
             0.0,
             F32Margin::default()
-        ));
-        assert!(approx_eq!(
+        );
+        assert_approx_eq!(
             f32,
             Temperature::Fahrenheit(212.0).in_celsius(),
             100.0,
             F32Margin::default()
-        ));
+        );
     }
 
     #[test]
     fn celsius_in_fahrenheit() {
-        assert!(approx_eq!(
+        assert_approx_eq!(
             f32,
             Temperature::Celsius(-40.0f32).in_fahrenheit(),
             -40.0,
             F32Margin::default()
-        ));
-        assert!(approx_eq!(
+        );
+        assert_approx_eq!(
             f32,
             Temperature::Celsius(0.0).in_fahrenheit(),
             32.0,
             F32Margin::default()
-        ));
-        assert!(approx_eq!(
+        );
+        assert_approx_eq!(
             f32,
             Temperature::Celsius(100.0).in_fahrenheit(),
             212.0,
             F32Margin::default()
-        ));
+        );
     }
 
     #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
@@ -437,5 +441,33 @@ mod test {
         let t = wrapper.temp;
         assert_eq!(t.value(), -40f64);
         assert_eq!(t.unit(), TemperatureUnit::Fahrenheit);
+    }
+
+    #[test]
+    fn roundtrip_units_celsius() {
+        let source = TemperatureUnit::Celsius;
+        let serialized = toml::to_string(&source).expect("Celsius units should be serializable");
+        let deserialized = toml::from_str(&serialized)
+            .expect("An encoded temperature unit should be able to be deserialized");
+        assert_eq!(source, deserialized);
+    }
+
+    #[test]
+    fn roundtrip_units_fahrenheit() {
+        let source = TemperatureUnit::Fahrenheit;
+        let serialized = toml::to_string(&source).expect("Fahrenheit units should be serializable");
+        let deserialized = toml::from_str(&serialized)
+            .expect("An encoded temperature unit should be able to be deserialized");
+        assert_eq!(source, deserialized);
+    }
+
+    #[test]
+    fn roundtrip_to_string() {
+        let source = TemperatureUnit::Fahrenheit;
+        let toml_string = toml::Value::String(source.to_string());
+        let deserialized = toml_string
+            .try_into()
+            .expect("An encoded temperature unit should be able to be deserialized");
+        assert_eq!(source, deserialized);
     }
 }

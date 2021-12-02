@@ -1,94 +1,193 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use futures::{Sink, Stream};
 use image::{ImageBuffer, Luma};
-use imageproc::point::Point;
 use imageproc::region_labelling::{connected_components, Connectivity};
+use rayon::prelude::*;
+use rstar::{Envelope, PointDistance, RTree, RTreeObject};
 use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
+use tracing::{debug, instrument, trace};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
+use std::iter;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::task::{Context, Poll};
+use std::time::Instant;
 
-use super::Threshold;
 use crate::camera::Measurement;
 use crate::image_buffer::ThermalImage;
 
+use super::gmm::{BackgroundModel, GaussianMixtureModel};
+use super::moments::hu_moments;
+use super::point::{Point, PointTemperature};
+use super::settings::TrackerSettings;
+
+type GmmBackground = BackgroundModel<Vec<GaussianMixtureModel>>;
+
 #[derive(Clone, Debug)]
 pub(crate) struct Tracker {
-    threshold: Threshold,
-    blobs: Arc<RwLock<Vec<Blob>>>,
-    old_count: Arc<AtomicUsize>,
+    settings: TrackerSettings,
+    background: Arc<RwLock<Option<GmmBackground>>>,
+    objects: Arc<RwLock<RTree<Object>>>,
     count_sender: Arc<watch::Sender<usize>>,
     count_receiver: watch::Receiver<usize>,
 }
 
-#[derive(Clone, Debug)]
-struct Blob {
-    points: Vec<Point<u32>>,
-}
-
 impl Tracker {
-    pub(crate) fn new(threshold: Threshold) -> Self {
+    pub(crate) fn new(settings: &TrackerSettings) -> Self {
+        debug!(params=?settings.background_model_parameters, "GMM parameters");
         let (sender, receiver) = watch::channel(0);
         Self {
-            threshold,
-            blobs: Arc::new(RwLock::new(Vec::default())),
-            old_count: Arc::new(AtomicUsize::new(0)),
+            settings: *settings,
+            background: Arc::new(RwLock::new(None)),
+            objects: Arc::new(RwLock::new(RTree::default())),
             count_sender: Arc::new(sender),
             count_receiver: receiver,
         }
     }
 
     pub(crate) fn count(&self) -> usize {
-        self.blobs.read().unwrap().len()
+        self.objects
+            .read()
+            .unwrap()
+            .iter()
+            .filter(|o| o.is_person)
+            .count()
     }
 
+    #[instrument(level = "trace", skip(self, image))]
     pub(crate) fn update(&mut self, image: &ThermalImage) {
-        let thresholded: ImageBuffer<Luma<u8>, Vec<u8>> = self.threshold.threshold_image(image);
-        let mut blob_points: HashMap<u32, Vec<Point<u32>>> = HashMap::new();
-        let components = connected_components(&thresholded, Connectivity::Eight, Luma([0u8]));
+        let mut background_option = self.background.write().unwrap();
+        let background = background_option.get_or_insert_with(|| {
+            let mut model = GmmBackground::new(image.len());
+            model.set_parameters(self.settings.background_model_parameters);
+            model
+        });
+        let foreground: Vec<u8> = background
+            .background_probability::<Vec<f32>>(image)
+            .into_iter()
+            .map(|p| {
+                if p < self.settings.background_confidence_threshold {
+                    u8::MAX
+                } else {
+                    0u8
+                }
+            })
+            .collect();
+        let foreground: ImageBuffer<Luma<u8>, Vec<u8>> =
+            ImageBuffer::from_raw(image.width(), image.height(), foreground)
+                .expect("A mapped Vec should be able to be used for a new ImageBuffer");
+        let components = connected_components(&foreground, Connectivity::Eight, Luma([0u8]));
         // We only care about the foreground pixels, so skip the background (label == 0).
         let filtered_pixels = components
             .enumerate_pixels()
             .filter(|(_, _, pixel)| pixel[0] != 0);
+        let mut object_points: HashMap<u32, Vec<PointTemperature>> = HashMap::new();
         for (x, y, pixel) in filtered_pixels {
-            blob_points
+            let temperature = image[(x, y)][0];
+            object_points
                 .entry(pixel[0])
                 .or_default()
-                .push(Point::new(x, y));
+                .push((Point::new(x, y), temperature));
         }
-        let blobs: Vec<Blob> = blob_points
-            .values()
-            .map(|points| points.iter().cloned().collect())
+        let now = Instant::now();
+        let new_objects: Vec<Object> = object_points
+            .into_values()
+            .filter_map(|points| {
+                // Filter out any blobs smaller than the minimum size
+                if points.len() >= self.settings.minimum_size.unwrap_or_default() {
+                    Some(Object::new(points, now))
+                } else {
+                    debug!(point_count = %points.len(), "Skipping object because of size");
+                    None
+                }
+            })
             .collect();
-        {
-            let mut locked_blobs = self.blobs.write().unwrap();
-            let new_count = blobs.len();
-            *locked_blobs = blobs;
-            if new_count != self.old_count.load(Ordering::Acquire) {
-                self.count_sender
-                    .send(new_count)
-                    .expect("Sending updated count failed");
-                self.old_count.store(new_count, Ordering::Release);
+        let mut new_objects: RTree<Object> = RTree::bulk_load(new_objects);
+        let mut old_objects = self.objects.write().unwrap();
+        self.update_tracked_objects(&mut old_objects, &mut new_objects);
+        // Mark any new people, and unmark any objects that have been stationary too long.
+        background.thaw_all();
+        let image_width = image.width();
+        for object in new_objects.iter_mut() {
+            if object.is_person {
+                if object.last_movement.elapsed() > self.settings.stationary_timeout {
+                    object.is_person = false;
+                } else {
+                    let pixel_numbers = object
+                        .points()
+                        .map(|point| point.pixel_number(image_width) as usize)
+                        .collect::<Vec<_>>();
+                    background.freeze_pixels(&pixel_numbers);
+                }
+            }
+        }
+        // Update the background model, save the new objects for the next frame and broadcast the
+        // new count of persons in view.
+        *old_objects = new_objects;
+        background.update(image);
+        // Need to release locks before count() will work
+        drop(background_option);
+        drop(old_objects);
+        let new_count = self.count();
+        trace!(count = %new_count, "Current occupancy count");
+        self.count_sender
+            .send(new_count)
+            .expect("There's a receiver also stored on the Tracker, so all sends should succeed.");
+    }
+
+    #[instrument(
+        name = "object_tracking",
+        level = "debug",
+        skip(self, old_objects, new_objects)
+    )]
+    fn update_tracked_objects(
+        &self,
+        old_objects: &mut RTree<Object>,
+        new_objects: &mut RTree<Object>,
+    ) {
+        let max_distance = self.settings.maximum_movement;
+        for new_object in new_objects.iter_mut() {
+            let neighbor = old_objects.pop_nearest_neighbor(&new_object.hu_moments);
+            if let Some(old_object) = neighbor {
+                let neighbor_distance =
+                    new_object.distance_2_if_less_or_equal(&old_object.hu_moments, max_distance);
+                if let Some(distance_2) = neighbor_distance {
+                    debug!(
+                        old_object = %old_object.summary(),
+                        new_object = %new_object.summary(),
+                        %distance_2,
+                        "Correlated objects"
+                    );
+                    let old_center = old_object.center();
+                    let new_center = new_object.center();
+                    let center_difference = old_center.squared_distance(new_center);
+                    const CENTER_CLOSE: f32 = 1.0;
+                    let overlap_coefficient = old_object.overlap_coefficient(new_object);
+                    const OVERLAP_THRESHOLD: f32 = 0.9;
+                    // If the object hasn't moved, keep the old update time and person marking
+                    if center_difference < CENTER_CLOSE && overlap_coefficient >= OVERLAP_THRESHOLD
+                    {
+                        new_object.last_movement = old_object.last_movement;
+                        new_object.is_person = old_object.is_person;
+                        debug!(object = %new_object.summary(), "Ignoring movement for object")
+                    } else {
+                        // Conversely, if an object has moved, make sure it's marked as a person
+                        new_object.is_person = true;
+                        debug!(object = %new_object.summary(), "Marking object as person");
+                    }
+                } else {
+                    // Put the old object back in if it's too far away.
+                    old_objects.insert(old_object);
+                }
             }
         }
     }
 
     pub(crate) fn count_stream(&self) -> impl Stream<Item = usize> {
         WatchStream::new(self.count_receiver.clone())
-    }
-}
-
-impl Default for Tracker {
-    fn default() -> Self {
-        // Using 26.0 degrees celsius as the default threshold, compensating for the effect of
-        // clothing and distance on normal body temperature (37 degrees) while still being a fairly
-        // high ambient temperature.
-        Self::new(Threshold::default())
     }
 }
 
@@ -114,77 +213,200 @@ impl Sink<Measurement> for Tracker {
     }
 }
 
-impl Blob {
-    pub(crate) fn center(&self) -> Option<Point<u32>> {
+#[derive(Clone, Debug)]
+struct Object {
+    point_temperatures: Vec<PointTemperature>,
+    hu_moments: [f32; 7],
+    last_movement: Instant,
+    is_person: bool,
+}
+
+impl Object {
+    fn new<I>(point_temperatures: I, when: Instant) -> Self
+    where
+        I: IntoIterator<Item = PointTemperature>,
+    {
+        let point_temperatures: Vec<PointTemperature> = point_temperatures.into_iter().collect();
+        let hu_moments = hu_moments(&point_temperatures);
+        assert!(
+            !point_temperatures.is_empty(),
+            "An object must have at least one point"
+        );
+        Self {
+            point_temperatures,
+            hu_moments,
+            last_movement: when,
+            is_person: false,
+        }
+    }
+
+    fn summary(&self) -> String {
+        let center = self.center();
+        format!(
+            "Point(center: ({:5.2}, {:5.2}), human: {:3}, last_movement: {:5.1}s ago)",
+            center.x,
+            center.y,
+            if self.is_person { "yes" } else { "no" },
+            self.last_movement.elapsed().as_secs_f32(),
+        )
+    }
+
+    fn len(&self) -> usize {
+        self.point_temperatures.len()
+    }
+
+    fn points(&self) -> impl iter::ExactSizeIterator<Item = &Point<u32>> {
+        self.point_temperatures.iter().map(|(p, _)| p)
+    }
+
+    pub(crate) fn center(&self) -> Point<f32> {
+        let mut points = self
+            .points()
+            .map(|point| Point::new(point.x as f32, point.y as f32));
         // Short circuit the easy cases
-        match self.points.len() {
-            0 => None,
-            1 => Some(self.points[0]),
+        match self.len() {
+            0 => unreachable!("There must always be at least one point in an object"),
+            1 => points.next().unwrap(),
             _ => {
-                let mut min_x = u32::MAX;
-                let mut min_y = u32::MAX;
-                let mut max_x = u32::MIN;
-                let mut max_y = u32::MIN;
-                for point in self.points.iter() {
+                let mut min_x = f32::MAX;
+                let mut min_y = f32::MAX;
+                let mut max_x = f32::MIN;
+                let mut max_y = f32::MIN;
+                for point in points {
                     min_y = point.y.min(min_y);
                     min_x = point.x.min(min_x);
                     max_y = point.y.max(max_y);
                     max_x = point.x.max(max_x);
                 }
-                Some(Point::new((max_x - min_x) / 2, (max_y - min_y) / 2))
+                Point::new((max_x - min_x) / 2.0, (max_y - min_y) / 2.0)
             }
         }
     }
+
+    fn sum_temperatures(&self) -> f32 {
+        self.point_temperatures
+            .par_iter()
+            .map(|(_, temperature)| temperature)
+            .sum()
+    }
+
+    pub(crate) fn temperature_mean(&self) -> f32 {
+        self.sum_temperatures() / self.len() as f32
+    }
+
+    pub(crate) fn temperature_variance(&self) -> f32 {
+        let mean = self.temperature_mean();
+        let squared_deviations_sum: f32 = self
+            .point_temperatures
+            .par_iter()
+            .map(|(_, temperature)| (temperature - mean).powi(2))
+            .sum();
+        squared_deviations_sum / self.len() as f32
+    }
+
+    pub(crate) fn squared_distance(&self, other: &Self) -> f32 {
+        // Just compute the squared euclidean distance from this object's Hu moments to the othe
+        // object's Hu moments.
+        self.hu_moments
+            .iter()
+            .zip(other.hu_moments.iter())
+            .map(|(this, that)| (this - that).powi(2))
+            .sum()
+    }
+
+    fn overlap_coefficient(&self, other: &Self) -> f32 {
+        let this = self.points().copied().collect::<HashSet<Point<_>>>();
+        let that = other.points().copied().collect::<HashSet<Point<_>>>();
+        let intersection = this.intersection(&that).count();
+        let denom = this.len().min(that.len());
+        intersection as f32 / denom as f32
+    }
 }
 
-impl std::iter::FromIterator<Point<u32>> for Blob {
-    fn from_iter<I: IntoIterator<Item = Point<u32>>>(iter: I) -> Self {
-        Self {
-            points: iter.into_iter().collect(),
-        }
+impl RTreeObject for Object {
+    type Envelope = rstar::AABB<[f32; 7]>;
+
+    fn envelope(&self) -> Self::Envelope {
+        rstar::AABB::from_point(self.hu_moments)
+    }
+}
+
+impl PointDistance for Object {
+    fn distance_2(
+        &self,
+        point: &<Self::Envelope as Envelope>::Point,
+    ) -> <<Self::Envelope as Envelope>::Point as rstar::Point>::Scalar {
+        self.hu_moments.distance_2(point)
+    }
+
+    fn contains_point(&self, point: &<Self::Envelope as Envelope>::Point) -> bool {
+        self.hu_moments.contains_point(point)
+    }
+
+    fn distance_2_if_less_or_equal(
+        &self,
+        point: &<Self::Envelope as Envelope>::Point,
+        max_distance_2: <<Self::Envelope as Envelope>::Point as rstar::Point>::Scalar,
+    ) -> Option<<<Self::Envelope as Envelope>::Point as rstar::Point>::Scalar> {
+        self.hu_moments
+            .distance_2_if_less_or_equal(point, max_distance_2)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use super::{Blob, Point};
+    use float_cmp::assert_approx_eq;
+
+    use std::time::Instant;
+
+    use super::{Object, Point, PointTemperature};
 
     #[test]
-    fn center_empty() {
-        let points: [Point<u32>; 0] = [];
-        let blob: Blob = std::array::IntoIter::new(points).collect();
-        assert_eq!(blob.center(), None, "An empty blob doesn't have a center");
-    }
-
-    #[test]
-    fn center_single() {
-        let points: [Point<u32>; 1] = [Point::new(3, 9)];
-        let blob: Blob = std::array::IntoIter::new(points).collect();
+    fn single_object_stats() {
+        let points: [PointTemperature; 1] = [(Point::new(3, 9), 37.0)];
+        let object = Object::new(points, Instant::now());
         assert_eq!(
-            blob.center(),
-            Some(Point::new(3, 9)),
-            "A blob with a single point should have the same center"
+            object.center(),
+            Point::new(3.0, 9.0),
+            "A object with a single point should have the same center"
+        );
+        assert_eq!(
+            object.temperature_mean(),
+            37.0,
+            "An object with only one temperature has that temperature as the mean"
+        );
+        assert_eq!(
+            object.temperature_variance(),
+            0.0,
+            "An object with only one point doesn't have a temperature variance"
         );
     }
 
     #[test]
-    fn center_multiple() {
-        let points: [Point<u32>; 6] = [
+    fn multi_point_object_stats() {
+        let points: [PointTemperature; 6] = [
             // A rectangle, but with extra points that're within the box to ensure it's not just
-            // averaging all points. A rtectangle is used to ensure both dimensions are being
+            // averaging all points. A rectangle is used to ensure both dimensions are being
             // looked at separately.
-            Point::new(0, 0),
-            Point::new(0, 10),
-            Point::new(1, 1),
-            Point::new(3, 2),
-            Point::new(4, 0),
-            Point::new(4, 10),
+            (Point::new(0, 0), 37.26),
+            (Point::new(0, 10), 36.71),
+            (Point::new(1, 1), 36.98),
+            (Point::new(3, 2), 37.34),
+            (Point::new(4, 0), 36.88),
+            (Point::new(4, 10), 36.71),
         ];
-        let blob: Blob = std::array::IntoIter::new(points).collect();
+        let object = Object::new(points, Instant::now());
+        // Manually calculated (well, in Excel)
+        const MEAN: f32 = 36.98;
+        const VARIANCE: f32 = 0.0606;
         assert_eq!(
-            blob.center(),
-            Some(Point::new(2, 5)),
+            object.center(),
+            Point::new(2.0, 5.0),
             "Incorrect center for a rectangle with bounding box ((0, 0), (4, 10)"
         );
+        let mean = object.temperature_mean();
+        assert_approx_eq!(f32, mean, MEAN, epsilon = 0.01);
+        let variance = object.temperature_variance();
+        assert_approx_eq!(f32, variance, VARIANCE, epsilon = 0.0001);
     }
 }

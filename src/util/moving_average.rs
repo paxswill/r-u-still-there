@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use std::collections::VecDeque;
 use std::convert;
-use std::ops::{self, Deref, DerefMut};
-use std::sync::{Arc, RwLock};
+use std::ops;
 use std::time::Duration;
 use std::vec::Vec;
 
-use bytes::{Bytes, BytesMut};
 use image::{ImageBuffer, Pixel, Primitive};
+use rayon::prelude::*;
 
 /// A trait for types that can be averaged together.
 pub trait Average<Div, Result = Self> {
@@ -108,15 +107,15 @@ macro_rules! average_container {
         {
             fn add(&self, other: &Self) -> $return_typ {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs + *rhs).collect()
+                self.par_iter().zip(other.par_iter()).map(|(lhs, rhs)| *lhs + *rhs).collect()
             }
             fn sub(&self, other: &Self) -> $return_typ {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
+                self.par_iter().zip(other.par_iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
             }
             fn div(&self, rhs: &Div) -> $return_typ {
                 let divisor: $inner_typ = Into::<$inner_typ>::into(*rhs);
-                self.iter().map(|lhs| *lhs / divisor).collect()
+                self.par_iter().map(|lhs| *lhs / divisor).collect()
             }
         }
     };
@@ -126,20 +125,20 @@ macro_rules! average_container {
     (generic $typ:ty, $return_typ:ty) => {
         impl<T, Div> Average<Div, $return_typ> for $typ
         where
-            T: Primitive + ops::AddAssign + ops::SubAssign,
+            T: Primitive + ops::AddAssign + ops::SubAssign + Send + Sync,
             Div: convert::Into<T> + Copy
         {
             fn add(&self, other: &Self) -> $return_typ {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs + *rhs).collect()
+                self.par_iter().zip(other.par_iter()).map(|(lhs, rhs)| *lhs + *rhs).collect()
             }
             fn sub(&self, other: &Self) -> $return_typ {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter().zip(other.iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
+                self.par_iter().zip(other.par_iter()).map(|(lhs, rhs)| *lhs - *rhs).collect()
             }
             fn div(&self, rhs: &Div) -> $return_typ {
                 let divisor: T = Into::<T>::into(*rhs);
-                self.iter().map(|lhs| *lhs / divisor).collect()
+                self.par_iter().map(|lhs| *lhs / divisor).collect()
             }
         }
     };
@@ -157,12 +156,18 @@ macro_rules! average_mut_container {
         {
             fn add_assign(&mut self, other: &Self) {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs += *rhs)
+                self
+                    .par_iter_mut()
+                    .zip(other.par_iter())
+                    .for_each(|(lhs, rhs)| *lhs += *rhs)
             }
 
             fn sub_assign(&mut self, other: &Self) {
                 assert!(self.len() == other.len(), "The two collections must be the same length to average");
-                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs -= *rhs)
+                self
+                    .par_iter_mut()
+                    .zip(other.par_iter())
+                    .for_each(|(lhs, rhs)| *lhs -= *rhs)
             }
         }
     };
@@ -172,15 +177,21 @@ macro_rules! average_mut_container {
     (generic $typ:ty, $return_typ:ty) => {
         impl<T, Div> AverageMut<Div, $return_typ> for $typ
         where
-            T: Primitive + ops::AddAssign + ops::SubAssign,
+            T: Primitive + ops::AddAssign + ops::SubAssign + Send + Sync,
             Div: convert::Into<T> + Copy
         {
             fn add_assign(&mut self, other: &Self) {
-                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs += *rhs)
+                self
+                    .par_iter_mut()
+                    .zip(other.par_iter())
+                    .for_each(|(lhs, rhs)| *lhs += *rhs)
             }
 
             fn sub_assign(&mut self, other: &Self) {
-                self.iter_mut().zip(other.iter()).for_each(|(lhs, rhs)| *lhs -= *rhs)
+                self
+                    .par_iter_mut()
+                    .zip(other.par_iter())
+                    .for_each(|(lhs, rhs)| *lhs -= *rhs)
             }
         }
     };
@@ -193,9 +204,6 @@ average_container!(generic Vec<T>);
 average_mut_container!(generic Vec<T>);
 average_container!(generic[T], Vec<T>);
 average_mut_container!(generic[T], Vec<T>);
-average_container!(Bytes, u8);
-average_container!(BytesMut, u8);
-average_mut_container!(BytesMut, u8);
 
 impl<Div, Px, Co> Average<Div> for ImageBuffer<Px, Co>
 where
@@ -222,7 +230,7 @@ where
     }
 }
 
-pub trait MovingAverage<T> {
+pub trait Filter<T> {
     /// Add a new sample and return the new moving average afterwards.
     fn update(&mut self, new_value: T) -> T {
         self.push(new_value);
@@ -239,70 +247,62 @@ pub trait MovingAverage<T> {
 
 /// A moving average where all samples are weighted identically.
 #[derive(Clone, Debug)]
-pub struct BoxcarFilter<T, const N: usize> {
-    frames: Arc<RwLock<VecDeque<T>>>,
+pub struct MovingAverage<T, const N: usize> {
+    frames: VecDeque<T>,
     // Possibly a premature optimization
-    sums: Arc<RwLock<Option<T>>>,
+    sums: Option<T>,
 }
 
-impl<T, const N: usize> BoxcarFilter<T, N> {
+impl<T, const N: usize> MovingAverage<T, N> {
     pub fn new() -> Self {
         Self {
-            frames: Arc::new(RwLock::new(VecDeque::with_capacity(N))),
-            sums: Arc::new(RwLock::new(None)),
+            frames: VecDeque::with_capacity(N),
+            sums: None,
         }
     }
 }
 
-impl<T, const N: usize> Default for BoxcarFilter<T, N> {
+impl<T, const N: usize> Default for MovingAverage<T, N> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T, const N: usize> MovingAverage<T> for BoxcarFilter<T, N>
+impl<T, const N: usize> Filter<T> for MovingAverage<T, N>
 where
     T: AverageMut<u16> + Clone,
 {
     fn push(&mut self, new_value: T) {
-        // Hold write locks for this entire method
-        let mut frames = self.frames.write().unwrap();
-        let mut sums = self.sums.write().unwrap();
         // Always check to see if we need to pop first to keep the queue from getting too big
-        if frames.len() >= N {
-            if let Some(old_frame) = frames.pop_front() {
-                if let Some(sums) = sums.deref_mut() {
+        if self.frames.len() >= N {
+            if let Some(old_frame) = self.frames.pop_front() {
+                if let Some(sums) = &mut self.sums {
                     sums.sub_assign(&old_frame);
                 }
             }
         }
-        match sums.deref_mut() {
+        match &mut self.sums {
             Some(sums) => sums.add_assign(&new_value),
             None => {
-                sums.replace(new_value.clone());
+                self.sums.replace(new_value.clone());
             }
         }
-        frames.push_back(new_value);
+        self.frames.push_back(new_value);
     }
 
     fn current_value(&self) -> Option<T> {
-        // Always frames, then sums.
-        let frames = self.frames.read().unwrap();
-        let sums = self.sums.read().unwrap();
-        let num_frames = frames.len() as u16;
-        sums.as_ref().map(|sums| sums.clone().div(&num_frames))
+        let num_frames = self.frames.len() as u16;
+        self.sums.as_ref().map(|sums| sums.clone().div(&num_frames))
     }
 }
 
-impl<T, const N: usize> PartialEq for BoxcarFilter<T, N>
+impl<T, const N: usize> PartialEq for MovingAverage<T, N>
 where
     T: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        let left = self.frames.read().unwrap();
-        let right = other.frames.read().unwrap();
-        left.deref() == right.deref()
+        self.frames == other.frames
     }
 }
 
-impl<T, const N: usize> Eq for BoxcarFilter<T, N> where T: Eq {}
+impl<T, const N: usize> Eq for MovingAverage<T, N> where T: Eq {}

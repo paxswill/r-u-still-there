@@ -24,11 +24,11 @@ address = 0x69
 
 # The frame rate the camera is run at.
 # GridEYEs can only run at 1 or 10 FPS.
-# Melexis cameras (MLX90640 and MLX90641) can run at 1, 2, 4, 8, 16, 32, or 64
-# FPS, but higher frame rates require that the I2C bus is configured to run at a
-# higher clock speed. The MLX90641 can go up to 64 FPS on a 400kHz clock speed,
-# but the MLX90640 requires a 1.2MHz I2C clock to be able to go above 16 FPS (or
-# 32 FPS using interlaced mode. See the `mode` setting below).
+# Melexis cameras (MLX90640 and MLX90641) can run at 0.5, 1, 2, 4, 8, 16, 32, or
+# 64 FPS, but higher frame rates require that the I2C bus is configured to run
+# at a higher clock speed. The MLX90641 can go up to 64 FPS on a 400kHz clock
+# speed, but the MLX90640 requires a 1.2MHz I2C clock to be able to go above 16
+# FPS (or 32 FPS using interlaced mode. See the `mode` setting below).
 # Higher frame rates generally have more noise, but there's less lag before
 # detecting a person. Conversely, lower frame rates have less noise, but more
 # lag.
@@ -118,9 +118,31 @@ address = 0x69
 #scaling_method = "nearest"
 
 [tracker]
-# The method for determining if a pixel is occupied or not. If not given, the
-# threshold will by dynamically chosen.
-#threshold = <temperature>
+# It is possible to modify the background model parameters, but the default
+# values should work for most cases. If you think you need to modify them, you
+# should investigate the source code, specifically the `GmmParameters` structure
+# in the src/occupancy/gmm.rs file.
+#background_model_parameters = {}
+
+# A threshold value for the probability of a value being part of the background.
+#background_confidence_threshold = 0.001
+
+# When correlating successive frames of video, a distance measure is calculated
+# between possible objects. This is the maximum distance to be considered the
+# same object between two frames.
+# The distance being calculated covers not only the position of the objects, but
+# also their size and shape.
+#maximum_mavement = 16.0
+
+# If specified, this is a minimum value in number of pixels an object must
+# exceed to be considered a person. This can be used to ignore small objects
+# (like pets). If not set, there is not a minimum size and any moving object is
+# considered a person.
+#minimum_size =
+
+# After not moving for this many seconds, an object is considered "not a person"
+# anymore. The default is three hours.
+#stationary_timeout = 10800
 
 [mqtt]
 # The name of this device for the MQTT broker. It cannot contain any of `/#+`,

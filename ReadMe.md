@@ -40,9 +40,22 @@ instructions and faster speeds on newer processors makes a noticable difference.
 
 ### Cameras
 
-Currently (as of v0.1.0) just the Panasonic GridEYE is supported, but I'm
-planning on adding support for Melexis MLX90640 and MLX90641 as well as
-Omron D6T sensors in the future.
+Currently (as of v0.2.0) three models of thermal camera are supported:
+
+| Camera | Resolution | Frame Rate | Field of View |
+|:---:|:---:|:---:|:---:|
+| Panasonic GridEYE | 8×8 | 1 or 10 FPS | 60°×60° |
+| Melexis MLX90640 | 32×24 | 0.5, 1, 2, 4, 8, 16, or 32 FPS | 55°×35° *or* 110°×75° |
+| Melexis MLX90641 | 16×12 | 0.5, 1, 2, 4, 8, 16, 32 or 64 FPS | 55°×35° *or* 110°×75° |
+
+A more powerful CPU is recommended for the Melexis cameras, especially if you
+intent on running them at one of the higher refresh rates. Also note that
+running the high refresh rates for those cameras requires a 400kHz I²C bus speed
+(and possibly other configuration changes). See the documentation from the
+[camera driver][mlx9064x-frame-rate] for more details.
+pattern.
+
+[mlx9064x-frame-rate]: https://docs.rs/mlx9064x/latest/mlx9064x/register/enum.FrameRate.html
 
 ## Installation
 
@@ -193,7 +206,7 @@ even have enough memory. Thankfully cross compilation is pretty easy with Rust.
 
 Whichever way you end up building the package, if you're compiling the a 32-bit
 ARM arhitecture you'll need to pass some extra flags through to the C compiler
-(replacing `cargo` with `cross` is using `cross`):
+(replacing `cargo` with `cross` as needed):
 ```shell
 # ARMv6, for Raspberry Pi 0 and 1
 TARGET_CFLAGS="-march=armv6+fp" cargo build --release --target arm-unknown-linux-musleabihf
@@ -203,12 +216,11 @@ TARGET_CFLAGS="-march=armv7-a+simd" cargo build --release --target armv7-unknown
 cargo build --release --target aarch64-unknown-linux-musl
 ```
 
-
 #### glibc
 
 The easiest way to cross-build for glibc targets I've found is with
-[`cross`][cross]. It just works, and is also how the packages are build (along
-with [`cargo-deb`][cargo-deb])
+[`cross`][cross]. It just works, and is also how the provided packages are built
+(along with [`cargo-deb`][cargo-deb]).
 
 [cross]: https://github.com/rust-embedded/cross
 #### musl static builds
@@ -219,7 +231,6 @@ nice little "performance boost" for free when using glibc for the packages.
 I've found [musl-cross-make][musl-cross-make] the easiest way to get a native
 cross-toolchain set up. Once they're installed and available in `$PATH`, you'll
 need to create `.cargo/config.toml` with contents similar to this:
-
 
 ```toml
 [target.arm-unknown-linux-musleabihf]
@@ -232,9 +243,6 @@ linker = "armv7-linux-musleabihf-gcc"
 linker = "aarch64-linux-musl-gcc"
 ```
 [musl-cross-make]: https://github.com/richfelker/musl-cross-make
-
-You also need to provide come extra options to the C compiler for the 32-bit ARM
-architectures:
 
 #### Packaging
 

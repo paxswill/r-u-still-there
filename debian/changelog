@@ -1,8 +1,18 @@
-r-u-still-there (0.3.0-1) UNRELEASED; urgency=medium
+r-u-still-there (0.3.0) UNRELEASED; urgency=medium
 
   * Dynamic temperatures for rendering scale are now based on a moving average
     and have a minimum range applied.
   * The thermometer precision can be truncated to reduce update frequency.
+  * Object recognition has been rewritten. Instead of a static threshold (the
+    dynamic threshold was never implemented), a model of the background is
+    built up and continuously updated. Non-background pixels are considered
+    people once they've moved, and will continue be considered people until a
+    configurable timeout is exceeded.
+  * Log output no longer contains ASCII escape sequences when logging to a
+    file.
+  * MQTT connection handling improved, specifically when reconnecting.
+  * The MQTT base topic is now configurable.
+  * Melexis cameras can now be run at 0.5 FPS.
 
  -- Will Ross <paxswill@paxswill.com>  Thu, 26 Aug 2021 15:33:30 -0400
 
