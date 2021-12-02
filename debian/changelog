@@ -1,4 +1,4 @@
-r-u-still-there (0.3.0) UNRELEASED; urgency=medium
+r-u-still-there (0.3.0) buster; urgency=medium
 
   * Dynamic temperatures for rendering scale are now based on a moving average
     and have a minimum range applied.
@@ -14,7 +14,7 @@ r-u-still-there (0.3.0) UNRELEASED; urgency=medium
   * The MQTT base topic is now configurable.
   * Melexis cameras can now be run at 0.5 FPS.
 
- -- Will Ross <paxswill@paxswill.com>  Thu, 26 Aug 2021 15:33:30 -0400
+ -- Will Ross <paxswill@paxswill.com>  Thu, 02 Dec 2021 15:37:29 -0500
 
 r-u-still-there (0.2.0-2) buster; urgency=medium
 
