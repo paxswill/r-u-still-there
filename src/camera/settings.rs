@@ -3,8 +3,6 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::fmt;
 use std::marker::PhantomData;
-#[cfg(feature = "mock_camera")]
-use std::path::PathBuf;
 
 use anyhow::Context as _;
 use linux_embedded_hal::I2cdev;
@@ -191,7 +189,7 @@ pub(crate) enum CameraSettings {
     #[cfg(feature = "mock_camera")]
     #[serde(rename = "mock")]
     MockCamera {
-        path: PathBuf,
+        path: std::path::PathBuf,
         frame_rate: f32,
 
         #[serde(default)]
