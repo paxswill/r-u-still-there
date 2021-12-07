@@ -64,12 +64,12 @@ impl Camera {
             }
             // Capture a measurement from the camera, apply image transformations, and wait for the
             // next frame.
-            let super::thermal_camera::Measurement {
+            let super::thermal_camera::CameraSample {
                 mut image,
                 y_direction,
                 temperature,
                 frame_delay,
-            } = self.camera.measure()?;
+            } = self.camera.sample()?;
             // If the image has a NaN value in it, skip it
             if image.iter().any(|temperature| temperature.is_nan()) {
                 warn!("Measured image has NaN, skipping");

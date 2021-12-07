@@ -20,7 +20,7 @@ pub(crate) enum YAxisDirection {
 }
 
 /// The combined output of a camera.
-pub(crate) struct Measurement {
+pub(crate) struct CameraSample {
     /// The thermal image.
     ///
     /// The Y-axis may point either up or down.
@@ -42,7 +42,7 @@ pub(crate) trait ThermalCamera {
     ///
     /// A thermal image is captured, along with the camera temperature. The [`Duration`] to wait
     /// until the next measurement should be taken is also included in the returned value.
-    fn measure(&mut self) -> anyhow::Result<Measurement>;
+    fn sample(&mut self) -> anyhow::Result<CameraSample>;
 
     /// Set the camera frame rate.
     fn set_frame_rate(&mut self, frame_rate: f32) -> anyhow::Result<()>;
@@ -67,7 +67,7 @@ impl GridEye {
 }
 
 impl ThermalCamera for GridEye {
-    fn measure(&mut self) -> anyhow::Result<Measurement> {
+    fn sample(&mut self) -> anyhow::Result<CameraSample> {
         let start = Instant::now();
         let temperature = self
             .camera
@@ -97,7 +97,7 @@ impl ThermalCamera for GridEye {
         let frame_delay = frame_duration
             .checked_sub(start.elapsed())
             .unwrap_or_default();
-        Ok(Measurement {
+        Ok(CameraSample {
             image,
             y_direction: YAxisDirection::Up,
             temperature,
@@ -284,7 +284,7 @@ impl $name {
 
 impl ThermalCamera for $name {
 
-    fn measure(&mut self) -> anyhow::Result<Measurement> {
+    fn sample(&mut self) -> anyhow::Result<CameraSample> {
         let start = Instant::now();
         let poll_result = self.poll_frame()?;
         // Get the thermal image first, as the temperature is retrieved and calculated as part of
@@ -311,7 +311,7 @@ impl ThermalCamera for $name {
             }
             Some(frame_delay) => frame_delay,
         };
-        Ok(Measurement {
+        Ok(CameraSample {
             image,
             y_direction: YAxisDirection::Down,
             temperature,

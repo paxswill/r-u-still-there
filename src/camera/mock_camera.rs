@@ -13,7 +13,7 @@ use crate::image_buffer::ThermalImage;
 use crate::temperature::TaggedTemperature;
 
 use super::measurement::Measurement;
-use super::thermal_camera::{Measurement as ThermalMeasurement, ThermalCamera, YAxisDirection};
+use super::thermal_camera::{CameraSample, ThermalCamera, YAxisDirection};
 
 /// A wrapper around [`Measurement`] data so that it can be serialized to a file.
 #[derive(Clone, Debug, PartialEq)]
@@ -262,7 +262,7 @@ impl MockCamera {
 }
 
 impl ThermalCamera for MockCamera {
-    fn measure(&mut self) -> anyhow::Result<ThermalMeasurement> {
+    fn sample(&mut self) -> anyhow::Result<CameraSample> {
         let index = self
             .index
             .next()
@@ -285,7 +285,7 @@ impl ThermalCamera for MockCamera {
             // If we can't take ownership of the Arc, clone the inner data instead.
             arc.as_ref().clone()
         });
-        Ok(ThermalMeasurement {
+        Ok(CameraSample {
             image,
             y_direction: YAxisDirection::Down,
             temperature: data.measurement.temperature,
@@ -311,7 +311,7 @@ mod test {
     use crate::image_buffer::ThermalImage;
     use crate::temperature::Temperature;
 
-    use super::super::thermal_camera::{Measurement as ThermalMeasurement, ThermalCamera};
+    use super::super::thermal_camera::{CameraSample, ThermalCamera};
     use super::{MeasurementData, MockCamera, RepeatMode};
 
     #[test]
@@ -408,7 +408,7 @@ mod test {
             "image_temps and ambient_temps must be the same length"
         );
         let mut cam = MockCamera::new(tiny_measurements(), repeat_mode);
-        let measurements: Vec<ThermalMeasurement> = std::iter::from_fn(move || cam.measure().ok())
+        let measurements: Vec<CameraSample> = std::iter::from_fn(move || cam.sample().ok())
             .fuse()
             .take(30)
             .collect();
