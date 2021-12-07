@@ -336,7 +336,7 @@ impl Pipeline {
             // that flush() is called.
             let bincode_sink: async_bincode::AsyncBincodeWriter<
                 tokio::fs::File,
-                crate::camera::MeasurementData,
+                crate::recorded_data::RecordedData,
                 async_bincode::SyncDestination,
             > = file.into();
             let measurement_stream = Self::create_measurement_stream(&self.camera_command_channel)
@@ -350,7 +350,7 @@ impl Pipeline {
                         let previous_instant = last_frame_time.replace(std::time::Instant::now());
                         let frame_delay = previous_instant.map_or(Duration::ZERO, |i| i.elapsed());
                         let timed_measurement =
-                            crate::camera::MeasurementData::new(measurement, frame_delay);
+                            crate::recorded_data::RecordedData::new(measurement, frame_delay);
                         std::future::ready(Some(timed_measurement))
                     },
                 );

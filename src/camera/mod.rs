@@ -13,4 +13,4 @@ pub(crate) use settings::CameraSettings;
 pub(crate) use shared_camera::{Camera, CameraCommand};
 
 #[cfg(feature = "mock_camera")]
-pub(crate) use mock_camera::{MeasurementData, RepeatMode};
+pub(crate) use mock_camera::RepeatMode;

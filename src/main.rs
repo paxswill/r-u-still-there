@@ -16,6 +16,8 @@ mod mqtt;
 mod occupancy;
 mod pipeline;
 mod pubsub;
+#[cfg(any(feature = "mock_camera", test))]
+mod recorded_data;
 mod render;
 mod settings;
 mod stream;

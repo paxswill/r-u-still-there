@@ -300,33 +300,19 @@ impl CameraSettings {
             Self::MockCamera {
                 path, repeat_mode, ..
             } => {
-                use std::io::{Read, Seek};
-
-                use bincode::Options;
-
-                use crate::camera::mock_camera::{MeasurementData, MockCamera};
+                use crate::camera::mock_camera::MockCamera;
+                use crate::recorded_data::RecordedData;
 
                 let extension = path.extension().map(|s| s.to_str()).flatten();
-                let measurements: Vec<MeasurementData> = match extension {
+                let measurements: Vec<RecordedData> = match extension {
                     Some("toml") => {
                         let data_string = std::fs::read_to_string(path)?;
                         toml::from_str(&data_string).map_err(anyhow::Error::from)
                     }
                     // treat everything as bincode if we don't know the extension
                     _ => {
-                        let mut measurements = Vec::new();
-                        let mut file = std::fs::File::open(path)?;
-                        let file_size = file.metadata()?.len();
-                        // These are the options async-bincode uses (but skipping the limit).
-                        let bincode_options = bincode::options()
-                            .with_fixint_encoding()
-                            .allow_trailing_bytes();
-                        while file.stream_position()? < file_size {
-                            // Have to keep cloning as bincode_options would otherwise be consumed
-                            let frame = bincode_options.deserialize_from(file.by_ref())?;
-                            measurements.push(frame);
-                        }
-                        Ok(measurements)
+                        let file = std::fs::File::open(path)?;
+                        RecordedData::from_bincode(file)
                     }
                 }?;
                 let mock_cam = MockCamera::new(measurements, *repeat_mode);
