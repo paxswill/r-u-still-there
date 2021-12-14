@@ -35,11 +35,17 @@ pub(crate) struct TrackerSettings {
     #[serde_as(as = "serde_with::DurationSeconds<u64>")]
     #[serde(default = "TrackerSettings::default_stationary_timeout")]
     pub(crate) stationary_timeout: Duration,
+
+    #[serde(default = "TrackerSettings::default_overlap_threshold")]
+    pub(crate) overlap_threshold: f32,
+
+    #[serde(default = "TrackerSettings::default_center_closeness")]
+    pub(crate) center_closeness: f32,
 }
 
 impl TrackerSettings {
     const fn default_confidence_threshold() -> f32 {
-        0.001
+        0.0001
     }
 
     const fn default_stationary_timeout() -> Duration {
@@ -49,6 +55,14 @@ impl TrackerSettings {
 
     const fn default_maximum_movement() -> f32 {
         16.0
+    }
+
+    const fn default_overlap_threshold() -> f32 {
+        0.9
+    }
+
+    const fn default_center_closeness() -> f32 {
+        1.0
     }
 }
 
@@ -60,6 +74,8 @@ impl Default for TrackerSettings {
             maximum_movement: Self::default_maximum_movement(),
             minimum_size: None,
             stationary_timeout: Self::default_stationary_timeout(),
+            overlap_threshold: Self::default_overlap_threshold(),
+            center_closeness: Self::default_center_closeness(),
         }
     }
 }
@@ -80,6 +96,8 @@ mod test {
             maximum_movement: TrackerSettings::default_maximum_movement(),
             minimum_size: None,
             stationary_timeout: TrackerSettings::default_stationary_timeout(),
+            overlap_threshold: TrackerSettings::default_overlap_threshold(),
+            center_closeness: TrackerSettings::default_center_closeness(),
         };
         assert_eq!(config, expected);
         Ok(())

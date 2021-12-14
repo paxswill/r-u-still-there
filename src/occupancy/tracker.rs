@@ -164,11 +164,10 @@ impl Tracker {
                     let old_center = old_object.center();
                     let new_center = new_object.center();
                     let center_difference = old_center.squared_distance(new_center);
-                    const CENTER_CLOSE: f32 = 1.0;
                     let overlap_coefficient = old_object.overlap_coefficient(new_object);
-                    const OVERLAP_THRESHOLD: f32 = 0.9;
                     // If the object hasn't moved, keep the old update time and person marking
-                    if center_difference < CENTER_CLOSE && overlap_coefficient >= OVERLAP_THRESHOLD
+                    if center_difference < self.settings.center_closeness
+                        && overlap_coefficient >= self.settings.overlap_threshold
                     {
                         new_object.last_movement = old_object.last_movement;
                         new_object.is_person = old_object.is_person;
