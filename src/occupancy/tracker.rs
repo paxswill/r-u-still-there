@@ -6,7 +6,7 @@ use rayon::prelude::*;
 use rstar::{Envelope, PointDistance, RTree, RTreeObject};
 use tokio::sync::watch;
 use tokio_stream::wrappers::WatchStream;
-use tracing::{debug, instrument, trace};
+use tracing::{debug, debug_span, instrument, trace};
 
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
@@ -155,27 +155,29 @@ impl Tracker {
                 let neighbor_distance =
                     new_object.distance_2_if_less_or_equal(&old_object.hu_moments, max_distance);
                 if let Some(distance_2) = neighbor_distance {
+                    let object_pair_span = debug_span!("Correlated objects");
+                    let _pair_span = object_pair_span.enter();
                     debug!(
                         old_object = %old_object.summary(),
                         new_object = %new_object.summary(),
                         %distance_2,
-                        "Correlated objects"
                     );
                     let old_center = old_object.center();
                     let new_center = new_object.center();
                     let center_difference = old_center.squared_distance(new_center);
                     let overlap_coefficient = old_object.overlap_coefficient(new_object);
                     // If the object hasn't moved, keep the old update time and person marking
+                    trace!(%center_difference, %overlap_coefficient);
                     if center_difference < self.settings.center_closeness
                         && overlap_coefficient >= self.settings.overlap_threshold
                     {
                         new_object.last_movement = old_object.last_movement;
                         new_object.is_person = old_object.is_person;
-                        debug!(object = %new_object.summary(), "Ignoring movement for object")
+                        debug!("Ignoring movement for object");
                     } else {
                         // Conversely, if an object has moved, make sure it's marked as a person
                         new_object.is_person = true;
-                        debug!(object = %new_object.summary(), "Marking object as person");
+                        debug!("Marking object as person");
                     }
                 } else {
                     // Put the old object back in if it's too far away.

@@ -34,7 +34,10 @@ impl LearningRate {
             }
         };
         if self.current_value() <= target_value {
-            debug!("Initialization period complete, target learning rate reached");
+            debug!(
+                ?target_value,
+                "Initialization period complete, target learning rate reached"
+            );
             *self = Self::Trained(target_value);
         }
     }
