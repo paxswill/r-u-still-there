@@ -355,11 +355,20 @@ impl PointDistance for Object {
 
 #[cfg(test)]
 mod test {
-    use float_cmp::assert_approx_eq;
-
+    use std::io::Cursor;
     use std::time::Instant;
 
-    use super::{Object, Point, PointTemperature};
+    use float_cmp::assert_approx_eq;
+
+    use crate::occupancy::TrackerSettings;
+    use crate::recorded_data::RecordedData;
+
+    use super::{Object, Point, PointTemperature, Tracker};
+
+    const EMPTY_ROOM_DATA: &[u8] = include_bytes!("empty-room.bin");
+    const WALK_IN_DATA: &[u8] = include_bytes!("walk-in.bin");
+    const WARM_UP_DATA: &[u8] = include_bytes!("warm-up.bin");
+    const PERSON_OVERLAP_DATA: &[u8] = include_bytes!("person-overlap.bin");
 
     #[test]
     fn single_object_stats() {
@@ -408,5 +417,260 @@ mod test {
         assert_approx_eq!(f32, mean, MEAN, epsilon = 0.01);
         let variance = object.temperature_variance();
         assert_approx_eq!(f32, variance, VARIANCE, epsilon = 0.0001);
+    }
+
+    struct OccupancyCount {
+        count: usize,
+        start_frame: Option<usize>,
+        end_frame: Option<usize>,
+    }
+
+    impl OccupancyCount {
+        fn new_unbounded(count: usize) -> Self {
+            Self {
+                count,
+                start_frame: None,
+                end_frame: None,
+            }
+        }
+
+        fn new_until(count: usize, until_frame: usize) -> Self {
+            Self {
+                count,
+                start_frame: None,
+                end_frame: Some(until_frame),
+            }
+        }
+
+        fn new_from(count: usize, from_frame: usize) -> Self {
+            Self {
+                count,
+                start_frame: Some(from_frame),
+                end_frame: None,
+            }
+        }
+
+        fn new(count: usize, start: usize, end: usize) -> Self {
+            Self {
+                count,
+                start_frame: Some(start),
+                end_frame: Some(end),
+            }
+        }
+
+        fn contains(&self, frame_number: usize) -> bool {
+            match (self.start_frame, self.end_frame) {
+                (None, None) => true,
+                (None, Some(end_frame)) => frame_number < end_frame,
+                (Some(start_frame), None) => start_frame <= frame_number,
+                (Some(start_frame), Some(end_frame)) => {
+                    (start_frame..end_frame).contains(&frame_number)
+                }
+            }
+        }
+
+        fn matches_count(&self, frame_number: usize, count: usize) -> Option<bool> {
+            if self.contains(frame_number) {
+                Some(self.count == count)
+            } else {
+                None
+            }
+        }
+    }
+
+    // Test the tests a bit here...
+
+    #[test]
+    fn test_count_unbounded() {
+        const EXPECTED_COUNT: usize = 2;
+        let count = OccupancyCount::new_unbounded(EXPECTED_COUNT);
+        assert!(
+            count.contains(usize::MIN),
+            "An unbounded count includes the minimum value"
+        );
+        assert!(
+            count.contains(usize::MAX),
+            "An unbounded count includes the maximum value"
+        );
+        assert_eq!(count.matches_count(usize::MIN, EXPECTED_COUNT), Some(true));
+        assert_eq!(count.matches_count(usize::MAX, EXPECTED_COUNT), Some(true));
+        assert_eq!(count.matches_count(usize::MIN, 0), Some(false));
+        assert_eq!(count.matches_count(usize::MAX, 0), Some(false));
+    }
+
+    #[test]
+    fn test_count_upper_bound() {
+        const EXPECTED_COUNT: usize = 2;
+        const UPPER_BOUND: usize = 10;
+        let count = OccupancyCount::new_until(EXPECTED_COUNT, UPPER_BOUND);
+        assert!(
+            count.contains(usize::MIN),
+            "An upper bounded count includes the minimum value"
+        );
+        assert!(
+            count.contains(UPPER_BOUND - 1),
+            "An upper bounded count includes up to its bound"
+        );
+        assert!(
+            !count.contains(UPPER_BOUND),
+            "An upper bounded count does not include the bound itself"
+        );
+        assert_eq!(count.matches_count(usize::MIN, EXPECTED_COUNT), Some(true));
+        assert_eq!(
+            count.matches_count(UPPER_BOUND - 1, EXPECTED_COUNT),
+            Some(true)
+        );
+        assert_eq!(count.matches_count(UPPER_BOUND, EXPECTED_COUNT), None);
+        assert_eq!(count.matches_count(usize::MIN, 0), Some(false));
+        assert_eq!(count.matches_count(UPPER_BOUND - 1, 0), Some(false));
+    }
+
+    #[test]
+    fn test_count_lower_bound() {
+        const EXPECTED_COUNT: usize = 2;
+        const LOWER_BOUND: usize = 10;
+        let count = OccupancyCount::new_from(EXPECTED_COUNT, LOWER_BOUND);
+        assert!(
+            count.contains(usize::MAX),
+            "A lower bounded count includes the maximum value"
+        );
+        assert!(
+            count.contains(LOWER_BOUND),
+            "A lower count includes the lower bound"
+        );
+        assert!(
+            !count.contains(LOWER_BOUND - 1),
+            "A lower bounded count does not include a value below the bound"
+        );
+        assert_eq!(count.matches_count(usize::MAX, EXPECTED_COUNT), Some(true));
+        assert_eq!(count.matches_count(LOWER_BOUND, EXPECTED_COUNT), Some(true));
+        assert_eq!(count.matches_count(LOWER_BOUND - 1, EXPECTED_COUNT), None);
+        assert_eq!(count.matches_count(usize::MAX, 0), Some(false));
+        assert_eq!(count.matches_count(LOWER_BOUND, 0), Some(false));
+    }
+
+    #[test]
+    fn test_count_bounded() {
+        const EXPECTED_COUNT: usize = 2;
+        const LOWER_BOUND: usize = 10;
+        const UPPER_BOUND: usize = 20;
+        let count = OccupancyCount::new(EXPECTED_COUNT, LOWER_BOUND, UPPER_BOUND);
+        assert!(
+            count.contains(LOWER_BOUND),
+            "A bounded count includes the lower bounds"
+        );
+        assert!(
+            !count.contains(UPPER_BOUND),
+            "A bounded count does not include the upper bound"
+        );
+        assert!(
+            !count.contains(usize::MIN),
+            "A bounded count does not include anything below the lower bound"
+        );
+        assert!(
+            count.contains(UPPER_BOUND - 1),
+            "A bounded count includes up to the upper bounds"
+        );
+        assert_eq!(count.matches_count(usize::MIN, 0), None);
+        assert_eq!(count.matches_count(usize::MAX, 0), None);
+        assert_eq!(count.matches_count(LOWER_BOUND, EXPECTED_COUNT), Some(true));
+        assert_eq!(count.matches_count(LOWER_BOUND, 0), Some(false));
+        assert_eq!(count.matches_count(LOWER_BOUND - 1, EXPECTED_COUNT), None);
+        assert_eq!(
+            count.matches_count(UPPER_BOUND - 1, EXPECTED_COUNT),
+            Some(true)
+        );
+        assert_eq!(count.matches_count(UPPER_BOUND - 1, 0), Some(false));
+    }
+
+    fn check_recorded_data(
+        recorded_data: &[RecordedData],
+        occupancy_counts: &[OccupancyCount],
+        settings: &TrackerSettings,
+    ) -> bool {
+        let mut tracker = Tracker::new(settings);
+        let mut failed = false;
+        for (frame_number, record) in recorded_data.iter().enumerate() {
+            tracker.update(&record.measurement.image);
+            let tracker_count = tracker.count();
+            let occupancy_range = occupancy_counts.iter().find(|o| o.contains(frame_number));
+            if let Some(occupancy_range) = occupancy_range {
+                if tracker_count != occupancy_range.count {
+                    println!(
+                        "Frame #{}: {} people detected (should be {})",
+                        frame_number, tracker_count, occupancy_range.count
+                    );
+                    failed = true;
+                }
+            }
+        }
+        !failed
+    }
+
+    #[test]
+    fn empty_room() {
+        let recorded_data = RecordedData::from_bincode(Cursor::new(EMPTY_ROOM_DATA))
+            .expect("Decoding test data should work");
+        let settings = TrackerSettings::default();
+        let expected_counts = vec![OccupancyCount::new_unbounded(0)];
+        assert!(
+            check_recorded_data(&recorded_data, &expected_counts, &settings),
+            "People detected in empty room"
+        );
+    }
+
+    #[test]
+    #[ignore = "object tracking unreliable"]
+    fn walk_in() {
+        let recorded_data = RecordedData::from_bincode(Cursor::new(WALK_IN_DATA))
+            .expect("Decoding test data should work");
+        let settings = TrackerSettings::default();
+        let expected_counts = vec![
+            OccupancyCount::new_until(0, 6003),
+            OccupancyCount::new(1, 6064, 8355),
+            OccupancyCount::new_from(0, 8399),
+        ];
+        assert!(check_recorded_data(
+            &recorded_data,
+            &expected_counts,
+            &settings
+        ));
+    }
+
+    #[test]
+    #[ignore = "object tracking unreliable"]
+    fn warm_up() {
+        let recorded_data = RecordedData::from_bincode(Cursor::new(WARM_UP_DATA))
+            .expect("Decoding test data should work");
+        let settings = TrackerSettings::default();
+        let expected_counts = vec![
+            OccupancyCount::new_until(0, 2039),
+            OccupancyCount::new_from(1, 2040),
+        ];
+        assert!(check_recorded_data(
+            &recorded_data,
+            &expected_counts,
+            &settings
+        ));
+    }
+
+    #[test]
+    #[ignore = "object tracking unreliable"]
+    fn person_overlap() {
+        let recorded_data = RecordedData::from_bincode(Cursor::new(PERSON_OVERLAP_DATA))
+            .expect("Decoding test data should work");
+        let settings = TrackerSettings::default();
+        let expected_counts = vec![
+            OccupancyCount::new_until(0, 2786),
+            OccupancyCount::new(1, 2787, 2996),
+            OccupancyCount::new(2, 2997, 3165),
+            OccupancyCount::new(1, 3166, 8278),
+            OccupancyCount::new_from(0, 8279),
+        ];
+        assert!(check_recorded_data(
+            &recorded_data,
+            &expected_counts,
+            &settings
+        ));
     }
 }

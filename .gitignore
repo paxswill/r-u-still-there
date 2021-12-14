@@ -1,3 +1,9 @@
 /target
 *.deb
 .cargo/
+# Ignore any human-readable versions of recorded camera data. Bincode is much
+# more compact, and even compressed the YAML or TOML versions are larger than
+# the uncompressed bincode version.
+src/occupancy/*.yml
+src/occupancy/*.yaml
+src/occupancy/*.toml
